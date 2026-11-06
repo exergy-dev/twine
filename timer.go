@@ -7,11 +7,11 @@ import (
 	"github.com/robert-malhotra/twine/internal/wheel"
 )
 
-// Timer is the handle returned by Loop.CallLater. It is loop-affine. Each
-// CallLater allocates one Timer (the wheel node itself is intrusive and
-// allocation-free); Timers are deliberately not pooled so that a handle kept
-// after the timer fired can never cancel or move a later timer. Stop and
-// Reset on a fired or stopped Timer are harmless no-ops.
+// Timer is the handle returned by Loop.CallLater. It is loop-affine. Handles
+// are carved from a per-loop slab (one allocation per 256 timers) and never
+// reused, so a handle kept after the timer fired can never cancel or move a
+// later timer. Stop and Reset on a fired or stopped Timer are harmless
+// no-ops.
 type Timer struct {
 	w    wheel.Timer // must stay the first field: fireNode converts back from it
 	loop *Loop

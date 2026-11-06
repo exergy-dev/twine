@@ -35,6 +35,7 @@ type config struct {
 	busyPoll        time.Duration
 	udpBatch        int
 	closeLinger     time.Duration
+	pinCPUs         []int
 }
 
 func defaultConfig() config {
@@ -138,6 +139,19 @@ func TaskQueueSize(n int) Option { return func(c *config) { c.taskQueueSize = n 
 // ShutdownTimeout bounds how long Stop waits for pending writes to flush.
 // Default 5s.
 func ShutdownTimeout(d time.Duration) Option { return func(c *config) { c.shutdownTimeout = d } }
+
+// PinLoops pins loop i to cpus[i % len(cpus)] with sched_setaffinity (Linux;
+// ignored elsewhere). Pinning loops to distinct physical cores keeps them off
+// each other's hyperthreads and away from the worker pool; it implies
+// LockOSThread. Default: no pinning.
+func PinLoops(cpus ...int) Option {
+	return func(c *config) {
+		c.pinCPUs = append([]int(nil), cpus...)
+		if len(cpus) > 0 {
+			c.lockOSThread = true
+		}
+	}
+}
 
 // CloseLinger bounds how long LoseConnection waits, after sending SHUT_WR,
 // for the peer to close its side before the connection is closed anyway.

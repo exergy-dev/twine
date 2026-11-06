@@ -76,6 +76,10 @@ type Loop struct {
 
 	due     []*Timer // CallLater(0) timers; fire next iteration
 	dueNext []*Timer
+	// timerSlab hands out Timer handles from a chunk so CallLater performs
+	// one allocation per timerSlabSize timers instead of one each. Handles
+	// are never reused, so a stale handle can never affect a later timer.
+	timerSlab []Timer
 
 	// Shutdown.
 	stopping     bool
@@ -173,8 +177,8 @@ func (l *Loop) CallFromThread(fn func()) {
 // fired or Stop has returned true it is recycled and must not be used again.
 func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 	l.assertInLoop()
-	t := &Timer{loop: l, fn: fn}
-	t.w.FnT = fireNode
+	t := l.newTimer()
+	t.fn = fn
 	if d <= 0 {
 		// Run on the next iteration rather than inside the current wheel
 		// advance, so a callback that re-arms itself with 0 cannot starve
@@ -184,6 +188,21 @@ func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 		return t
 	}
 	l.wheel.Add(&t.w, l.monoNow()+int64(d))
+	return t
+}
+
+// timerSlabSize is the number of Timer handles carved from one allocation.
+const timerSlabSize = 256
+
+// newTimer returns a fresh, never-before-used Timer handle.
+func (l *Loop) newTimer() *Timer {
+	if len(l.timerSlab) == 0 {
+		l.timerSlab = make([]Timer, timerSlabSize)
+	}
+	t := &l.timerSlab[0]
+	l.timerSlab = l.timerSlab[1:]
+	t.loop = l
+	t.w.FnT = fireNode
 	return t
 }
 
@@ -224,6 +243,11 @@ func (l *Loop) run(ready chan<- error) {
 	if l.cfg.lockOSThread {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
+	}
+	if n := len(l.cfg.pinCPUs); n > 0 {
+		if err := pinToCPU(l.cfg.pinCPUs[l.id%n]); err != nil {
+			l.cfg.logger.Warn("twine: pinning loop", "loop", l.id, "cpu", l.cfg.pinCPUs[l.id%n], "err", err)
+		}
 	}
 	p, err := poll.New()
 	if err != nil {

@@ -7,3 +7,8 @@ package twine
 func threadID() int64 { return 0 }
 
 const haveThreadID = false
+
+// pinToCPU is unsupported on this platform.
+func pinToCPU(int) error { return nil }
+
+func currentCPU() int { return -1 }

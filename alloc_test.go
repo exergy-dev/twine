@@ -154,9 +154,8 @@ func TestTimerFireZeroAlloc(t *testing.T) {
 			l.nowNs += int64(time.Millisecond)
 			l.wheel.Advance(l.nowNs)
 		})
-		// Insert+cancel: exactly one allocation, the Timer handle itself
-		// (handles are not pooled so a stale handle can never cancel a
-		// later timer; see timer.go).
+		// Insert+cancel: handles come from a per-loop slab (one make per
+		// 256 timers, never reused) so the per-op allocation count is 0.
 		insertCancel = testing.AllocsPerRun(1000, func() {
 			tm := l.CallLater(time.Second, fn)
 			tm.Stop()
@@ -172,11 +171,11 @@ func TestTimerFireZeroAlloc(t *testing.T) {
 	if fire != 0 {
 		t.Errorf("timer fire allocates: %v", fire)
 	}
-	if insertCancel > 1 {
-		t.Errorf("timer insert+cancel allocates %v (want ≤ 1: the handle)", insertCancel)
+	if insertCancel != 0 {
+		t.Errorf("timer insert+cancel allocates %v (want 0)", insertCancel)
 	}
-	if due > 1 {
-		t.Errorf("CallLater(0) insert+fire allocates %v (want ≤ 1)", due)
+	if due != 0 {
+		t.Errorf("CallLater(0) insert+fire allocates %v (want 0)", due)
 	}
 }
 
