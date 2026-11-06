@@ -6,9 +6,11 @@ import (
 	"github.com/robert-malhotra/twine/internal/wheel"
 )
 
-// Timer is the handle returned by Loop.CallLater. It is loop-affine and
-// single-use: once it has fired or Stop has returned true it is recycled and
-// must not be touched again. Reset before firing moves the deadline.
+// Timer is the handle returned by Loop.CallLater. It is loop-affine. Each
+// CallLater allocates one Timer (the wheel node itself is intrusive and
+// allocation-free); Timers are deliberately not pooled so that a handle kept
+// after the timer fired can never cancel or move a later timer. Stop and
+// Reset on a fired or stopped Timer are harmless no-ops.
 type Timer struct {
 	w    wheel.Timer
 	loop *Loop
@@ -20,7 +22,7 @@ type Timer struct {
 func (t *Timer) fire() {
 	l := t.loop
 	fn := t.fn
-	l.putTimer(t)
+	t.fn = nil
 	if fn == nil {
 		return
 	}
@@ -39,55 +41,46 @@ func (l *Loop) recoverTimer() {
 }
 
 // Stop cancels the timer. It returns true if the timer was pending and is now
-// cancelled, false if it already fired or was stopped. After a true return
-// the handle is dead.
+// cancelled, false if it had already fired or been stopped.
 func (t *Timer) Stop() bool {
 	l := t.loop
-	if l == nil {
-		if debugEnabled {
-			panic("twine: Stop on a dead Timer")
-		}
-		return false
-	}
 	l.assertInLoop()
 	if t.due {
 		t.due = false
 		t.fn = nil
-		return true // fireDue recycles it
+		return true
 	}
 	if !l.wheel.Remove(&t.w) {
 		return false
 	}
-	l.putTimer(t)
+	t.fn = nil
 	return true
 }
 
 // Reset reschedules a pending timer to fire after d from now. Calling Reset
-// on a fired or stopped timer is a no-op (panics in debug builds).
+// on a fired or stopped timer is a no-op.
 func (t *Timer) Reset(d time.Duration) {
 	l := t.loop
-	if l == nil {
-		if debugEnabled {
-			panic("twine: Reset on a dead Timer")
-		}
-		return
-	}
 	l.assertInLoop()
 	if t.due {
 		if d <= 0 {
 			return
 		}
-		// Move from the due list onto the wheel; fireDue skips it because
-		// it is now Scheduled.
-		t.due = false
+		t.due = false // fireDue skips it; the wheel owns it now
 		l.wheel.Add(&t.w, l.nowNs+int64(d))
 		return
 	}
 	if !t.w.Scheduled() {
 		return
 	}
+	if d <= 0 {
+		l.wheel.Remove(&t.w)
+		t.due = true
+		l.due = append(l.due, t)
+		return
+	}
 	l.wheel.Add(&t.w, l.nowNs+int64(d))
 }
 
 // Active reports whether the timer is still pending.
-func (t *Timer) Active() bool { return t.loop != nil && (t.due || t.w.Scheduled()) }
+func (t *Timer) Active() bool { return t.due || t.w.Scheduled() }

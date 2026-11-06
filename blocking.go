@@ -48,6 +48,31 @@ func (b *blockingProto) ConnectionMade(t Transport) {
 }
 
 func (b *blockingProto) run() {
+	// A panic in the wrapped protocol aborts only this connection, as it
+	// would for a loop-resident protocol (design Section 8 rule 8).
+	defer func() {
+		if r := recover(); r != nil {
+			pe := capturePanic(r)
+			b.t.c.loop.CallFromThread(func() {
+				if b.t.live() {
+					b.t.c.lostErr = pe
+					b.t.c.abortNoCallback()
+				}
+			})
+			// Drain so the loop's final ConnectionLost send never blocks,
+			// and deliver it to the inner protocol.
+			for ev := range b.ch {
+				if ev.lost {
+					func() {
+						defer func() { _ = recover() }()
+						b.inner.ConnectionLost(ev.err)
+					}()
+					return
+				}
+				b.t.c.loop.CallFromThread(b.consumed)
+			}
+		}
+	}()
 	b.inner.ConnectionMade(b.proxy)
 	for ev := range b.ch {
 		if ev.lost {

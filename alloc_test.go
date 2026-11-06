@@ -46,10 +46,10 @@ func TestReadPathZeroAlloc(t *testing.T) {
 		msg := make([]byte, 64)
 		// Warm up once.
 		unix.Write(peer, msg)
-		l.handleRead(c)
+		l.handleRead(c, false)
 		allocs := testing.AllocsPerRun(1000, func() {
 			unix.Write(peer, msg)
-			l.handleRead(c)
+			l.handleRead(c, false)
 		})
 		if allocs != 0 {
 			t.Errorf("read path allocates: %v", allocs)

@@ -132,10 +132,7 @@ func (t *transport) ResumeReading() {
 	}
 	c.flags &^= flagReadPaused
 	_ = c.loop.poller.Mod(int(c.fd), c.interest())
-	if c.flags&flagInReady == 0 {
-		c.flags |= flagInReady
-		c.loop.ready = append(c.loop.ready, c)
-	}
+	c.queueReady()
 }
 
 // RegisterProducer attaches a producer. A streaming (push) producer is paused

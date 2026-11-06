@@ -172,10 +172,7 @@ func (l *Loop) handleAccept(c *conn) {
 		})
 	}
 	// Cap hit; more may be pending. Re-check next iteration.
-	if c.flags&flagInReady == 0 {
-		c.flags |= flagInReady
-		l.ready = append(l.ready, c)
-	}
+	c.queueReady()
 }
 
 // setupAccepted applies per-socket options.

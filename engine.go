@@ -81,6 +81,9 @@ func (e *Engine) OnShutdown(fn func()) {
 // starting.
 func (e *Engine) Run(ctx context.Context) error {
 	if !e.state.CompareAndSwap(stateNew, stateRunning) {
+		if e.state.Load() == stateStopped {
+			return nil // Stop was called before Run
+		}
 		return errors.New("twine: Engine.Run called twice")
 	}
 	ready := make(chan error, len(e.loops))
@@ -117,6 +120,15 @@ func (e *Engine) Run(ctx context.Context) error {
 // goroutine, including loop callbacks.
 func (e *Engine) Stop() {
 	if e.state.CompareAndSwap(stateNew, stateStopped) {
+		// Never ran: release listener sockets created before Run.
+		e.mu.Lock()
+		ls := e.listeners
+		e.listeners = nil
+		e.mu.Unlock()
+		for _, l := range ls {
+			_ = l.Close()
+		}
+		e.pool.close()
 		close(e.doneCh)
 		return
 	}

@@ -22,6 +22,14 @@ const maxTasksPerIteration = 1024
 // wheelTick is the timing wheel resolution.
 const wheelTick = time.Millisecond
 
+// readyEntry is a conn queued for a re-read next iteration together with
+// the generation it had when queued, so a conn closed and recycled in between
+// is skipped instead of being read as a different connection.
+type readyEntry struct {
+	c   *conn
+	gen uint32
+}
+
 // Loop is the reactor: one goroutine, pinned to an OS thread, owning its own
 // poller, connections, buffers and timers. Nothing on the hot path is shared
 // with other loops.
@@ -31,12 +39,13 @@ type Loop struct {
 	cfg *config
 
 	// Cross-thread entry (the one door in).
-	tasks       *mpsc.Queue
-	wakePending atomic.Bool
-	overflowMu  sync.Mutex
-	overflow    []func()
-	local       []func() // tasks queued by the loop itself
-	moreTasks   bool     // drain hit the per-iteration cap
+	tasks          *mpsc.Queue
+	wakePending    atomic.Bool
+	overflowMu     sync.Mutex
+	overflow       []func()
+	overflowActive atomic.Bool
+	local          []func() // tasks queued by the loop itself
+	moreTasks      bool     // drain hit the per-iteration cap
 
 	// Identity.
 	tid      atomic.Int64 // kernel thread id when locked
@@ -60,14 +69,13 @@ type Loop struct {
 	conns     []*conn // indexed by fd
 	freeConns []*conn
 	nconns    int
-	dirty     []*conn // need a flush this iteration
-	closing   []*conn // recycle at end of iteration
-	ready     []*conn // read cap hit; re-read next iteration
-	readyNext []*conn
+	dirty     []*conn      // need a flush this iteration
+	closing   []*conn      // recycle at end of iteration
+	ready     []readyEntry // read cap hit; re-read next iteration
+	readyNext []readyEntry
 
-	timerPool []*Timer
-	due       []*Timer // CallLater(0) timers; fire next iteration
-	dueNext   []*Timer
+	due     []*Timer // CallLater(0) timers; fire next iteration
+	dueNext []*Timer
 
 	// Shutdown.
 	stopping     bool
@@ -140,9 +148,12 @@ func (l *Loop) CallFromThread(fn func()) {
 		l.local = append(l.local, fn)
 		return
 	}
-	if !l.tasks.Push(fn) {
+	// While the overflow slice is non-empty every producer appends there so
+	// a single producer's tasks keep FIFO order across the spill.
+	if l.overflowActive.Load() || !l.tasks.Push(fn) {
 		l.overflowMu.Lock()
 		l.overflow = append(l.overflow, fn)
+		l.overflowActive.Store(true)
 		l.overflowMu.Unlock()
 	}
 	if l.wakePending.CompareAndSwap(false, true) {
@@ -162,8 +173,8 @@ func (l *Loop) CallFromThread(fn func()) {
 // fired or Stop has returned true it is recycled and must not be used again.
 func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 	l.assertInLoop()
-	t := l.getTimer()
-	t.fn = fn
+	t := &Timer{loop: l, fn: fn}
+	t.w.Fn = t.fire
 	if d <= 0 {
 		// Run on the next iteration rather than inside the current wheel
 		// advance, so a callback that re-arms itself with 0 cannot starve
@@ -176,19 +187,19 @@ func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 	return t
 }
 
-// fireDue runs CallLater(0) timers queued during the previous iteration.
-func (l *Loop) fireDue() {
-	if len(l.due) == 0 {
-		return
-	}
+// takeDue snapshots the zero-delay timers queued so far; fireDue runs them
+// later in the same iteration. Splitting the two steps guarantees that a
+// CallLater(0) made during this iteration runs on the next one.
+func (l *Loop) takeDue() {
 	l.dueNext, l.due = l.due, l.dueNext[:0]
+}
+
+// fireDue runs the zero-delay timers snapshotted by takeDue.
+func (l *Loop) fireDue() {
 	for i, t := range l.dueNext {
 		l.dueNext[i] = nil
 		if !t.due {
-			if !t.w.Scheduled() {
-				l.putTimer(t) // stopped
-			}
-			continue // or moved onto the wheel by Reset
+			continue // stopped, or moved onto the wheel by Reset
 		}
 		t.due = false
 		l.metrics.TimersFired.Add(1)
@@ -222,10 +233,7 @@ func (l *Loop) run(ready chan<- error) {
 	l.poller = p
 	l.tid.Store(threadID())
 	l.gid.Store(goid())
-	if haveThreadID && l.cfg.lockOSThread {
-		loopThreads.Store(threadID(), l)
-		defer loopThreads.Delete(threadID())
-	}
+
 	l.refreshNow()
 	l.started.Store(true)
 	ready <- nil
@@ -244,6 +252,10 @@ func (l *Loop) run(ready chan<- error) {
 	for l.wakeBusy.Load() != 0 {
 		runtime.Gosched()
 	}
+	// The OS thread returns to the scheduler once we unlock it; forget its
+	// id so InLoop never says yes to a stranger.
+	l.tid.Store(-1)
+	l.gid.Store(-1)
 	_ = l.poller.Close()
 	close(l.exitCh)
 }
@@ -253,6 +265,7 @@ func (l *Loop) iterate() {
 	spin := l.cfg.spinIterations
 	for {
 		iterStart := l.nowNs
+		l.takeDue()
 
 		// 1. Drain the task queue (bounded).
 		l.drainTasks()
@@ -276,6 +289,12 @@ func (l *Loop) iterate() {
 			if n > 0 || err != nil || s >= spin {
 				break
 			}
+		}
+		if n == 0 && err == nil {
+			// The spin may have consumed a wakeup whose task was already
+			// drained; clear the coalescing flag so the next producer wakes
+			// us, then re-check the queue before blocking.
+			l.wakePending.Store(false)
 		}
 		if n == 0 && err == nil && !l.hasImmediateWork() {
 			timeout := l.pollTimeout()
@@ -302,7 +321,11 @@ func (l *Loop) iterate() {
 		// Connections whose read cap was hit last iteration.
 		if len(l.ready) > 0 {
 			l.readyNext, l.ready = l.ready, l.readyNext[:0]
-			for _, c := range l.readyNext {
+			for _, re := range l.readyNext {
+				c := re.c
+				if c.gen != re.gen {
+					continue // closed and recycled since it was queued
+				}
 				c.flags &^= flagInReady
 				l.handleReady(c)
 			}
@@ -338,7 +361,7 @@ func (l *Loop) handleReady(c *conn) {
 		l.handleUDPRead(c)
 	case kindTCP:
 		if c.flags&(flagClosed|flagReadPaused) == 0 {
-			l.handleRead(c)
+			l.handleRead(c, false)
 		}
 	}
 }
@@ -351,12 +374,7 @@ func (l *Loop) hasImmediateWork() bool {
 		len(l.dirty) > 0 || len(l.closing) > 0 || l.tasks.Len() > 0 || l.hasOverflow()
 }
 
-func (l *Loop) hasOverflow() bool {
-	l.overflowMu.Lock()
-	n := len(l.overflow)
-	l.overflowMu.Unlock()
-	return n > 0
-}
+func (l *Loop) hasOverflow() bool { return l.overflowActive.Load() }
 
 // pollTimeout returns how long the loop may block: until the next timer, or
 // forever.
@@ -385,16 +403,23 @@ func (l *Loop) drainTasks() {
 	l.moreTasks = false
 	l.wakePending.Store(false)
 	budget := maxTasksPerIteration
-	// Tasks queued by the loop itself during the previous iteration run first.
-	for len(l.local) > 0 && budget > 0 {
-		fn := l.local[0]
-		l.local[0] = nil
-		l.local = l.local[1:]
+	// Tasks queued by the loop itself during the previous iteration run
+	// first. Drain by index (re-entrant appends land past the snapshot) and
+	// keep the backing array so steady-state local calls do not allocate.
+	n := len(l.local)
+	i := 0
+	for ; i < n && budget > 0; i++ {
+		fn := l.local[i]
+		l.local[i] = nil
 		budget--
 		l.runTask(fn)
 	}
-	if len(l.local) == 0 {
+	if i == len(l.local) {
 		l.local = l.local[:0]
+	} else if i > 0 {
+		rest := copy(l.local, l.local[i:])
+		clear(l.local[rest:])
+		l.local = l.local[:rest]
 	}
 	for budget > 0 {
 		fn, ok := l.tasks.Pop()
@@ -404,25 +429,26 @@ func (l *Loop) drainTasks() {
 		budget--
 		l.runTask(fn)
 	}
-	if budget > 0 && l.tasks.Len() == 0 {
+	if budget > 0 && l.overflowActive.Load() {
+		// Overflowed tasks are older than anything pushed to the ring after
+		// them, and while overflow is active producers keep appending there,
+		// so by the time the ring is empty the overflow slice is the FIFO.
 		l.overflowMu.Lock()
-		if len(l.overflow) > 0 {
-			ov := l.overflow
-			l.overflow = nil
-			l.overflowMu.Unlock()
-			for i, fn := range ov {
-				if budget == 0 {
-					// Push the remainder back.
-					l.overflowMu.Lock()
-					l.overflow = append(ov[i:], l.overflow...)
-					l.overflowMu.Unlock()
-					break
-				}
-				budget--
-				l.runTask(fn)
+		ov := l.overflow
+		l.overflow = nil
+		if len(ov) == 0 {
+			l.overflowActive.Store(false)
+		}
+		l.overflowMu.Unlock()
+		for j, fn := range ov {
+			if budget == 0 {
+				l.overflowMu.Lock()
+				l.overflow = append(ov[j:], l.overflow...)
+				l.overflowMu.Unlock()
+				break
 			}
-		} else {
-			l.overflowMu.Unlock()
+			budget--
+			l.runTask(fn)
 		}
 	}
 	if budget == 0 {
@@ -503,9 +529,10 @@ func (l *Loop) getConn() *conn {
 		c := l.freeConns[n-1]
 		l.freeConns[n-1] = nil
 		l.freeConns = l.freeConns[:n-1]
+		c.flags = flagPooled
 		return c
 	}
-	c := &conn{loop: l}
+	c := &conn{loop: l, flags: flagPooled}
 	c.idle.Fn = c.onIdle // method value allocated once per conn, amortised by pooling
 	c.ring.Init(l.alloc)
 	return c
@@ -551,7 +578,7 @@ func (l *Loop) dispatch(c *conn, flags uint32) {
 	// never discards data still queued in the socket. While reading is paused
 	// the hangup is discovered when the protocol resumes.
 	if flags&(poll.Readable|poll.Hangup) != 0 && c.flags&flagReadPaused == 0 {
-		l.handleRead(c)
+		l.handleRead(c, flags&poll.Hangup != 0)
 		if c.flags&flagClosed != 0 {
 			return
 		}
@@ -570,8 +597,11 @@ func (l *Loop) dispatch(c *conn, flags uint32) {
 }
 
 // handleRead reads until EAGAIN, the buffer is short, or the per-event cap,
-// calling DataReceived per chunk with a sub-slice of the shared buffer.
-func (l *Loop) handleRead(c *conn) {
+// calling DataReceived per chunk with a sub-slice of the shared buffer. When
+// the event carried a hangup, a short read is not treated as "drained": the
+// FIN behind the data must be read in the same pass because edge-triggered
+// polling will not report it again.
+func (l *Loop) handleRead(c *conn, hangup bool) {
 	buf := l.rdbuf
 	fd := int(c.fd)
 	maxReads := l.cfg.maxReadsPerEv
@@ -588,7 +618,7 @@ func (l *Loop) handleRead(c *conn) {
 			if c.flags&(flagClosed|flagReadPaused) != 0 {
 				return
 			}
-			if n < len(buf) {
+			if n < len(buf) && !hangup {
 				return // short read: socket drained
 			}
 			continue
@@ -612,10 +642,7 @@ func (l *Loop) handleRead(c *conn) {
 		}
 	}
 	// Cap hit with the socket possibly still readable: re-arm next iteration.
-	if c.flags&flagInReady == 0 {
-		c.flags |= flagInReady
-		l.ready = append(l.ready, c)
-	}
+	c.queueReady()
 }
 
 // callDataReceived invokes the protocol with panic recovery and watchdog
@@ -642,8 +669,15 @@ func (l *Loop) recoverProto(c *conn) {
 		pe := capturePanic(r)
 		l.metrics.Panics.Add(1)
 		l.cfg.logger.Error("twine: panic in protocol", "loop", l.id, "fd", c.fd, "panic", pe.Value, "stack", string(pe.Stack))
-		c.lostErr = pe
-		c.abortNoCallback()
+		switch c.kind {
+		case kindUDP:
+			c.closeUDP() // calls StopProtocol; UDP conns are not pooled
+		case kindListener:
+			// Nothing to tear down; the listener keeps accepting.
+		default:
+			c.lostErr = pe
+			c.abortNoCallback()
+		}
 	}
 }
 
@@ -689,6 +723,8 @@ func (l *Loop) recycleClosed() {
 
 // finishClose completes the close of c. The order is: unregister from the
 // poller, close the fd, call ConnectionLost exactly once, release storage.
+// It is idempotent: reset keeps flagRecycled set until getConn hands the
+// struct out again.
 func (l *Loop) finishClose(c *conn) {
 	if c.flags&flagRecycled != 0 {
 		return
@@ -716,7 +752,9 @@ func (l *Loop) finishClose(c *conn) {
 		l.safeCall(c, p.StopProducing)
 	}
 	c.ring.Reset()
-	l.putConn(c)
+	if c.flags&flagPooled != 0 {
+		l.putConn(c)
+	}
 }
 
 func (l *Loop) callConnectionLost(c *conn) {
@@ -741,26 +779,6 @@ func (l *Loop) safeCall(c *conn, fn func()) {
 	defer l.endCallback()
 	defer l.recoverProto(c)
 	fn()
-}
-
-// getTimer takes a Timer from the pool.
-func (l *Loop) getTimer() *Timer {
-	if n := len(l.timerPool); n > 0 {
-		t := l.timerPool[n-1]
-		l.timerPool[n-1] = nil
-		l.timerPool = l.timerPool[:n-1]
-		t.loop = l
-		return t
-	}
-	t := &Timer{loop: l}
-	t.w.Fn = t.fire
-	return t
-}
-
-func (l *Loop) putTimer(t *Timer) {
-	t.fn = nil
-	t.loop = nil
-	l.timerPool = append(l.timerPool, t)
 }
 
 // beginShutdown starts graceful shutdown on this loop (called via

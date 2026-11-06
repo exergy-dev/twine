@@ -317,7 +317,7 @@ func Sleep(l *Loop, d time.Duration) *Future[struct{}] {
 // only when every worker is busy and the submission queue is full.
 func DeferToThread[T any](l *Loop, fn func() (T, error)) *Future[T] {
 	out, r := NewFuture[T](l)
-	l.eng.pool.submit(func() {
+	ok := l.eng.pool.submit(func() {
 		defer func() {
 			if rec := recover(); rec != nil {
 				r.Reject(capturePanic(rec))
@@ -329,6 +329,9 @@ func DeferToThread[T any](l *Loop, fn func() (T, error)) *Future[T] {
 			return
 		}
 		r.Resolve(v)
-	})
+	}, l.InLoop())
+	if !ok {
+		r.Reject(ErrEngineStopped)
+	}
 	return out
 }

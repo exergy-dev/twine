@@ -35,6 +35,7 @@ const (
 	flagProducerPaused                    // PauseProducing has been delivered
 	flagNoDelay
 	flagLinger // idle timer is acting as the half-close linger deadline
+	flagPooled // allocated by getConn; may be returned to the free list
 )
 
 // conn is the per-connection state. It implements Transport directly so that
@@ -73,7 +74,9 @@ func (c *conn) reset() {
 	c.h = nil
 	c.fd = -1
 	c.kind = kindTCP
-	c.flags = 0
+	// Keep the struct marked closed and recycled until getConn hands it out
+	// again, so any stale internal reference finds a dead conn.
+	c.flags = flagClosed | flagRecycled | flagPooled
 	c.proto = nil
 	c.idleTimeout = 0
 	c.peer, c.host = nil, nil
@@ -84,6 +87,15 @@ func (c *conn) reset() {
 	c.lst = nil
 	c.udp = nil
 	c.dial = nil
+}
+
+// queueReady schedules a re-read of c on the next iteration (read cap hit,
+// reading resumed, or a hangup to collect).
+func (c *conn) queueReady() {
+	if c.flags&flagInReady == 0 {
+		c.flags |= flagInReady
+		c.loop.ready = append(c.loop.ready, readyEntry{c: c, gen: c.gen})
+	}
 }
 
 // --- lifecycle -------------------------------------------------------------
@@ -221,6 +233,14 @@ func (c *conn) finishLose() {
 		c.flags |= flagLinger
 		c.idleTimeout = linger
 		c.loop.wheel.Add(&c.idle, c.loop.nowNs+int64(linger))
+		if c.flags&flagReadPaused != 0 && c.flags&flagEOF == 0 {
+			// Reading was paused by the protocol; we still need to see the
+			// peer's FIN, so restore read interest (data is discarded by
+			// the protocol having paused, but EOF closes the conn).
+			c.flags &^= flagReadPaused
+			_ = c.loop.poller.Mod(int(c.fd), c.interest())
+			c.queueReady()
+		}
 	}
 }
 
@@ -278,6 +298,9 @@ func (c *conn) write(b []byte) {
 			c.loop.metrics.WriteBytes.Add(uint64(n))
 			c.loop.metrics.WriteDirectHit.Add(1)
 			c.touchIdle()
+			if c.producer != nil && !c.streaming {
+				c.markDirty() // flush pokes the pull producer for more
+			}
 			return
 		}
 		if n > 0 {
@@ -321,6 +344,9 @@ func (c *conn) writev(bs [][]byte) {
 			c.loop.metrics.WriteBytes.Add(uint64(n))
 			c.loop.metrics.WriteDirectHit.Add(1)
 			c.touchIdle()
+			if c.producer != nil && !c.streaming {
+				c.markDirty()
+			}
 			return
 		}
 		if n < 0 {
@@ -380,6 +406,19 @@ func (c *conn) flush() {
 		}
 		if c.flags&flagClosing != 0 {
 			c.finishLose()
+			return
+		}
+		if c.producer != nil && !c.streaming {
+			// Pull producer: the socket took everything directly; ask for
+			// more from the flush step rather than re-entrantly from Write.
+			c.flags |= flagFlushing
+			c.loop.safeCall(c, c.producer.ResumeProducing)
+			c.flags &^= flagFlushing
+			if c.ring.Len() > 0 || (c.producer != nil && !c.streaming && c.flags&flagClosed == 0) {
+				// Keep poking while the producer keeps up; the loop runs
+				// flushDirty once per iteration so this cannot spin.
+				c.markDirty()
+			}
 		}
 		return
 	}

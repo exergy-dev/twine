@@ -128,7 +128,11 @@ func (l *Loop) completeConnect(c *conn) {
 	}
 	l.callConnectionMade(c)
 	if c.flags&flagClosed != 0 {
-		d.res.Reject(c.lostErr)
+		err := c.lostErr
+		if err == nil {
+			err = ErrClosed // ConnectionMade aborted the connection
+		}
+		d.res.Reject(err)
 		return
 	}
 	d.res.Resolve(c.h)

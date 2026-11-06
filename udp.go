@@ -107,10 +107,7 @@ func (l *Loop) handleUDPRead(c *conn) {
 			return
 		}
 	}
-	if c.flags&flagInReady == 0 {
-		c.flags |= flagInReady
-		l.ready = append(l.ready, c)
-	}
+	c.queueReady()
 }
 
 func (l *Loop) callDatagram(c *conn, b []byte, from net.Addr) {
