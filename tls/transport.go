@@ -45,6 +45,8 @@ type Transport struct {
 	draining  bool // re-entrancy guard for drain
 	closeSent bool // close_notify sent (LoseConnection)
 	peerEOF   bool // close_notify received
+	aborted   bool // Abort requested (by inner or an error); deliver nothing more
+	hsDone    bool // handshake outcome reported (hook and Future) exactly once
 	inTLS     bool // inside a tls.Conn call; Write/LoseConnection defer
 	// deferred holds plaintext written re-entrantly during a tls.Conn call;
 	// closeDeferred records a LoseConnection made the same way.
@@ -110,6 +112,12 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 			}
 		}()
 		if _, err := t.runHandshake(); err != nil {
+			// Settle the user's Connect Future from here as well (Reject is
+			// idempotent and thread-safe): the loop callback that normally
+			// does it is dropped if the loop exits mid-handshake.
+			if t.f.res != nil {
+				t.f.res.Reject(err)
+			}
 			res.Reject(err)
 			return
 		}
@@ -126,7 +134,7 @@ func (w *wrapper) DataReceived(b []byte) {
 	case stHandshaking:
 		t.bio.feed(b) // copies: b dies when we return, the worker reads later
 	case stReady:
-		if t.peerEOF {
+		if t.peerEOF || t.aborted {
 			return
 		}
 		t.bio.lend(b)
@@ -141,14 +149,29 @@ func (w *wrapper) ConnectionLost(err error) {
 	t := (*Transport)(w)
 	prev := t.state
 	t.state = stLost
+	if t.bio == nil {
+		// Lost before ConnectionMade (the core failed to register the fd):
+		// nothing was started, but a Connect Future must still settle.
+		t.handshakeFailed(eofOr(err))
+		return
+	}
 	t.bio.shutdown(eofOr(err))
-	if prev == stHandshaking {
+	if prev == stHandshaking || prev == stFailed {
 		t.stopTimer()
-		return // the handshake Future rejects and reports the failure
+		// The worker's callback reports the failure with crypto/tls's own
+		// error (e.g. the peer's alert), which is more useful than EOF. The
+		// worker also rejects the Connect Future directly, so the Future
+		// settles even if the loop exits before that callback runs.
+		return
 	}
 	if t.made {
 		if t.lostErr != nil {
 			err = t.lostErr
+		}
+		if err == nil && !t.peerEOF && !t.closeSent {
+			// A TCP FIN without close_notify is a truncation, not a clean
+			// close; the inner protocol must be able to tell them apart.
+			err = io.ErrUnexpectedEOF
 		}
 		t.made = false
 		t.inner.ConnectionLost(err)
@@ -173,6 +196,7 @@ func (t *Transport) onHandshakeTimeout() {
 	if t.state != stHandshaking {
 		return
 	}
+	t.state = stFailed // never let a late onHandshakeDone call inner
 	t.bio.shutdown(ErrHandshakeTimeout)
 	t.under.Abort()
 }
@@ -199,6 +223,7 @@ func (t *Transport) onHandshakeDone(struct{}) {
 		defer t.recoverInner()
 		t.inner.ConnectionMade(t)
 	}()
+	t.hsDone = true
 	if t.f.res != nil {
 		if t.lostErr != nil {
 			t.f.res.Reject(t.lostErr)
@@ -208,7 +233,9 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	}
 	// Application data may already be waiting, both in the bio queue and
 	// inside crypto/tls's record buffer.
-	t.drainGuarded()
+	if !t.aborted && t.lostErr == nil {
+		t.drainGuarded()
+	}
 }
 
 // onHandshakeError runs on the loop when the worker's Handshake failed.
@@ -227,6 +254,10 @@ func (t *Transport) onHandshakeError(err error) {
 }
 
 func (t *Transport) handshakeFailed(err error) {
+	if t.hsDone {
+		return
+	}
+	t.hsDone = true
 	if fn := t.f.opts.onHandshakeError; fn != nil {
 		fn(err)
 	}
@@ -243,7 +274,7 @@ func (t *Transport) drain() {
 	}
 	t.draining = true
 	defer func() { t.draining = false }()
-	for t.state == stReady && !t.paused && !t.peerEOF && t.lostErr == nil {
+	for t.state == stReady && !t.paused && !t.peerEOF && !t.aborted && t.lostErr == nil {
 		t.inTLS = true
 		n, err := t.tc.Read(t.plain) // may write alerts or KeyUpdate replies
 		t.leaveTLS(nil)
@@ -270,7 +301,7 @@ func (t *Transport) drainGuarded() {
 
 // drainTask runs on the loop after ResumeReading.
 func (t *Transport) drainTask() {
-	if t.state == stReady && !t.paused {
+	if t.state == stReady && !t.paused && !t.aborted {
 		t.drainGuarded()
 	}
 }
@@ -298,6 +329,7 @@ func (t *Transport) readError(err error) {
 	if t.lostErr == nil {
 		t.lostErr = err
 	}
+	t.aborted = true
 	t.under.Abort()
 }
 
@@ -313,6 +345,7 @@ func (t *Transport) recoverInner() {
 		if t.lostErr == nil {
 			t.lostErr = pe
 		}
+		t.aborted = true
 		t.under.Abort()
 	}
 }
@@ -388,6 +421,7 @@ func (t *Transport) writeError(err error) {
 	if t.lostErr == nil {
 		t.lostErr = err
 	}
+	t.aborted = true
 	t.under.Abort()
 }
 
@@ -420,6 +454,7 @@ func (t *Transport) LoseConnection() {
 // Abort closes the underlying connection immediately without close_notify,
 // discarding pending writes.
 func (t *Transport) Abort() {
+	t.aborted = true // stop delivering plaintext already decrypted
 	if t.under != nil {
 		t.under.Abort()
 	}

@@ -280,7 +280,13 @@ func (c *conn) reserve() {
 	if !c.headDone || r.chunked || r.contentLength <= 0 {
 		return
 	}
+	// Pre-allocate at most 64 KiB beyond what has arrived: a declared
+	// Content-Length is attacker-controlled, so reserving it in full would
+	// let a 60-byte request pin MaxBodyBytes of heap per connection.
 	need := r.headLen + int(r.contentLength)
+	if lim := len(c.buf) + 64<<10; need > lim {
+		need = lim
+	}
 	if cap(c.buf) < need {
 		nb := make([]byte, len(c.buf), need)
 		copy(nb, c.buf)
@@ -370,10 +376,17 @@ func (c *conn) parseOne(data []byte) (int, int) {
 // needBody handles an incomplete body: it enforces the raw size limit and
 // answers Expect: 100-continue once.
 func (c *conn) needBody(have int) int {
-	if have > c.s.maxRaw {
+	r := &c.ctx.req
+	limit := c.s.maxRaw
+	if r.chunked {
+		// Chunked framing is not bounded by 2× the payload: one-byte chunks
+		// cost six raw bytes each. The decoded size is enforced separately,
+		// so the raw cap only needs to bound the work per request.
+		limit = c.s.maxHdr + 8*c.s.maxBody + 64<<10
+	}
+	if have > limit {
 		return 413
 	}
-	r := &c.ctx.req
 	if r.expect100 && !c.cont && r.minor == 1 {
 		c.cont = true
 		c.wbuf = append(c.wbuf, "HTTP/1.1 100 Continue\r\n\r\n"...)
