@@ -37,7 +37,8 @@
 //     transport, which copies only if the socket would block. Record
 //     decryption and encryption happen on the loop.
 //   - kTLS offload. Requested with KernelOffload(true); see "Kernel TLS"
-//     below. It currently always falls back to the memory BIO.
+//     below. Engages for TLS 1.3 AES-GCM connections on Linux and falls back
+//     to the memory BIO otherwise.
 //   - Goroutine adapter. Not part of this package: wrap a factory with
 //     twine.Blocking and run crypto/tls over a real net.Conn. That is the
 //     migration path, at goroutine-per-connection cost.
@@ -78,19 +79,69 @@
 //
 // # Kernel TLS
 //
-// kTLS lets the kernel encrypt and decrypt records after a user-space
-// handshake, so the loop could use plain read/write. KTLSAvailable probes the
-// kernel once (setsockopt(SOL_TCP, TCP_ULP, "tls") on a throwaway loopback
-// socket; always false off Linux). Installing the offload additionally needs
-// the record-layer traffic keys, IVs and sequence numbers for
-// setsockopt(SOL_TLS, TLS_TX/TLS_RX). Go's crypto/tls (verified against Go
-// 1.25) keeps those in unexported fields and exports no API for them;
-// ExportKeyingMaterial yields RFC 5705 exporter secrets, not record keys.
-// This package refuses to reach into crypto/tls with unsafe or go:linkname,
-// so the data-path offload cannot be completed: KTLSSupported is false,
-// KernelOffload(true) silently uses the memory BIO, and
-// Transport.KernelOffloaded reports false. Should crypto/tls gain a key
-// export hook, only installKTLS needs to change.
+// With KernelOffload(true), after the memory-BIO handshake the record layer
+// moves into the kernel: setsockopt(SOL_TCP, TCP_ULP, "tls") followed by
+// SOL_TLS TLS_TX (and TLS_RX). The loop then does plain read/write, the
+// kernel encrypts and decrypts, and Transport.Write goes straight to the
+// socket. KTLSAvailable probes the ULP once on a throwaway loopback socket;
+// KTLSSupported is true on Linux; Transport.KernelOffloaded reports what a
+// connection got.
+//
+// Key extraction. crypto/tls exports no record keys, so the package reads the
+// TLS 1.3 traffic secrets and sequence numbers of both directions out of the
+// unexported fields of *crypto/tls.Conn (in/out halfConn: trafficSecret, seq,
+// cipher; Conn.vers, cipherSuite, and the rawInput/input/hand buffers) with
+// reflect and unsafe, then derives key and IV with HKDF-Expand-Label (RFC 8446
+// section 7.1) exactly as crypto/tls does. This is fragile by nature: it
+// depends on Go internals (checked against Go 1.25). Every field is looked up
+// by name and checked for kind and length at run time; any mismatch, a
+// missing field or a panic simply means "no offload" and the connection
+// continues on the memory BIO. No Go version can make offload misbehave
+// silently except by changing the meaning of those fields while keeping
+// their names, types and sizes.
+//
+// Engagement rules (anything else falls back to the memory BIO):
+//
+//   - Linux, KTLSAvailable, TLS 1.3 negotiated, cipher suite
+//     TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 or
+//     TLS_CHACHA20_POLY1305_SHA256, and the kernel accepted TX and RX keys
+//     for that cipher on a one-time probe (dummy keys, loopback socket). The
+//     kernel here may lack ChaCha20-Poly1305 (ENOENT), in which case that
+//     suite falls back.
+//   - No ciphertext queued for sending (core ring, handshake output).
+//   - Server: TX and RX are offloaded provided crypto/tls has consumed no
+//     application data and nothing from the peer is queued (neither inside
+//     crypto/tls nor in the bio). This is the normal case: it is decided
+//     when the handshake Future settles, before the first plaintext
+//     DataReceived. Go's server sends its NewSessionTicket records inside
+//     Handshake, so its outbound side is clean. If the client pipelined data
+//     right behind its Finished, only TX is offloaded and RX continues on
+//     the memory BIO (still correct).
+//   - Client: TX only. After the handshake the server's NewSessionTicket
+//     records arrive encrypted, and the kernel delivers non-data records only
+//     through recvmsg control messages, which the core does not use. RX
+//     therefore stays on the memory BIO.
+//
+// Once TX is installed crypto/tls must never write again (the kernel would
+// encrypt its already-encrypted records): the bio refuses writes. The one
+// place crypto/tls would write on the read path is the reply to a peer
+// KeyUpdate that requests one; that fails and aborts the connection.
+//
+// Close. LoseConnection sends close_notify with sendmsg and a
+// TLS_SET_RECORD_TYPE control message (alert record, {warning,
+// close_notify}), then half-closes. The core exposes no ordered "control
+// record" write, so if application bytes are still buffered in the core's
+// write ring the alert waits (short poll) until the ring has drained, so
+// that it cannot overtake data.
+//
+// Residual risks. TX keys cannot be uninstalled: if TX succeeds and RX then
+// fails, the connection continues TX-offloaded with RX on the memory BIO.
+// The per-cipher probe makes that effectively impossible in practice. With
+// RX offloaded, a non-data record from the peer (close_notify, another
+// alert, KeyUpdate) makes the kernel fail read with EIO, so the inner
+// protocol sees ConnectionLost with an error wrapping syscall.EIO (a peer
+// that closes cleanly with close_notify is thus indistinguishable from a
+// fatal record). KeyUpdate is not supported under RX offload.
 //
 // # Limitations
 //

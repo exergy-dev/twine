@@ -55,6 +55,7 @@ type bio struct {
 	flushQueued bool   // (mu) a flushOut task is pending on the loop
 	err         error  // (mu) terminal error once the connection is gone
 	loopMode    bool   // (mu) written once by the loop on mode switch
+	noWrite     bool   // (mu) kTLS TX installed: crypto/tls writes are refused
 
 	borrowed []byte // loop mode only: the current DataReceived slice
 	flushFn  func() // b.flushOut, allocated once
@@ -179,6 +180,10 @@ func (b *bio) Write(p []byte) (int, error) {
 		b.mu.Unlock()
 		return 0, err
 	}
+	if b.noWrite {
+		b.mu.Unlock()
+		return 0, errOffloadWrite
+	}
 	if b.loopMode {
 		b.mu.Unlock()
 		b.under.Write(p)
@@ -265,4 +270,23 @@ func eofOr(err error) error {
 		return io.EOF
 	}
 	return err
+}
+
+// hasInbound reports whether received ciphertext is queued or borrowed.
+// Loop-only, loop mode.
+func (b *bio) hasInbound() bool { return b.r < len(b.in) || len(b.borrowed) > 0 }
+
+// hasOutbound reports whether handshake ciphertext is waiting to be shipped.
+// Loop-only.
+func (b *bio) hasOutbound() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.out) > 0
+}
+
+// blockWrites makes every later Write fail with errOffloadWrite. Loop-only.
+func (b *bio) blockWrites() {
+	b.mu.Lock()
+	b.noWrite = true
+	b.mu.Unlock()
 }

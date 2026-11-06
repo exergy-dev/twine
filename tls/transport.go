@@ -3,9 +3,11 @@ package tls
 import (
 	ctls "crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"runtime/debug"
+	"syscall"
 	"time"
 
 	"github.com/robert-malhotra/twine"
@@ -52,7 +54,9 @@ type Transport struct {
 	// closeDeferred records a LoseConnection made the same way.
 	deferred      []byte
 	closeDeferred bool
-	offloaded     bool // kTLS installed (never, today)
+	offloaded     bool // kTLS TX installed: Write goes straight to the socket
+	rxOffloaded   bool // kTLS RX installed too: DataReceived is plaintext
+	closeTimer    *twine.Timer
 	lostErr       error
 	hsTimer       *twine.Timer
 	drainFn       func()
@@ -137,6 +141,10 @@ func (w *wrapper) DataReceived(b []byte) {
 		if t.peerEOF || t.aborted {
 			return
 		}
+		if t.rxOffloaded {
+			t.inner.DataReceived(b) // the kernel already decrypted b
+			return
+		}
 		t.bio.lend(b)
 		defer t.bio.unlend() // never retain b, even if inner panics
 		t.drain()
@@ -167,6 +175,9 @@ func (w *wrapper) ConnectionLost(err error) {
 	if t.made {
 		if t.lostErr != nil {
 			err = t.lostErr
+		}
+		if t.rxOffloaded && errors.Is(err, syscall.EIO) {
+			err = fmt.Errorf("tls: kTLS read got a non-data record (close_notify, alert or KeyUpdate): %w", err)
 		}
 		if err == nil && !t.peerEOF && !t.closeSent {
 			// A TCP FIN without close_notify is a truncation, not a clean
@@ -216,7 +227,7 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	t.state = stReady
 	t.plain = make([]byte, plainBufSize)
 	if t.f.opts.kernelOffload {
-		t.offloaded = installKTLS(t) // always false today; see KTLSSupported
+		t.offloaded = installKTLS(t)
 	}
 	t.made = true
 	func() {
@@ -233,7 +244,7 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	}
 	// Application data may already be waiting, both in the bio queue and
 	// inside crypto/tls's record buffer.
-	if !t.aborted && t.lostErr == nil {
+	if !t.aborted && t.lostErr == nil && !t.rxOffloaded {
 		t.drainGuarded()
 	}
 }
@@ -301,6 +312,9 @@ func (t *Transport) drainGuarded() {
 
 // drainTask runs on the loop after ResumeReading.
 func (t *Transport) drainTask() {
+	if t.rxOffloaded {
+		return
+	}
 	if t.state == stReady && !t.paused && !t.aborted {
 		t.drainGuarded()
 	}
@@ -360,8 +374,10 @@ func (t *Transport) ConnectionState() ctls.ConnectionState {
 	return t.tc.ConnectionState()
 }
 
-// KernelOffloaded reports whether record encryption has been offloaded to
-// the kernel (kTLS). It is always false today; see KTLSSupported.
+// KernelOffloaded reports whether record protection of outgoing data has
+// been offloaded to the kernel (kTLS TX). On a server it normally covers
+// incoming data too; see the package documentation. The mode is fixed when
+// inner.ConnectionMade is called.
 func (t *Transport) KernelOffloaded() bool { return t.offloaded }
 
 // Underlying returns the raw (ciphertext) transport. Writing to it directly
@@ -374,6 +390,10 @@ func (t *Transport) Underlying() twine.Transport { return t.under }
 // after LoseConnection or close are dropped.
 func (t *Transport) Write(b []byte) {
 	if t.state != stReady || t.closeSent || len(b) == 0 {
+		return
+	}
+	if t.offloaded {
+		t.under.Write(b) // the kernel builds the records
 		return
 	}
 	if t.inTLS {
@@ -435,6 +455,13 @@ func (t *Transport) LoseConnection() {
 		}
 		return
 	}
+	if t.offloaded {
+		if !t.closeSent {
+			t.closeSent = true
+			t.closeOffloaded(time.Millisecond)
+		}
+		return
+	}
 	if t.closeDeferred {
 		return
 	}
@@ -449,6 +476,42 @@ func (t *Transport) LoseConnection() {
 		t.leaveTLS(nil)
 	}
 	t.under.LoseConnection()
+}
+
+// closeOffloaded sends close_notify through the kernel and then loses the
+// connection. The alert must follow every byte of application data already
+// accepted, but data the core could not write immediately sits in its ring
+// and reaches the socket later; an alert sent now would overtake it. So the
+// alert waits (polling with a short back-off) until the ring is empty.
+func (t *Transport) closeOffloaded(delay time.Duration) {
+	t.closeTimer = nil
+	if t.state != stReady {
+		return
+	}
+	if t.under.PendingWrite() == 0 {
+		fder, _ := t.under.(interface{ FD() int })
+		fd := -1
+		if fder != nil {
+			fd = fder.FD()
+		}
+		if fd < 0 {
+			t.under.Abort()
+			return
+		}
+		err := sendCloseNotify(fd)
+		if err == nil {
+			t.under.LoseConnection()
+			return
+		}
+		if !isRetry(err) {
+			t.under.Abort()
+			return
+		}
+	}
+	if delay < 20*time.Millisecond {
+		delay *= 2
+	}
+	t.closeTimer = t.loop.CallLater(delay, func() { t.closeOffloaded(delay) })
 }
 
 // Abort closes the underlying connection immediately without close_notify,

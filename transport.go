@@ -24,6 +24,18 @@ var _ Consumer = (*transport)(nil)
 // and that connection is open.
 func (t *transport) live() bool { return t.gen == t.c.gen && t.c.flags&flagClosed == 0 }
 
+// FD returns the socket's file descriptor while the handle is live, and -1
+// otherwise. It exists for kernel offload setup (setsockopt, for example
+// kernel TLS) and must not be used for I/O: reading or writing the descriptor
+// behind the loop's back corrupts its buffering and readiness state. Loop
+// goroutine only.
+func (t *transport) FD() int {
+	if !t.live() {
+		return -1
+	}
+	return int(t.c.fd)
+}
+
 // Write copies b to the outbound ring only if an immediate write would block.
 func (t *transport) Write(b []byte) {
 	t.c.loop.assertInLoop()

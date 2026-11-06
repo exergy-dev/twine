@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -498,8 +499,8 @@ func TestInnerPanic(t *testing.T) {
 
 func TestKernelOffloadFallsBack(t *testing.T) {
 	t.Logf("KTLSAvailable=%v KTLSSupported=%v", twtls.KTLSAvailable(), twtls.KTLSSupported())
-	if twtls.KTLSSupported() {
-		t.Fatal("KTLSSupported must be false")
+	if twtls.KTLSSupported() != (runtime.GOOS == "linux") {
+		t.Fatalf("KTLSSupported=%v on %s", twtls.KTLSSupported(), runtime.GOOS)
 	}
 	if b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp"); err == nil {
 		want := strings.Contains(string(b), "tls")
@@ -512,7 +513,8 @@ func TestKernelOffloadFallsBack(t *testing.T) {
 	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
 		return &offloadProto{ch: offloaded}
 	}), twtls.KernelOffload(true))
-	c := dial(t, addr, nil)
+	// TLS 1.2 is never offloaded (see ktls_test.go for TLS 1.3).
+	c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MaxVersion: ctls.VersionTLS12})
 	defer c.Close()
 	if _, err := c.Write([]byte("abc")); err != nil {
 		t.Fatal(err)

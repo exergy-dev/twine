@@ -30,12 +30,12 @@ func buildOptions(opts []Option) options {
 	return o
 }
 
-// KernelOffload requests kTLS offload after the handshake. It is accepted for
-// forward compatibility but currently always falls back, silently, to the
-// memory BIO: Go's crypto/tls does not expose the record-layer traffic keys
-// that setsockopt(SOL_TLS) needs (see the package documentation,
-// KTLSSupported and KTLSAvailable). Transport.KernelOffloaded reports the
-// mode actually in use.
+// KernelOffload requests kTLS offload after the handshake (Linux 5.x+ with
+// the tls module; TLS 1.3 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305
+// only). When any precondition fails the connection silently stays on the
+// memory BIO. A server offloads both directions, a client transmit only.
+// Transport.KernelOffloaded reports the mode in use; see the package
+// documentation, "Kernel TLS", for the exact rules and limitations.
 func KernelOffload(on bool) Option { return func(o *options) { o.kernelOffload = on } }
 
 // OnHandshakeError registers fn to be called, on the connection's loop, when
