@@ -698,10 +698,14 @@ func capturePanic(r any) *PanicError {
 }
 
 // flushDirty issues one writev per dirty conn and updates write interest and
-// producer state.
+// producer state. It processes the conns that were dirty when it started;
+// conns re-marked during the pass (a producer that refilled the ring) wait
+// for the next iteration, so one fast producer cannot monopolise the loop.
 func (l *Loop) flushDirty() {
-	for i := 0; i < len(l.dirty); i++ {
+	n := len(l.dirty)
+	for i := 0; i < n; i++ {
 		c := l.dirty[i]
+		l.dirty[i] = nil
 		c.flags &^= flagDirty
 		if c.flags&flagClosed != 0 {
 			continue
@@ -712,8 +716,13 @@ func (l *Loop) flushDirty() {
 		}
 		c.flush()
 	}
-	clear(l.dirty)
-	l.dirty = l.dirty[:0]
+	if len(l.dirty) == n {
+		l.dirty = l.dirty[:0]
+		return
+	}
+	rest := copy(l.dirty, l.dirty[n:])
+	clear(l.dirty[rest:])
+	l.dirty = l.dirty[:rest]
 }
 
 // recycleClosed finishes closing connections: ConnectionLost, fd close,

@@ -437,9 +437,10 @@ func (c *conn) flush() {
 			c.flags |= flagFlushing
 			c.loop.safeCall(c, c.producer.ResumeProducing)
 			c.flags &^= flagFlushing
-			if c.ring.Len() > 0 || (c.producer != nil && !c.streaming && c.flags&flagClosed == 0) {
-				// Keep poking while the producer keeps up; the loop runs
-				// flushDirty once per iteration so this cannot spin.
+			// Twisted contract: one ResumeProducing per drain. A producer
+			// that wrote nothing is expected to call Write itself later,
+			// which re-marks the conn dirty through the direct-hit path.
+			if c.ring.Len() > 0 {
 				c.markDirty()
 			}
 		}
