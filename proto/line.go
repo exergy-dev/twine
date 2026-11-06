@@ -6,9 +6,9 @@ import (
 	"github.com/robert-malhotra/twine"
 )
 
-// DefaultDelimiter is the LineReceiver delimiter used when Delimiter is
-// empty.
-var DefaultDelimiter = []byte("\r\n")
+// defaultDelimiter is the LineReceiver delimiter used when Delimiter is
+// empty. Unexported so it cannot be mutated.
+var defaultDelimiter = []byte("\r\n")
 
 // DefaultMaxLineLength is the LineReceiver line limit used when
 // MaxLineLength is zero.
@@ -117,7 +117,7 @@ func (lr *LineReceiver) SendLine(t twine.Transport, line []byte) {
 
 func (lr *LineReceiver) delim() []byte {
 	if len(lr.Delimiter) == 0 {
-		return DefaultDelimiter
+		return defaultDelimiter
 	}
 	return lr.Delimiter
 }

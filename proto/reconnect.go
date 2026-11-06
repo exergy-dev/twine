@@ -37,9 +37,10 @@ func Factor(f float64) Option {
 	return func(rc *ReconnectingClient) { rc.factor = f }
 }
 
-// MaxRetries gives up after n consecutive failed attempts (connect errors or
-// connection losses without an intervening successful connect). 0, the
-// default, retries forever.
+// MaxRetries retries at most n times after consecutive failures (connect
+// errors or connection losses with no successful connect in between), i.e.
+// it gives up after n+1 consecutive failed attempts. 0, the default, retries
+// forever.
 func MaxRetries(n int) Option {
 	return func(rc *ReconnectingClient) { rc.maxRetries = n }
 }
@@ -236,13 +237,22 @@ func (rc *ReconnectingClient) retry() {
 		rc.giveUp.Store(true)
 		return
 	}
-	ceil := float64(rc.initial)
-	for i := 1; i < rc.failures && ceil < float64(rc.max); i++ {
-		ceil *= rc.factor
+	rc.timer = rc.loop.CallLater(rc.jitter(rc.ceiling(rc.failures)), rc.fire)
+}
+
+// ceiling returns the backoff ceiling for the n-th consecutive retry:
+// min(MaxDelay, InitialDelay*Factor^(n-1)).
+func (rc *ReconnectingClient) ceiling(n int) time.Duration {
+	c := float64(rc.initial)
+	for i := 1; i < n && c < float64(rc.max); i++ {
+		c *= rc.factor
 	}
-	ceil = min(ceil, float64(rc.max))
-	d := time.Duration(rand.Int64N(int64(ceil) + 1))
-	rc.timer = rc.loop.CallLater(d, rc.fire)
+	return time.Duration(min(c, float64(rc.max)))
+}
+
+// jitter draws a full-jitter delay uniformly from [0, ceil].
+func (rc *ReconnectingClient) jitter(ceil time.Duration) time.Duration {
+	return time.Duration(rand.Int64N(int64(ceil) + 1))
 }
 
 func (rc *ReconnectingClient) fire() {
