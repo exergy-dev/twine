@@ -22,6 +22,10 @@
 //   - A failed non-blocking connect is reported as Writable|Hangup|Error on
 //     epoll and as Writable|Hangup|Error (EV_EOF with a non-zero socket error
 //     in fflags) on kqueue.
+//   - On io_uring (build tag twine_uring) a wakeup reports only the
+//     direction(s) that triggered it, e.g. Readable without Writable on an
+//     already-writable socket; do not rely on Writable being re-reported.
+//     Add on a closed fd succeeds and the next Wait reports Error|Hangup.
 //   - Mod re-evaluates readiness on both backends: if the fd is already ready
 //     for a newly requested direction, the next Wait reports it.
 //   - Re-registration differs: epoll Add of an already registered fd fails
