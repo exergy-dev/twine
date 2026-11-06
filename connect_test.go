@@ -210,10 +210,11 @@ func blackholeAddr(t *testing.T) string {
 		return nonRoutable
 	}
 	// Fall back to a listener with backlog 0 whose queue we fill.
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
 	if err != nil {
 		t.Skipf("no blackhole available: %v", err)
 	}
+	unix.CloseOnExec(fd)
 	t.Cleanup(func() { unix.Close(fd) })
 	if err := unix.Bind(fd, &unix.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
 		t.Skipf("no blackhole available: %v", err)
