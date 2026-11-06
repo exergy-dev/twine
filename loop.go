@@ -174,7 +174,7 @@ func (l *Loop) CallFromThread(fn func()) {
 func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 	l.assertInLoop()
 	t := &Timer{loop: l, fn: fn}
-	t.w.Fn = t.fire
+	t.w.FnT = fireNode
 	if d <= 0 {
 		// Run on the next iteration rather than inside the current wheel
 		// advance, so a callback that re-arms itself with 0 cannot starve

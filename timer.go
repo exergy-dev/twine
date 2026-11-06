@@ -2,6 +2,7 @@ package twine
 
 import (
 	"time"
+	"unsafe"
 
 	"github.com/robert-malhotra/twine/internal/wheel"
 )
@@ -12,13 +13,17 @@ import (
 // after the timer fired can never cancel or move a later timer. Stop and
 // Reset on a fired or stopped Timer are harmless no-ops.
 type Timer struct {
-	w    wheel.Timer
+	w    wheel.Timer // must stay the first field: fireNode converts back from it
 	loop *Loop
 	fn   func()
 	due  bool // queued in Loop.due (zero delay) rather than the wheel
 }
 
-// fire is the wheel callback.
+// fireNode is the wheel callback (wheel.Timer.FnT); storing a package-level
+// function instead of a method value keeps CallLater at one allocation.
+func fireNode(w *wheel.Timer) { (*Timer)(unsafe.Pointer(w)).fire() }
+
+// fire runs the user callback once.
 func (t *Timer) fire() {
 	l := t.loop
 	fn := t.fn

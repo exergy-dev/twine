@@ -142,37 +142,41 @@ func bumpSink() { sinkCounter++ }
 func TestTimerFireZeroAlloc(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	l := e.loops[0]
-	var fire, cancel, due float64
+	var fire, insertCancel, due float64
 	onLoop(t, l, func() {
 		fn := bumpSink
-		l.CallLater(time.Millisecond, fn)
-		l.nowNs += 2e6
-		l.wheel.Advance(l.nowNs)
+		// Fire path: pre-arm one timer per millisecond, then advance one
+		// tick per run so each run fires exactly one timer.
+		for i := 1; i <= 1100; i++ {
+			l.CallLater(time.Duration(i)*time.Millisecond, fn)
+		}
 		fire = testing.AllocsPerRun(1000, func() {
-			l.CallLater(time.Millisecond, fn)
-			l.nowNs += 2e6
+			l.nowNs += int64(time.Millisecond)
 			l.wheel.Advance(l.nowNs)
 		})
-		cancel = testing.AllocsPerRun(1000, func() {
+		// Insert+cancel: exactly one allocation, the Timer handle itself
+		// (handles are not pooled so a stale handle can never cancel a
+		// later timer; see timer.go).
+		insertCancel = testing.AllocsPerRun(1000, func() {
 			tm := l.CallLater(time.Second, fn)
 			tm.Stop()
 		})
-		// Zero-delay timers go through the due list.
-		l.CallLater(0, fn)
-		l.fireDue()
+		// Zero-delay timers go through the due list; firing them allocates
+		// nothing beyond the handle.
 		due = testing.AllocsPerRun(1000, func() {
 			l.CallLater(0, fn)
+			l.takeDue()
 			l.fireDue()
 		})
 	})
 	if fire != 0 {
-		t.Errorf("timer insert+fire allocates: %v", fire)
+		t.Errorf("timer fire allocates: %v", fire)
 	}
-	if cancel != 0 {
-		t.Errorf("timer insert+cancel allocates: %v", cancel)
+	if insertCancel > 1 {
+		t.Errorf("timer insert+cancel allocates %v (want ≤ 1: the handle)", insertCancel)
 	}
-	if due != 0 {
-		t.Errorf("CallLater(0) insert+fire allocates: %v", due)
+	if due > 1 {
+		t.Errorf("CallLater(0) insert+fire allocates %v (want ≤ 1)", due)
 	}
 }
 

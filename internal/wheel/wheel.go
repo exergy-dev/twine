@@ -51,6 +51,11 @@ type Timer struct {
 	// Fn is called by Advance when the timer expires. It may be changed
 	// while the timer is scheduled; the value at fire time is used.
 	Fn func()
+	// FnT, when Fn is nil, is called with the expired timer. A package-level
+	// function stored here costs no allocation, unlike a method value in Fn;
+	// callers embed Timer as the first field of their own struct and convert
+	// the pointer back.
+	FnT func(*Timer)
 
 	next, prev *Timer
 	expires    int64 // absolute expiry in ticks since the wheel's base
@@ -296,6 +301,8 @@ func (w *Wheel) fireList(l *Timer) int {
 		n++
 		if t.Fn != nil {
 			t.Fn()
+		} else if t.FnT != nil {
+			t.FnT(t)
 		}
 	}
 	return n
