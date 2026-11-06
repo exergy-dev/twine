@@ -58,6 +58,24 @@ func main() {
 | `twisted.internet.ssl` | `tls` package | Memory-BIO over `crypto/tls`; handshake off-loop. |
 | `reactor.addSystemEventTrigger` | `engine.OnShutdown(f)` | — |
 
+## Packages
+
+| Package | What it holds |
+| --- | --- |
+| `twine` | Engine, Loop, Protocol/Transport/Factory, Future, timers, CallFromThread, DeferToThread, UDP, metrics, watchdog, `Blocking` adapter |
+| `proto` | `LineReceiver`, `NetstringReceiver`, `LengthPrefixed`, `AMP`, `ReconnectingClient`, `Broadcast` |
+| `http` | Zero-allocation HTTP/1.1 server (`http.Server`, `RequestCtx`) and `Adapt(net/http.Handler)` |
+| `tls` | Memory-BIO TLS over `crypto/tls` (`tls.Server`, `tls.Client`, `tls.Listen`, `tls.Connect`), kTLS probe |
+| `internal/*` | poller (epoll/kqueue/io_uring), sockets, slab allocator, write ring, MPSC queue, timing wheel |
+| `bench` | separate module with the comparison harness (goroutine-per-conn, gnet, net/http) |
+| `examples` | `echo`, `chat`, `http_hello`, `udp_echo`, `client_reconnect` |
+
+Build tags: `twine_debug` (assertions, buffer poisoning, Future stacks) and
+`twine_uring` (Linux io_uring readiness backend; falls back to epoll when
+io_uring is unavailable). kTLS data-path offload is not available because
+`crypto/tls` does not export record-layer keys; `tls.KernelOffload(true)`
+probes the kernel and falls back to the memory BIO.
+
 ## Ownership rules (short form)
 
 1. A connection belongs to one loop for life. Protocol and Transport methods,

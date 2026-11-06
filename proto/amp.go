@@ -61,7 +61,10 @@ var (
 // handler may also fail with a *RemoteError to choose the code and
 // description sent to the peer.
 type RemoteError struct {
-	Code        string
+	// Code is the peer's _error_code (UnknownErrorCode, UnhandledErrorCode
+	// or an application-defined code).
+	Code string
+	// Description is the peer's _error_description.
 	Description string
 }
 
