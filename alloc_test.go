@@ -42,7 +42,7 @@ func TestReadPathZeroAlloc(t *testing.T) {
 		p := &countProto{}
 		c, peer := socketpairConn(t, l, p)
 		defer unix.Close(peer)
-		c.SetIdleTimeout(30e9)
+		c.h.SetIdleTimeout(30e9)
 		msg := make([]byte, 64)
 		// Warm up once.
 		unix.Write(peer, msg)
@@ -68,9 +68,9 @@ func TestWriteHitPathZeroAlloc(t *testing.T) {
 		defer unix.Close(peer)
 		msg := make([]byte, 64)
 		drain := make([]byte, 64<<10)
-		c.Write(msg)
+		c.h.Write(msg)
 		allocs := testing.AllocsPerRun(1000, func() {
-			c.Write(msg)
+			c.h.Write(msg)
 			unix.Read(peer, drain)
 		})
 		if allocs != 0 {
@@ -81,7 +81,7 @@ func TestWriteHitPathZeroAlloc(t *testing.T) {
 			return
 		}
 		allocs = testing.AllocsPerRun(1000, func() {
-			c.Writev(msg[:32], msg[32:])
+			c.h.Writev(msg[:32], msg[32:])
 			unix.Read(peer, drain)
 		})
 		if allocs != 0 {
@@ -99,15 +99,15 @@ func TestWriteBufferedPathZeroAlloc(t *testing.T) {
 		big := make([]byte, 1<<20)
 		// Fill the socket until the kernel pushes back so the ring is used.
 		for c.ring.Len() == 0 {
-			c.Write(big)
+			c.h.Write(big)
 		}
 		// Warm slab free lists at every class that 64 KiB of 64-byte writes
 		// will touch, then drain the ring.
-		c.Write(make([]byte, 128<<10))
+		c.h.Write(make([]byte, 128<<10))
 		c.ring.Reset()
-		c.Write([]byte{1}) // ring non-empty again, append path from here on
+		c.h.Write([]byte{1}) // ring non-empty again, append path from here on
 		msg := make([]byte, 64)
-		allocs := testing.AllocsPerRun(1000, func() { c.Write(msg) })
+		allocs := testing.AllocsPerRun(1000, func() { c.h.Write(msg) })
 		if allocs != 0 {
 			t.Errorf("write buffered path allocates: %v", allocs)
 		}
@@ -127,7 +127,7 @@ func TestWriteBufferedPathZeroAlloc(t *testing.T) {
 					break
 				}
 			}
-			c.Write(big[:4096])
+			c.h.Write(big[:4096])
 		})
 		if allocs != 0 {
 			t.Errorf("flush path allocates: %v", allocs)

@@ -25,7 +25,7 @@ type Future[T any] struct {
 	handled  bool // a Catch was registered
 	waiters  chan struct{}
 
-	stack []byte // creation stack in debug mode
+	dbg *futureDebug // creation stack and settle flag in debug mode
 }
 
 const (
@@ -47,22 +47,31 @@ func NewFuture[T any](l *Loop) (*Future[T], Resolver[T]) {
 	if debugFutures {
 		buf := make([]byte, 4096)
 		n := runtime.Stack(buf, false)
-		f.stack = buf[:n]
-		runtime.AddCleanup(f, futureCleanup, &futureDebug{stack: f.stack, state: &f.state, loop: l})
+		// The cleanup argument must not be reachable from f, or f is never
+		// collected; dbg points only at the loop, not at the Future.
+		f.dbg = &futureDebug{stack: buf[:n], loop: l}
+		runtime.AddCleanup(f, futureCleanup, f.dbg)
 	}
 	return f, (*resolver[T])(f)
 }
 
 type futureDebug struct {
-	stack []byte
-	state *atomic.Int32
-	loop  *Loop
+	stack   []byte
+	settled atomic.Bool
+	loop    *Loop
 }
 
 func futureCleanup(d *futureDebug) {
-	if d.state.Load() == futPending && d.loop != nil {
+	if !d.settled.Load() && d.loop != nil {
 		d.loop.cfg.logger.Warn("twine: Future garbage-collected without resolving", "loop", d.loop.id, "created", string(d.stack))
 	}
+}
+
+func (f *Future[T]) debugStack() string {
+	if f.dbg == nil {
+		return ""
+	}
+	return string(f.dbg.stack)
 }
 
 type resolver[T any] Future[T]
@@ -80,6 +89,9 @@ func (f *Future[T]) settle(v T, err error, st int32) {
 	}
 	f.val, f.err = v, err
 	f.state.Store(st)
+	if f.dbg != nil {
+		f.dbg.settled.Store(true)
+	}
 	w := f.waiters
 	f.mu.Unlock()
 	if w != nil {
@@ -120,7 +132,7 @@ func (f *Future[T]) dispatch() {
 			f.guard(func() { fn(err) })
 		}
 		if !handled && len(catches) == 0 && debugFutures && f.loop != nil {
-			f.loop.cfg.logger.Warn("twine: unhandled Future rejection", "loop", f.loop.id, "err", err, "created", string(f.stack))
+			f.loop.cfg.logger.Warn("twine: unhandled Future rejection", "loop", f.loop.id, "err", err, "created", f.debugStack())
 		}
 	}
 	for _, fn := range finallys {

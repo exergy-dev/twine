@@ -197,6 +197,12 @@ func (l *Loop) flushUDP(c *conn) {
 	}
 }
 
+// GetHost returns the bound address (DatagramTransport).
+func (c *conn) GetHost() net.Addr { return c.host }
+
+// Loop returns the owning loop (DatagramTransport).
+func (c *conn) Loop() *Loop { return c.loop }
+
 // Close closes the UDP socket (DatagramTransport). Loop-affine.
 func (c *conn) Close() {
 	c.loop.assertInLoop()

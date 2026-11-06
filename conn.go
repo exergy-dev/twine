@@ -34,6 +34,7 @@ const (
 	flagRecycled                          // finishClose done
 	flagProducerPaused                    // PauseProducing has been delivered
 	flagNoDelay
+	flagLinger // idle timer is acting as the half-close linger deadline
 )
 
 // conn is the per-connection state. It implements Transport directly so that
@@ -60,16 +61,21 @@ type conn struct {
 	lst  *listener
 	udp  *udpState
 	dial *dialState
+
+	// gen is bumped on recycle so stale transport handles become inert.
+	gen uint32
+	h   *transport
 }
 
 // reset clears user-visible state before the conn goes on the free list.
 func (c *conn) reset() {
+	c.gen++
+	c.h = nil
 	c.fd = -1
 	c.kind = kindTCP
 	c.flags = 0
 	c.proto = nil
 	c.idleTimeout = 0
-	c.idle.Fn = c.onIdle
 	c.peer, c.host = nil, nil
 	c.ctx = nil
 	c.lostErr = nil
@@ -93,6 +99,7 @@ func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory, noDelay bool) *
 	}
 	l.register(c)
 	l.metrics.Connections.Add(1)
+	c.h = &transport{c: c, gen: c.gen}
 	c.proto = f.BuildProtocol(peer)
 	if c.proto == nil {
 		c.proto = nopProtocol{}
@@ -111,7 +118,7 @@ func (l *Loop) callConnectionMade(c *conn) {
 	l.cbProto.Store(c)
 	defer l.endCallback()
 	defer l.recoverProto(c)
-	c.proto.ConnectionMade(c)
+	c.proto.ConnectionMade(c.h)
 }
 
 // nopProtocol stands in when a Factory returns nil (Twisted drops the
@@ -127,7 +134,9 @@ func (c *conn) onIdle() {
 	if c.flags&flagClosed != 0 {
 		return
 	}
-	c.lostErr = ErrIdleTimeout
+	if c.flags&flagLinger == 0 {
+		c.lostErr = ErrIdleTimeout
+	}
 	c.abortNoCallback()
 }
 
@@ -197,13 +206,22 @@ func (c *conn) finishLose() {
 	}
 	if c.flags&flagShutWR == 0 {
 		c.flags |= flagShutWR
+		linger := c.loop.cfg.closeLinger
+		if linger <= 0 {
+			c.abortNoCallback()
+			return
+		}
 		if err := unix.Shutdown(int(c.fd), unix.SHUT_WR); err != nil {
 			c.abortNoCallback()
 			return
 		}
+		// Keep reading until the peer closes (a read of 0 completes the
+		// close with ConnectionLost(nil)), but not forever: reuse the idle
+		// timer as a linger deadline.
+		c.flags |= flagLinger
+		c.idleTimeout = linger
+		c.loop.wheel.Add(&c.idle, c.loop.nowNs+int64(linger))
 	}
-	// Keep reading until the peer closes; a read of 0 then completes the
-	// close with ConnectionLost(nil).
 }
 
 // --- write path ------------------------------------------------------------

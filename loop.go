@@ -39,10 +39,11 @@ type Loop struct {
 	moreTasks   bool     // drain hit the per-iteration cap
 
 	// Identity.
-	tid     atomic.Int64 // kernel thread id when locked
-	gid     atomic.Int64 // goroutine id fallback
-	started atomic.Bool
-	stopped atomic.Bool
+	tid      atomic.Int64 // kernel thread id when locked
+	gid      atomic.Int64 // goroutine id fallback
+	started  atomic.Bool
+	stopped  atomic.Bool
+	wakeBusy atomic.Int32 // CallFromThread callers inside Wake
 
 	// Reactor state (loop-affine from here on).
 	poller *poll.Poller
@@ -145,10 +146,12 @@ func (l *Loop) CallFromThread(fn func()) {
 		l.overflowMu.Unlock()
 	}
 	if l.wakePending.CompareAndSwap(false, true) {
-		if l.started.Load() {
+		l.wakeBusy.Add(1)
+		if l.started.Load() && !l.stopped.Load() {
 			l.metrics.Wakeups.Add(1)
 			_ = l.poller.Wake()
 		}
+		l.wakeBusy.Add(-1)
 	} else {
 		l.metrics.WakeupsCoalesced.Add(1)
 	}
@@ -236,6 +239,11 @@ func (l *Loop) run(ready chan<- error) {
 
 	l.stopped.Store(true)
 	l.drainTasksAfterStop()
+	// A CallFromThread that observed stopped == false may still be inside
+	// Wake; never close the poller under it.
+	for l.wakeBusy.Load() != 0 {
+		runtime.Gosched()
+	}
 	_ = l.poller.Close()
 	close(l.exitCh)
 }

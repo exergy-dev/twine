@@ -104,6 +104,7 @@ func (l *Loop) completeConnect(c *conn) {
 	c.host = sock.LocalTCP(fd)
 	c.kind = kindTCP
 	l.metrics.Connections.Add(1)
+	c.h = &transport{c: c, gen: c.gen}
 	c.proto = d.factory.BuildProtocol(c.peer)
 	if c.proto == nil {
 		c.proto = nopProtocol{}
@@ -130,7 +131,7 @@ func (l *Loop) completeConnect(c *conn) {
 		d.res.Reject(c.lostErr)
 		return
 	}
-	d.res.Resolve(c)
+	d.res.Resolve(c.h)
 }
 
 // rejectConnect fails an in-flight connect and releases the fd.

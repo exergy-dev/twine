@@ -51,8 +51,10 @@ func (l *listener) Close() error {
 				}
 			})
 		} else {
-			// Loop never started; close the fd directly.
+			// Loop never started; close the fd directly. registerListener
+			// sees fd == -1 and skips it.
 			_ = unix.Close(int(c.fd))
+			c.fd = -1
 		}
 	}
 	return nil
@@ -95,8 +97,12 @@ func (e *Engine) newTCPListener(addr string, f Factory, lc listenConfig) (*liste
 
 // registerListener adds the listening fd to the loop's poller.
 func (l *Loop) registerListener(c *conn) {
+	if c.fd < 0 {
+		return
+	}
 	if l.stopping || c.lst.closed.Load() {
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
 	l.register(c)

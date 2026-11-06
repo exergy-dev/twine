@@ -647,11 +647,21 @@ Decisions deferred to implementation time, and the risks most likely to cost the
 
 **Open questions** (decide in the PR that first needs them; record the answer here)
 
-- [ ] Should `DataReceived` be allowed to call `Write` re-entrantly during a flush? Proposed: yes, with the ring append path only, never a direct syscall mid-flush.
-- [ ] Build on gnet's or netpoll's poller instead of writing `internal/poll`? Proposed: write our own (the interface is ~200 lines) to keep the root module dependency-free, but benchmark against gnet in Phase 1 to confirm parity before building further.
-- [ ] Should `Loops(0)` default to `GOMAXPROCS` or `GOMAXPROCS/2` when the worker pool is in heavy use? Measure in Phase 3.
-- [ ] Expose `io_uring` as a default on kernels ≥ 6.x once stable, or keep it opt-in forever?
-- [ ] `Future.Then` returning the same Future (Twisted chaining) vs. a new one (JS promise semantics). Current spec: same Future; `Map` for transformation. Revisit if it confuses users in examples.
+- [x] Should `DataReceived` be allowed to call `Write` re-entrantly during a flush? **Decided: yes.** `conn.flush` sets `flagFlushing`; `Write` during a flush (e.g. from a producer callback) takes the ring append path only, never a direct syscall.
+- [x] Build on gnet's or netpoll's poller instead of writing `internal/poll`? **Decided: own poller** (`internal/poll`, epoll + kqueue, edge-triggered; io_uring readiness backend behind `twine_uring`). gnet is compared in `bench/echo_gnet` (see BENCHMARKS.md).
+- [x] Should `Loops(0)` default to `GOMAXPROCS` or `GOMAXPROCS/2` when the worker pool is in heavy use? **Decided: `GOMAXPROCS`**, with spin-polling auto-disabled when `Loops > GOMAXPROCS/2` (Section 7.6) so blocked loops release their Ps to the worker pool. Revisit with production data.
+- [ ] Expose `io_uring` as a default on kernels ≥ 6.x once stable, or keep it opt-in forever? **Status: opt-in** (`-tags twine_uring`); the backend is readiness-only (`IORING_OP_POLL_ADD` multishot), so it brings no completion-model batching yet. Default stays epoll.
+- [x] `Future.Then` returning the same Future (Twisted chaining) vs. a new one (JS promise semantics). **Decided: same Future; `Map` for transformation.** A panicking `Then` callback rejects the Future for the remaining `Catch` callbacks.
+
+**Decisions recorded during implementation**
+
+- `Transport` handles are generation-checked: `conn` structs are pooled, so a handle kept after `ConnectionLost` becomes inert (counted in `WriteAfterClose`) instead of aliasing the next connection that reuses the struct.
+- `LoseConnection` = flush, `SHUT_WR`, then close when the peer closes or after `CloseLinger` (default 10 s; 0 reproduces Twisted's close-on-flush). `Abort` = immediate close, pending writes discarded, `ConnectionLost(nil)`.
+- `CallLater(0)` runs on the next iteration via a per-loop due list, never re-entrantly inside the wheel advance (a self-re-arming zero-delay timer would otherwise spin inside `Advance`).
+- `OnShutdown` hooks run once on the `Run` goroutine after listeners close and before connections are closed (Section 8 rule 7 says "on each loop"; a single run is what the Twisted trigger does and is what users expect).
+- The watchdog dumps the loop goroutine via `runtime.Stack(all)` filtered by goroutine id instead of a signal to the locked thread (portable, no signal handler).
+- `CallFromThread` after loop exit drops the function and counts `BacklogDrops`; there is no return value to carry `ErrLoopStopped`, and `Loop.Stopped()` exposes the state.
+- kTLS offload is not implementable on `crypto/tls` (Go 1.25): record-layer traffic secrets are unexported and `ExportKeyingMaterial` derives different keys. `tls.KernelOffload(true)` probes the kernel and falls back to memory-BIO.
 
 **Risks**
 

@@ -27,7 +27,7 @@ type blockingEvent struct {
 
 type blockingProto struct {
 	inner Protocol
-	t     *conn
+	t     *transport
 	proxy *asyncTransport
 	ch    chan blockingEvent
 	// paused reading because the channel filled
@@ -39,9 +39,11 @@ type blockingProto struct {
 const blockingDepth = 64
 
 func (b *blockingProto) ConnectionMade(t Transport) {
-	b.t = t.(*conn)
-	b.proxy = &asyncTransport{c: b.t, bp: b}
-	b.ch = make(chan blockingEvent, blockingDepth)
+	b.t = t.(*transport)
+	b.proxy = &asyncTransport{c: b.t}
+	// +1 so the final ConnectionLost event never blocks the loop when the
+	// goroutine is behind by a full window.
+	b.ch = make(chan blockingEvent, blockingDepth+1)
 	go b.run()
 }
 
@@ -53,7 +55,7 @@ func (b *blockingProto) run() {
 			return
 		}
 		b.inner.DataReceived(ev.data)
-		b.t.loop.CallFromThread(b.consumed)
+		b.t.c.loop.CallFromThread(b.consumed)
 	}
 }
 
@@ -89,14 +91,15 @@ func (b *blockingProto) ConnectionLost(err error) {
 // asyncTransport is a Transport proxy safe to call from any goroutine. Writes
 // copy their argument because they are delivered asynchronously.
 type asyncTransport struct {
-	c  *conn
-	bp *blockingProto
+	c *transport
 }
+
+func (a *asyncTransport) call(fn func()) { a.c.c.loop.CallFromThread(fn) }
 
 func (a *asyncTransport) Write(b []byte) {
 	cp := make([]byte, len(b))
 	copy(cp, b)
-	a.c.loop.CallFromThread(func() { a.c.Write(cp) })
+	a.call(func() { a.c.Write(cp) })
 }
 
 func (a *asyncTransport) Writev(bs ...[]byte) {
@@ -108,23 +111,45 @@ func (a *asyncTransport) Writev(bs ...[]byte) {
 	for _, b := range bs {
 		cp = append(cp, b...)
 	}
-	a.c.loop.CallFromThread(func() { a.c.Write(cp) })
+	a.call(func() { a.c.Write(cp) })
 }
 
-func (a *asyncTransport) LoseConnection()     { a.c.loop.CallFromThread(a.c.LoseConnection) }
-func (a *asyncTransport) Abort()              { a.c.loop.CallFromThread(a.c.Abort) }
-func (a *asyncTransport) GetPeer() net.Addr   { return a.c.peer }
-func (a *asyncTransport) GetHost() net.Addr   { return a.c.host }
-func (a *asyncTransport) Loop() *Loop         { return a.c.loop }
-func (a *asyncTransport) SetContext(v any)    { a.c.loop.CallFromThread(func() { a.c.SetContext(v) }) }
-func (a *asyncTransport) Context() any        { return a.c.ctx }
-func (a *asyncTransport) PauseReading()       { a.c.loop.CallFromThread(a.c.PauseReading) }
-func (a *asyncTransport) ResumeReading()      { a.c.loop.CallFromThread(a.c.ResumeReading) }
-func (a *asyncTransport) UnregisterProducer() { a.c.loop.CallFromThread(a.c.UnregisterProducer) }
-func (a *asyncTransport) PendingWrite() int   { return a.c.ring.Len() }
-func (a *asyncTransport) SetIdleTimeout(d time.Duration) {
-	a.c.loop.CallFromThread(func() { a.c.SetIdleTimeout(d) })
+func (a *asyncTransport) LoseConnection()     { a.call(a.c.LoseConnection) }
+func (a *asyncTransport) Abort()              { a.call(a.c.Abort) }
+func (a *asyncTransport) GetPeer() net.Addr   { return a.c.GetPeer() }
+func (a *asyncTransport) GetHost() net.Addr   { return a.c.GetHost() }
+func (a *asyncTransport) Loop() *Loop         { return a.c.Loop() }
+func (a *asyncTransport) SetContext(v any)    { a.call(func() { a.c.SetContext(v) }) }
+func (a *asyncTransport) Context() any        { return a.sync(func() any { return a.c.Context() }) }
+func (a *asyncTransport) PauseReading()       { a.call(a.c.PauseReading) }
+func (a *asyncTransport) ResumeReading()      { a.call(a.c.ResumeReading) }
+func (a *asyncTransport) UnregisterProducer() { a.call(a.c.UnregisterProducer) }
+
+// PendingWrite blocks the calling goroutine until the loop answers.
+func (a *asyncTransport) PendingWrite() int {
+	return a.sync(func() any { return a.c.PendingWrite() }).(int)
 }
+
+func (a *asyncTransport) SetIdleTimeout(d time.Duration) {
+	a.call(func() { a.c.SetIdleTimeout(d) })
+}
+
 func (a *asyncTransport) RegisterProducer(p Producer, streaming bool) {
-	a.c.loop.CallFromThread(func() { a.c.RegisterProducer(p, streaming) })
+	a.call(func() { a.c.RegisterProducer(p, streaming) })
+}
+
+// sync runs fn on the loop and waits for its result.
+func (a *asyncTransport) sync(fn func() any) any {
+	l := a.c.c.loop
+	if l.InLoop() {
+		return fn()
+	}
+	ch := make(chan any, 1)
+	l.CallFromThread(func() { ch <- fn() })
+	select {
+	case v := <-ch:
+		return v
+	case <-l.exitCh:
+		return fn()
+	}
 }

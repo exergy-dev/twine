@@ -34,6 +34,7 @@ type config struct {
 	shutdownTimeout time.Duration
 	busyPoll        time.Duration
 	udpBatch        int
+	closeLinger     time.Duration
 }
 
 func defaultConfig() config {
@@ -55,6 +56,7 @@ func defaultConfig() config {
 		taskQueueSize:   64 << 10,
 		shutdownTimeout: 5 * time.Second,
 		udpBatch:        64,
+		closeLinger:     10 * time.Second,
 	}
 }
 
@@ -136,6 +138,12 @@ func TaskQueueSize(n int) Option { return func(c *config) { c.taskQueueSize = n 
 // ShutdownTimeout bounds how long Stop waits for pending writes to flush.
 // Default 5s.
 func ShutdownTimeout(d time.Duration) Option { return func(c *config) { c.shutdownTimeout = d } }
+
+// CloseLinger bounds how long LoseConnection waits, after sending SHUT_WR,
+// for the peer to close its side before the connection is closed anyway.
+// Default 10s; 0 closes as soon as pending writes are flushed (Twisted's
+// behaviour).
+func CloseLinger(d time.Duration) Option { return func(c *config) { c.closeLinger = d } }
 
 // BusyPoll sets SO_BUSY_POLL on accepted sockets (Linux). 0 disables.
 func BusyPoll(d time.Duration) Option { return func(c *config) { c.busyPoll = d } }

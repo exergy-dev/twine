@@ -67,6 +67,12 @@ func main() {
 4. The slice passed to `DataReceived` is dead when the method returns.
 5. `Write(b)` never retains `b`; reuse it immediately.
 
+`Engine.Stop` closes listeners, runs `OnShutdown` hooks once on the goroutine
+that called `Run` (while loops are still live, so hooks may `CallFromThread`),
+then asks every loop to `LoseConnection` its connections, flush for up to
+`ShutdownTimeout`, and exit. `LoseConnection` half-closes (SHUT_WR) after the
+flush and waits up to `CloseLinger` (default 10 s) for the peer to close.
+
 Set `TWINE_DEBUG=1` (or build with `-tags twine_debug`) to turn on
 loop-affinity assertions, read-buffer poisoning and Future creation stacks.
 

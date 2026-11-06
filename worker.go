@@ -74,7 +74,9 @@ func (p *workerPool) drainSpill() {
 
 func (p *workerPool) ensureWorker() {
 	p.mu.Lock()
-	if p.alive < p.size && (p.alive == 0 || len(p.jobs) > 0) {
+	// Start another worker whenever the ones alive could all be busy:
+	// alive <= queued jobs (+1 for the job being submitted).
+	if p.alive < p.size && p.alive <= len(p.jobs) {
 		p.alive++
 		p.wg.Add(1)
 		go p.worker()
