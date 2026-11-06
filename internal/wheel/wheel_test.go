@@ -160,7 +160,7 @@ func propertyRun(t *testing.T, seed int64, strict bool) bool {
 		}
 	}
 	// Drain: everything must fire by the latest at + one tick.
-	var last int64 = now
+	last := now
 	for i, s := range h.model {
 		if s && h.at[i] > last {
 			last = h.at[i]

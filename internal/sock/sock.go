@@ -153,7 +153,7 @@ func Connect(network, addr, local string) (fd int, raddr *net.TCPAddr, inProgres
 		return -1, nil, false, err
 	}
 	if fam == unix.AF_INET6 && network == "tcp6" {
-		unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 1)
+		_ = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 1)
 	}
 	if la != nil {
 		lsa, err := toSockaddr(fam, la.IP, la.Port, la.Zone)

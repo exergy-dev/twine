@@ -129,14 +129,14 @@ func (f *Future[T]) dispatch() {
 	}
 	if st == futRejected {
 		for _, fn := range catches {
-			f.guard(func() { fn(err) })
+			_ = f.guard(func() { fn(err) })
 		}
 		if !handled && len(catches) == 0 && debugFutures && f.loop != nil {
 			f.loop.cfg.logger.Warn("twine: unhandled Future rejection", "loop", f.loop.id, "err", err, "created", f.debugStack())
 		}
 	}
 	for _, fn := range finallys {
-		f.guard(fn)
+		_ = f.guard(fn)
 	}
 }
 

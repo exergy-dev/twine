@@ -34,7 +34,7 @@ func New() (*Poller, error) {
 	}
 	ev := unix.EpollEvent{Events: unix.EPOLLIN | unix.EPOLLET, Fd: int32(p.w.fd)}
 	if err := unix.EpollCtl(epfd, unix.EPOLL_CTL_ADD, p.w.fd, &ev); err != nil {
-		p.w.close()
+		_ = p.w.close()
 		unix.Close(epfd)
 		return nil, err
 	}

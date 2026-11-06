@@ -170,7 +170,11 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 			if ns.StringReceived != nil {
 				ns.StringReceived(s)
 			}
-			ns.buf = ns.buf[:0]
+			if cap(ns.buf) > retainLimit {
+				ns.buf = nil // do not pin a large buffer per connection
+			} else {
+				ns.buf = ns.buf[:0]
+			}
 		}
 	}
 }
