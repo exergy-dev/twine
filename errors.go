@@ -62,6 +62,7 @@ type PanicError struct {
 	Stack []byte
 }
 
+// Error implements error.
 func (e *PanicError) Error() string {
 	return fmt.Sprintf("twine: panic: %v", e.Value)
 }

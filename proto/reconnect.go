@@ -64,13 +64,11 @@ func DialOptions(opts ...twine.DialOption) Option {
 //
 // The wrapped Factory builds the protocol for every successful connect; the
 // client interposes a thin wrapper protocol to observe the connection's
-// life. ResetDelay is called automatically on every successful connect, so
-// the backoff restarts from InitialDelay after a connection that was up is
-// lost (Twisted leaves the resetDelay call to the protocol; it is also
-// exposed here for protocols that want to reset only after, say, a
-// successful handshake: with the automatic reset that would be a no-op, so
-// a protocol that wants stricter behaviour can instead count failures
-// itself and call StopTrying).
+// life. A successful connect resets the backoff automatically (Twisted's
+// convention is for the protocol to call resetDelay once connected; Twine
+// does it for you), so after an established connection is lost the first
+// retry waits at most InitialDelay. ResetDelay is also exposed for callers
+// that want to restart the backoff at other times.
 //
 // All state lives on the loop; every method is safe from any goroutine and
 // is routed there with CallFromThread. Retrying stops on StopTrying, after
@@ -287,7 +285,7 @@ func (p *reconnectProto) ConnectionLost(err error) {
 	rc.t = nil
 	rc.lastErr = err
 	rc.setConnected(false)
-	if errors.Is(err, twine.ErrShutdown) || rc.loop.Engine() == nil {
+	if errors.Is(err, twine.ErrShutdown) {
 		rc.stopped = true
 		rc.giveUp.Store(true)
 		return
