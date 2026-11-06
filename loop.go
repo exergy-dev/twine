@@ -742,14 +742,15 @@ func (l *Loop) finishClose(c *conn) {
 	}
 	l.metrics.Closes.Add(1)
 	l.metrics.Connections.Add(^uint64(0))
-	if c.proto != nil && c.flags&flagLostCalled == 0 {
-		c.flags |= flagLostCalled
-		l.callConnectionLost(c)
-	}
+	// Twisted order: the producer is stopped before connectionLost.
 	if c.producer != nil {
 		p := c.producer
 		c.producer = nil
 		l.safeCall(c, p.StopProducing)
+	}
+	if c.proto != nil && c.flags&flagLostCalled == 0 {
+		c.flags |= flagLostCalled
+		l.callConnectionLost(c)
 	}
 	c.ring.Reset()
 	if c.flags&flagPooled != 0 {

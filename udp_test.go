@@ -1,0 +1,216 @@
+package twine
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// udpEcho echoes each datagram to its sender. "burst" triggers 200 WriteTo
+// calls in one callback.
+type udpEcho struct {
+	starts, stops atomic.Int32
+	stopCh        chan struct{}
+	stopOnce      sync.Once
+	tr            DatagramTransport
+
+	mu    sync.Mutex
+	froms []string
+	sink  errSink
+}
+
+func newUDPEcho() *udpEcho { return &udpEcho{stopCh: make(chan struct{})} }
+
+func (u *udpEcho) StartProtocol(t DatagramTransport) {
+	u.tr = t
+	u.starts.Add(1)
+	if !t.Loop().InLoop() {
+		u.sink.Errorf("StartProtocol ran off the loop")
+	}
+}
+
+func (u *udpEcho) DatagramReceived(b []byte, from net.Addr) {
+	u.mu.Lock()
+	u.froms = append(u.froms, from.String())
+	u.mu.Unlock()
+	if string(b) == "burst" {
+		for i := 0; i < 200; i++ {
+			u.tr.WriteTo([]byte(fmt.Sprintf("burst-%03d", i)), from)
+		}
+		return
+	}
+	u.tr.WriteTo(b, from)
+}
+
+func (u *udpEcho) StopProtocol() {
+	u.stops.Add(1)
+	u.stopOnce.Do(func() { close(u.stopCh) })
+}
+
+func dialUDP(t *testing.T, addr net.Addr) *net.UDPConn {
+	t.Helper()
+	c, err := net.DialUDP("udp", nil, addr.(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+func TestUDPEcho(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	u := newUDPEcho()
+	lst, err := e.ListenUDP("127.0.0.1:0", u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialUDP(t, lst.Addr())
+	buf := make([]byte, 2048)
+	for i := 0; i < 1000; i++ {
+		msg := []byte(fmt.Sprintf("datagram %d %s", i, bytes.Repeat([]byte{byte(i)}, i%300)))
+		if _, err := c.Write(msg); err != nil {
+			t.Fatal(err)
+		}
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := c.Read(buf)
+		if err != nil {
+			t.Fatalf("datagram %d: %v", i, err)
+		}
+		if !bytes.Equal(buf[:n], msg) {
+			t.Fatalf("datagram %d: echo mismatch (%d bytes, want %d)", i, n, len(msg))
+		}
+	}
+	u.mu.Lock()
+	froms := append([]string(nil), u.froms...)
+	u.mu.Unlock()
+	if len(froms) != 1000 {
+		t.Errorf("server saw %d datagrams, want 1000", len(froms))
+	}
+	want := c.LocalAddr().String()
+	for i, f := range froms {
+		if f != want {
+			t.Errorf("datagram %d from %s, want %s", i, f, want)
+			break
+		}
+	}
+	if s := u.starts.Load(); s != 1 {
+		t.Errorf("StartProtocol called %d times", s)
+	}
+	u.sink.report(t)
+}
+
+func TestUDPLargeDatagram(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	u := newUDPEcho()
+	lst, err := e.ListenUDP("127.0.0.1:0", u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialUDP(t, lst.Addr())
+	msg := make([]byte, 60000)
+	fillPattern(msg, 0)
+	if _, err := c.Write(msg); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 70000)
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := c.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(buf[:n], msg) {
+		t.Errorf("60 KB datagram echo: got %d bytes, mismatch", n)
+	}
+}
+
+func TestUDPBatchWriteTo(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	u := newUDPEcho()
+	lst, err := e.ListenUDP("127.0.0.1:0", u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialUDP(t, lst.Addr())
+	_ = c.SetReadBuffer(4 << 20)
+	if _, err := c.Write([]byte("burst")); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	buf := make([]byte, 256)
+	for len(seen) < 200 {
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := c.Read(buf)
+		if err != nil {
+			t.Fatalf("after %d of 200 datagrams: %v", len(seen), err)
+		}
+		s := string(buf[:n])
+		if seen[s] {
+			t.Errorf("duplicate datagram %q", s)
+		}
+		seen[s] = true
+	}
+	for i := 0; i < 200; i++ {
+		if k := fmt.Sprintf("burst-%03d", i); !seen[k] {
+			t.Errorf("missing %s", k)
+		}
+	}
+	if sent := e.Loops()[0].Metrics().DatagramsSent; sent < 200 {
+		t.Errorf("DatagramsSent = %d, want >= 200", sent)
+	}
+}
+
+func TestUDPStopProtocol(t *testing.T) {
+	t.Run("Close", func(t *testing.T) {
+		e := startEngine(t, Loops(1))
+		u := newUDPEcho()
+		lst, err := e.ListenUDP("127.0.0.1:0", u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !waitUntil(5*time.Second, func() bool { return u.starts.Load() == 1 }) {
+			t.Fatal("StartProtocol not called")
+		}
+		if err := lst.Close(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-u.stopCh:
+		case <-time.After(5 * time.Second):
+			t.Fatal("StopProtocol not called after Close")
+		}
+		_ = lst.Close() // idempotent
+		time.Sleep(20 * time.Millisecond)
+		if s := u.stops.Load(); s != 1 {
+			t.Errorf("StopProtocol called %d times", s)
+		}
+	})
+	t.Run("Engine.Stop", func(t *testing.T) {
+		e := New(Loops(1), Watchdog(0))
+		u := newUDPEcho()
+		if _, err := e.ListenUDP("127.0.0.1:0", u); err != nil {
+			t.Fatal(err)
+		}
+		errCh := make(chan error, 1)
+		go func() { errCh <- e.Run(context.Background()) }()
+		if !waitUntil(5*time.Second, func() bool { return u.starts.Load() == 1 }) {
+			t.Fatal("StartProtocol not called")
+		}
+		e.Stop()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("Run: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Run did not return")
+		}
+		if s := u.stops.Load(); s != 1 {
+			t.Errorf("StopProtocol called %d times on Engine.Stop, want 1", s)
+		}
+	})
+}
