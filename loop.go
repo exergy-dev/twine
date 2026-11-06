@@ -74,9 +74,9 @@ type Loop struct {
 	exitCh       chan struct{}
 
 	// Observability.
-	metrics   LoopMetrics
-	cbStart   atomic.Int64 // monotonic ns when the current callback began; 0 when idle
-	cbProto   atomic.Pointer[conn]
+	metrics LoopMetrics
+	cbStart atomic.Int64 // monotonic ns when the current callback began; 0 when idle
+	cbProto atomic.Pointer[conn]
 }
 
 func newLoop(e *Engine, id int) *Loop {
