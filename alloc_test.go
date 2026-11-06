@@ -12,9 +12,14 @@ import (
 // given protocol and returns the conn and the peer fd. Must run on the loop.
 func socketpairConn(t testing.TB, l *Loop, p Protocol) (*conn, int) {
 	t.Helper()
-	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, 0)
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		panic(err) // runs on the loop; Fatal would kill the loop goroutine
+	}
+	for _, fd := range fds {
+		if err := unix.SetNonblock(fd, true); err != nil {
+			panic(err)
+		}
 	}
 	c := l.attachTCP(fds[0], &net.TCPAddr{}, &net.TCPAddr{}, FactoryFunc(func(net.Addr) Protocol { return p }), false)
 	return c, fds[1]

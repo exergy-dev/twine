@@ -19,8 +19,7 @@ type udpState struct {
 	in    *sock.Batch
 	out   *sock.Batch
 	outN  int
-	addr  net.UDPAddr // scratch for DatagramReceived (reused; not retained)
-	addrs []*net.UDPAddr
+	addrs []*net.UDPAddr // scratch for DatagramReceived (reused; not retained)
 }
 
 var _ DatagramTransport = (*conn)(nil)

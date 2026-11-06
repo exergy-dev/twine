@@ -77,7 +77,6 @@ type Loop struct {
 	metrics   LoopMetrics
 	cbStart   atomic.Int64 // monotonic ns when the current callback began; 0 when idle
 	cbProto   atomic.Pointer[conn]
-	panicking bool
 }
 
 func newLoop(e *Engine, id int) *Loop {

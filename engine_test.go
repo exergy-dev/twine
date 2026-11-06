@@ -110,18 +110,6 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// waitFor polls cond until true or the timeout elapses.
-func waitFor(t testing.TB, d time.Duration, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(d)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met in time")
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
 // onLoop runs fn on l and waits for it.
 func onLoop(t testing.TB, l *Loop, fn func()) {
 	t.Helper()

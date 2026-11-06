@@ -2,7 +2,6 @@ package twine
 
 import (
 	"net"
-	"sync"
 	"time"
 )
 
@@ -35,7 +34,6 @@ type blockingProto struct {
 	paused bool
 	// inflight counts chunks queued but not yet consumed
 	inflight int
-	mu       sync.Mutex
 }
 
 const blockingDepth = 64

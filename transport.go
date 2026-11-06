@@ -4,7 +4,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/robert-malhotra/twine/internal/poll"
 	"golang.org/x/sys/unix"
 )
 
@@ -141,6 +140,3 @@ func (c *conn) SetNoDelay(on bool) error {
 	}
 	return unix.SetsockoptInt(int(c.fd), unix.IPPROTO_TCP, unix.TCP_NODELAY, v)
 }
-
-// readInterest reports whether the poller currently has read interest.
-func (c *conn) readInterest() bool { return c.interest()&poll.Readable != 0 }
