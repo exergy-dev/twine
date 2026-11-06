@@ -1,0 +1,48 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"   # nightly: long fuzz + full MPSC stress
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ["1.24", "1.25"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - run: go vet ./...
+      - run: go vet -tags twine_debug ./...
+      - run: go test -count=1 ./...
+      - run: go test -race -short -count=1 ./...
+      - run: go test -tags twine_debug -short -count=1 ./...
+      - if: runner.os == 'Linux'
+        run: go vet -tags twine_uring . ./internal/...
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+      - run: GOOS=darwin GOARCH=arm64 go build ./... && GOOS=freebsd GOARCH=amd64 go build ./...
+  nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - run: go test -race -count=1 ./internal/mpsc
+      - run: make fuzz FUZZTIME=10m

@@ -1,0 +1,30 @@
+version: "2"
+run:
+  timeout: 5m
+  build-tags: []
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gocritic
+    - ineffassign
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*golang.org/x/sys/unix).Close
+        - golang.org/x/sys/unix.Close
+        - golang.org/x/sys/unix.SetNonblock
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+        - commentedOutCode
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gocritic]
+formatters:
+  enable:
+    - gofmt
