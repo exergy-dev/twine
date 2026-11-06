@@ -202,7 +202,7 @@ func TestLineReceiverSendLine(t *testing.T) {
 
 func TestLineReceiverConnectionHooks(t *testing.T) {
 	var made twine.Transport
-	var lost error = errors.New("unset")
+	lost := errors.New("unset")
 	lr := &LineReceiver{
 		OnConnectionMade: func(t twine.Transport) { made = t },
 		OnConnectionLost: func(err error) { lost = err },

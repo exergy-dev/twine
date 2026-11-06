@@ -108,7 +108,8 @@ func main() {
 	eng := twine.New(twine.Loops(*loops))
 	lst, err := eng.ListenTCP(*addr, newClient(room))
 	if err != nil {
-		log.Fatal(err)
+		stop()
+		log.Fatal(err) //nolint:gocritic // stop() called explicitly above
 	}
 	log.Printf("chat listening on %s with %d loops", lst.Addr(), len(eng.Loops()))
 	if err := eng.Run(ctx); err != nil {

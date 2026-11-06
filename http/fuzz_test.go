@@ -139,7 +139,7 @@ func compareNetHTTP(t *testing.T, raw []byte, r *request, body []byte) {
 	}
 	if p, err := url.PathUnescape(string(ctx.Path())); err != nil {
 		t.Fatalf("path %q does not unescape: %v", ctx.Path(), err)
-	} else if p != req.URL.Path && !(ctx.req.pathSlash && req.URL.Path == "") {
+	} else if p != req.URL.Path && (!ctx.req.pathSlash || req.URL.Path != "") {
 		t.Fatalf("path %q vs %q", p, req.URL.Path)
 	}
 	mine := nethttp.Header{}

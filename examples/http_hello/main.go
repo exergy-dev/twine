@@ -31,9 +31,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if err := trace.Start(f); err != nil {
-			log.Fatal(err)
+			_ = f.Close()
+			log.Fatal(err) //nolint:gocritic // deferred close already handled above
 		}
 		defer trace.Stop()
 	}
@@ -43,7 +44,7 @@ func main() {
 		Name: "twine",
 		Handler: func(ctx *http.RequestCtx) {
 			ctx.SetContentType("text/plain")
-			ctx.Write(hello)
+			_, _ = ctx.Write(hello)
 		},
 	}
 
