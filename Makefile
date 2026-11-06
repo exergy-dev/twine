@@ -3,7 +3,7 @@ GOBIN   ?= $(shell $(GO) env GOPATH)/bin
 PKGS    := ./...
 SHA     := $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
 
-.PHONY: all test test-short test-race bench bench-compare lint vet fuzz fmt tidy crossbuild
+.PHONY: all test test-short test-race bench bench-compare lint vet fuzz fmt tidy crossbuild api
 
 all: lint test
 
@@ -44,6 +44,10 @@ lint: vet crossbuild
 
 fmt:
 	gofmt -l -w .
+
+# Regenerate docs/API.md (the frozen public surface).
+api:
+	GOTOOLCHAIN=local sh scripts/apidump.sh
 
 tidy:
 	$(GO) mod tidy
