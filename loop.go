@@ -289,6 +289,12 @@ func (l *Loop) iterate() {
 			if n > 0 || err != nil || s >= spin {
 				break
 			}
+			// A zero-timeout Wait consumes a wakeup without reporting it;
+			// stop spinning as soon as a task is queued so CallFromThread
+			// latency does not grow with the spin budget.
+			if l.tasks.Len() > 0 || l.overflowActive.Load() || len(l.due) > 0 {
+				break
+			}
 		}
 		if n == 0 && err == nil {
 			// The spin may have consumed a wakeup whose task was already

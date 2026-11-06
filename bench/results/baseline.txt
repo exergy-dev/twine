@@ -1,0 +1,366 @@
+# Twine benchmark baseline, 2026-11-06. Host: i9-14900KF (8P+16E, WSL2 shows 16 cores x 2 HT = 32 CPUs), 32 GiB, Linux 6.18 WSL2, go1.25.3, GOMAXPROCS=32.
+# Other agents were running test suites on the same machine; each section records /proc/loadavg.
+# See BENCHMARKS.md for the interpretation. Block numbers are referenced from there.
+
+########## 1. Root micro-benchmarks, live tree (Timers not pooled), go test -bench -benchmem -count=5
+# 2026-11-06T17:32:43-05:00 load: 8.03 11.45 12.44 1/781 579006
+goos: linux
+goarch: amd64
+pkg: github.com/robert-malhotra/twine
+cpu: Intel(R) Core(TM) i9-14900KF
+BenchmarkTimers1M/insert+cancel-32         	32468624	        36.15 ns/op	      80 B/op	       1 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	35175958	        33.83 ns/op	      80 B/op	       1 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	34031728	        34.69 ns/op	      80 B/op	       1 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	34820503	        34.58 ns/op	      80 B/op	       1 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	29897052	        38.56 ns/op	      80 B/op	       1 allocs/op
+BenchmarkTimers1M/fire-32                  	 6463424	       196.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5359502	       188.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5848645	       198.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5841132	       189.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 7862515	       161.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 6362053	       159.4 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 7099998	       164.2 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 7137196	       163.0 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 7223536	       158.0 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 8052613	       158.1 ns/op	     112 B/op	       1 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7531214	       167.6 ns/op	         0.9827 coalesced/op	         0.008699 iterations/op	         0.01725 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7275502	       163.8 ns/op	         0.9834 coalesced/op	         0.008358 iterations/op	         0.01659 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7217852	       164.7 ns/op	         0.9860 coalesced/op	         0.007041 iterations/op	         0.01396 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7245331	       162.0 ns/op	         0.9833 coalesced/op	         0.008398 iterations/op	         0.01665 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7291375	       163.7 ns/op	         0.9836 coalesced/op	         0.008278 iterations/op	         0.01639 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7358076	       169.4 ns/op	         0.9810 coalesced/op	         0.009572 iterations/op	         0.01902 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7246635	       165.7 ns/op	         0.9832 coalesced/op	         0.008460 iterations/op	         0.01681 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 6861838	       166.8 ns/op	         0.9816 coalesced/op	         0.009264 iterations/op	         0.01842 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 6996292	       164.8 ns/op	         0.9823 coalesced/op	         0.008915 iterations/op	         0.01769 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7412442	       161.1 ns/op	         0.9876 coalesced/op	         0.006237 iterations/op	         0.01238 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 9063561	       219.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 7761181	       204.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 8277420	       208.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 7772191	       205.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 7743140	       204.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	15009062	        83.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	14858305	        83.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	14875036	        92.31 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	13803547	        83.77 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	14957643	        83.31 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeferToThread/await-32            	 1230106	       974.1 ns/op	     327 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1238272	       974.5 ns/op	     328 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1229762	       975.7 ns/op	     327 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1238896	       973.7 ns/op	     328 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1242482	       975.5 ns/op	     328 B/op	       4 allocs/op
+BenchmarkDeferToThread/then-32             	   25158	     48179 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   25258	     48259 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   25346	     48127 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   25171	     47937 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   24969	     47131 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/parallel-32         	 1000000	      2284 ns/op	     323 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	 1000000	      1485 ns/op	     319 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	 1000000	      1568 ns/op	     320 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	 1000000	      1858 ns/op	     321 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	  956175	      2017 ns/op	     322 B/op	       3 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8632936	       135.7 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8489695	       134.6 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8663192	       136.5 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8705472	       134.2 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8675103	       136.1 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4388346	       267.3 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4365804	       266.5 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4410649	       268.5 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4408809	       266.7 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4392772	       268.9 ns/op	     176 B/op	       3 allocs/op
+PASS
+ok  	github.com/robert-malhotra/twine	100.379s
+# end load: 6.84 10.28 11.93 1/775 585095
+
+########## 2. Root micro-benchmarks, 17:20 snapshot of the core (pooled Timers) + the lost-wakeup fix, -count=5
+ 17:24:36 up 16:17,  1 user,  load average: 12.47, 27.67, 16.09
+goos: linux
+goarch: amd64
+pkg: github.com/robert-malhotra/twine
+cpu: Intel(R) Core(TM) i9-14900KF
+BenchmarkTimers1M/insert+cancel-32         	121175343	         9.647 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	121746475	         9.734 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	120316934	         9.893 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	120583072	         9.922 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/insert+cancel-32         	121334625	         9.938 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5849188	       227.1 ns/op	       7 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5750785	       237.5 ns/op	       7 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5859997	       231.4 ns/op	       7 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5406814	       226.6 ns/op	       8 B/op	       0 allocs/op
+BenchmarkTimers1M/fire-32                  	 5450059	       234.3 ns/op	       8 B/op	       0 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 6732141	       161.0 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 7354395	       159.7 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 6548301	       167.4 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 6535665	       164.7 ns/op	     112 B/op	       1 allocs/op
+BenchmarkTimeAfterFunc1M/insert+cancel-32  	 6387578	       162.3 ns/op	     112 B/op	       1 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7343910	       184.9 ns/op	         0.9859 coalesced/op	         0.007145 iterations/op	         0.01405 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7748173	       169.2 ns/op	         0.9898 coalesced/op	         0.005182 iterations/op	         0.01021 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7931246	       167.7 ns/op	         0.9874 coalesced/op	         0.006374 iterations/op	         0.01260 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7718544	       169.4 ns/op	         0.9862 coalesced/op	         0.007006 iterations/op	         0.01384 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/window=2048-32     	 7232761	       169.0 ns/op	         0.9879 coalesced/op	         0.006125 iterations/op	         0.01208 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7377572	       188.2 ns/op	         0.9849 coalesced/op	         0.007647 iterations/op	         0.01512 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7366488	       168.8 ns/op	         0.9875 coalesced/op	         0.006345 iterations/op	         0.01252 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7049448	       171.3 ns/op	         0.9906 coalesced/op	         0.004801 iterations/op	         0.009437 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7320932	       171.3 ns/op	         0.9900 coalesced/op	         0.005100 iterations/op	         0.01003 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkCallFromThread/flood-32           	 7292121	       165.8 ns/op	         0.9940 coalesced/op	         0.003079 iterations/op	         0.006049 wakeups/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 8544650	       160.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 8306870	       176.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 9166692	       183.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 8587611	       181.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/window=2048-32        	 9595735	       173.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	16242793	        77.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	15803256	        77.39 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	15706341	        77.38 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	15897624	        77.26 ns/op	       0 B/op	       0 allocs/op
+BenchmarkChannelSend/flood-32              	15734690	        76.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDeferToThread/await-32            	 1291192	       923.7 ns/op	     327 B/op	       3 allocs/op
+BenchmarkDeferToThread/await-32            	 1297620	       922.0 ns/op	     328 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1297768	       924.8 ns/op	     328 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1302639	       951.3 ns/op	     327 B/op	       4 allocs/op
+BenchmarkDeferToThread/await-32            	 1303820	       913.7 ns/op	     328 B/op	       4 allocs/op
+BenchmarkDeferToThread/then-32             	   24612	     50112 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   24640	     51481 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   24430	     54235 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   24528	     50089 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/then-32             	   23320	     51342 ns/op	     472 B/op	       7 allocs/op
+BenchmarkDeferToThread/parallel-32         	  499017	      2808 ns/op	     325 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	  511654	      2880 ns/op	     325 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	  505244	      2759 ns/op	     325 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	  457477	      2837 ns/op	     325 B/op	       3 allocs/op
+BenchmarkDeferToThread/parallel-32         	  468577	      2939 ns/op	     325 B/op	       3 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8048588	       142.3 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8573077	       138.3 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8651440	       137.9 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8517016	       139.8 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/onloop-32           	 8469231	       138.0 ns/op	     152 B/op	       2 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4340397	       273.8 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4195234	       276.7 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4005345	       275.2 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4364216	       272.7 ns/op	     176 B/op	       3 allocs/op
+BenchmarkFutureResolve/offloop-32          	 4325902	       272.5 ns/op	     176 B/op	       3 allocs/op
+PASS
+ok  	github.com/robert-malhotra/twine	99.894s
+ 17:26:17 up 16:19,  1 user,  load average: 9.82, 22.75, 15.52
+
+########## 3. bench/ harness, live tree, -benchmem -count=1 (EchoIdle 50K rows in this block were slowed by client TIME_WAIT; superseded by block 4)
+# 2026-11-06T17:43:02-05:00 load: 0.10 5.00 9.36 1/753 595531
+goos: linux
+goarch: amd64
+pkg: github.com/robert-malhotra/twine/bench
+cpu: Intel(R) Core(TM) i9-14900KF
+BenchmarkEchoSmall/twine-32    	    2127	    534713 ns/op	         0.6231 cpu-util	   1871317 msgs/s	    233915 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    4620 B/op	       2 allocs/op
+BenchmarkEchoSmall/goroutine-32         	    1345	    854952 ns/op	         0.5371 cpu-util	   1170296 msgs/s	       819.2 p50-µs	      2032 p99-µs	    7257 B/op	       3 allocs/op
+BenchmarkEchoSmall/gnet-32              	    2139	    562945 ns/op	         0.5965 cpu-util	   1777388 msgs/s	    222173 msgs/s/loop	       491.5 p50-µs	      1376 p99-µs	   15107 B/op	      13 allocs/op
+BenchmarkEchoScaling/loops=1-32         	     402	   3010680 ns/op	         0.1842 cpu-util	         0.9986 loop-busy	    332336 msgs/s	    332336 msgs/s/loop	      5505 p99-µs	   24310 B/op	      12 allocs/op
+BenchmarkEchoScaling/loops=2-32         	     769	   1523429 ns/op	         0.2609 cpu-util	         0.9881 linearity	         0.9985 loop-busy	    656790 msgs/s	    328395 msgs/s/loop	      3408 p99-µs	   12694 B/op	       6 allocs/op
+BenchmarkEchoScaling/loops=4-32         	    1382	    859399 ns/op	         0.4053 cpu-util	         0.8758 linearity	         0.9967 loop-busy	   1164301 msgs/s	    291075 msgs/s/loop	      1704 p99-µs	    7063 B/op	       3 allocs/op
+BenchmarkEchoScaling/loops=8-32         	    2073	    541102 ns/op	         0.6190 cpu-util	         0.6955 linearity	         0.9599 loop-busy	   1849162 msgs/s	    231145 msgs/s/loop	      1311 p99-µs	    4708 B/op	       2 allocs/op
+BenchmarkEchoScalingGnet/loops=1-32     	     412	   2979762 ns/op	         0.1823 cpu-util	    335782 msgs/s	    335782 msgs/s/loop	      5767 p99-µs	   23780 B/op	      12 allocs/op
+BenchmarkEchoScalingGnet/loops=2-32     	     778	   1505942 ns/op	         0.2586 cpu-util	         0.9894 linearity	    664456 msgs/s	    332228 msgs/s/loop	      3277 p99-µs	   14457 B/op	       6 allocs/op
+BenchmarkEchoScalingGnet/loops=4-32     	    1450	    800219 ns/op	         0.4260 cpu-util	         0.9310 linearity	   1250466 msgs/s	    312617 msgs/s/loop	      1835 p99-µs	    9411 B/op	       4 allocs/op
+BenchmarkEchoScalingGnet/loops=8-32     	    2058	    560259 ns/op	         0.6068 cpu-util	         0.6649 linearity	   1786006 msgs/s	    223251 msgs/s/loop	      1507 p99-µs	   15060 B/op	      13 allocs/op
+BenchmarkEchoStream/twine-32            	     146	   7083975 ns/op	14802.08 MB/s	        14.80 GB/s	  101423 B/op	       4 allocs/op
+BenchmarkEchoStream/goroutine-32        	     170	   7050475 ns/op	14872.42 MB/s	        14.87 GB/s	   77176 B/op	       3 allocs/op
+BenchmarkEchoStream/gnet-32             	     147	   7155562 ns/op	14654.00 MB/s	        14.65 GB/s	   98548 B/op	       4 allocs/op
+BenchmarkHTTPPlaintext/c=256/nethttp-32 	    4956	    243743 ns/op	         0.7422 cpu-util	       155.6 p50-µs	      2228 p99-µs	   1050442 req/s	  561763 B/op	    4613 allocs/op
+BenchmarkHTTPPlaintext/c=256/twine-32   	    6073	    210169 ns/op	         0.4920 cpu-util	       131.1 p50-µs	      1049 p99-µs	   1218250 req/s	    152281 req/s/loop	         1.160 x-nethttp	     580 B/op	       0 allocs/op
+BenchmarkHTTPPlaintext/c=10000/nethttp-32         	      64	  18358868 ns/op	         0.5944 cpu-util	     17826 p50-µs	     29360 p99-µs	    547605 req/s	23997987 B/op	  180687 allocs/op
+BenchmarkHTTPPlaintext/c=10000/twine-32           	     116	  10180116 ns/op	         0.5656 cpu-util	     10486 p50-µs	     12583 p99-µs	    987894 req/s	    123487 req/s/loop	         1.804 x-nethttp	 1184324 B/op	     345 allocs/op
+BenchmarkEchoIdle/twine-32                        	       1	1488570197 ns/op	       307.2 go-B/conn	       674.2 heap-B/conn	       308.0 rss-B/conn	         0.3080 rss-GB@1M	      -367.0 stack-B/conn	19177616 B/op	   80695 allocs/op
+BenchmarkEchoIdle/goroutine-32                    	       1	2461201715 ns/op	     18465 go-B/conn	     16803 heap-B/conn	     18331 rss-B/conn	        18.33 rss-GB@1M	      1661 stack-B/conn	168927208 B/op	   90946 allocs/op
+BenchmarkEchoIdle/gnet-32                         	       1	1975515461 ns/op	       387.5 go-B/conn	       420.2 heap-B/conn	       361.3 rss-B/conn	         0.3613 rss-GB@1M	       -32.77 stack-B/conn	 6573632 B/op	   70691 allocs/op
+BenchmarkEchoIdle/raw-baseline-32                 	       1	1479036490 ns/op	       -79.46 go-B/conn	        18.84 heap-B/conn	       -81.92 rss-B/conn	        -0.08192 rss-GB@1M	       -98.30 stack-B/conn	 2269864 B/op	   30234 allocs/op
+PASS
+ok  	github.com/robert-malhotra/twine/bench	54.405s
+# end load: 8.51 6.49 9.61 1/751 595897
+# EchoIdle at 50000 connections
+BenchmarkEchoIdle/twine-32         	       1	70186925106 ns/op	       762.0 go-B/conn	       672.9 heap-B/conn	       694.1 rss-B/conn	         0.6941 rss-GB@1M	        89.13 stack-B/conn	54264048 B/op	  401760 allocs/op
+BenchmarkEchoIdle/goroutine-32     	       1	79555352481 ns/op	     19277 go-B/conn	     17215 heap-B/conn	     11503 rss-B/conn	        11.50 rss-GB@1M	      2062 stack-B/conn	865862784 B/op	  500912 allocs/op
+BenchmarkEchoIdle/gnet-32          	       1	2441515805 ns/op	       396.2 go-B/conn	       398.8 heap-B/conn	       397.6 rss-B/conn	         0.3976 rss-GB@1M	        -2.621 stack-B/conn	29786800 B/op	  350906 allocs/op
+BenchmarkEchoIdle/raw-baseline-32  	       1	2859854970 ns/op	         1.966 go-B/conn	        17.04 heap-B/conn	         2.294 rss-B/conn	         0.002294 rss-GB@1M	       -15.07 stack-B/conn	11226824 B/op	  150242 allocs/op
+ok  	github.com/robert-malhotra/twine/bench	155.082s
+# end load: 0.71 3.95 8.17 1/756 596572
+
+########## 4. EchoIdle with linger-0 client close, 10000 and 50000 connections
+# EchoIdle: 10000 then 50000 connections, 2026-11-06T17:47:49-05:00 load: 0.29 3.05 7.50 1/750 596870
+BenchmarkEchoIdle/twine-32         	       1	1735936255 ns/op	       844.6 go-B/conn	       739.7 heap-B/conn	       748.3 rss-B/conn	         0.7483 rss-GB@1M	       104.9 stack-B/conn	18688928 B/op	   81054 allocs/op
+BenchmarkEchoIdle/goroutine-32     	       1	3473371415 ns/op	     19715 go-B/conn	     17257 heap-B/conn	      9803 rss-B/conn	         9.803 rss-GB@1M	      2458 stack-B/conn	175121824 B/op	  121395 allocs/op
+BenchmarkEchoIdle/gnet-32          	       1	1987128806 ns/op	       418.6 go-B/conn	       461.2 heap-B/conn	       404.7 rss-B/conn	         0.4047 rss-GB@1M	       -42.60 stack-B/conn	 6574192 B/op	   70699 allocs/op
+BenchmarkEchoIdle/raw-baseline-32  	       1	2421256717 ns/op	         9.011 go-B/conn	        18.84 heap-B/conn	         3.686 rss-B/conn	         0.003686 rss-GB@1M	        -9.830 stack-B/conn	 2269880 B/op	   30235 allocs/op
+ok  	github.com/robert-malhotra/twine/bench	9.634s
+BenchmarkEchoIdle/twine-32         	       1	3172627006 ns/op	       770.0 go-B/conn	       677.0 heap-B/conn	       712.9 rss-B/conn	         0.7129 rss-GB@1M	        93.06 stack-B/conn	53698240 B/op	  401749 allocs/op
+BenchmarkEchoIdle/goroutine-32     	       1	14861256363 ns/op	     19273 go-B/conn	     17213 heap-B/conn	     10536 rss-B/conn	        10.54 rss-GB@1M	      2060 stack-B/conn	871492784 B/op	  601241 allocs/op
+BenchmarkEchoIdle/gnet-32          	       1	15864236745 ns/op	       404.0 go-B/conn	       413.2 heap-B/conn	       406.8 rss-B/conn	         0.4068 rss-GB@1M	        -9.175 stack-B/conn	29792768 B/op	  350916 allocs/op
+BenchmarkEchoIdle/raw-baseline-32  	       1	2681841933 ns/op	         9.830 go-B/conn	        17.04 heap-B/conn	        18.84 rss-B/conn	         0.01884 rss-GB@1M	        -7.209 stack-B/conn	11226792 B/op	  150240 allocs/op
+ok  	github.com/robert-malhotra/twine/bench	36.623s
+# end load: 0.14 2.62 7.14 1/741 597512
+
+########## 5. Separate processes, server pinned to cpus 0-15, client to 16-31 (bench/echoclient, bench/httpclient, 5 s each)
+echo_twine loops=1               333199 ops/s  server-cpu= 0.99 cores  335202 ops/server-core-s  p99=5.767168ms  load=3.37
+echo_twine loops=2               745167 ops/s  server-cpu= 1.99 cores  374840 ops/server-core-s  p99=2.097152ms  load=3.34
+echo_twine loops=4              1259332 ops/s  server-cpu= 3.96 cores  318275 ops/server-core-s  p99=1.703936ms  load=4.56
+echo_twine loops=8              1972050 ops/s  server-cpu= 7.79 cores  253101 ops/server-core-s  p99=1.376256ms  load=6.52
+echo_gnet loops=1                353434 ops/s  server-cpu= 1.00 cores  354583 ops/server-core-s  p99=5.505024ms  load=6.47
+echo_gnet loops=2                738074 ops/s  server-cpu= 1.98 cores  372011 ops/server-core-s  p99=2.62144ms  load=7.48
+echo_gnet loops=4               1311098 ops/s  server-cpu= 3.97 cores  330101 ops/server-core-s  p99=1.769472ms  load=8.64
+echo_gnet loops=8               2101766 ops/s  server-cpu= 7.80 cores  269623 ops/server-core-s  p99=1.245184ms  load=9.47
+http_nethttp c=256               469734 ops/s  server-cpu= 8.49 cores   55327 ops/server-core-s  p99=3.014656ms  load=10.63
+http_nethttp c=10000             860067 ops/s  server-cpu=14.78 cores   58196 ops/server-core-s  p99=18.874368ms  load=12.10
+http_twine loops=8 c=10000      1033017 ops/s  server-cpu= 6.88 cores  150208 ops/server-core-s  p99=11.534336ms  load=13.14
+
+########## 6. Same, server pinned to even cpus 0,2,..,14 (one hyperthread per core) for echo; http with server on 0-15
+== server on even cpus 0-14 (one HT per core)
+echo_twine loops=1               348802 ops/s  server-cpu= 1.00 cores  350031 ops/server-core-s  p99=4.718592ms  load=8.49
+echo_twine loops=2               679174 ops/s  server-cpu= 1.99 cores  341302 ops/server-core-s  p99=2.490368ms  load=8.85
+echo_twine loops=4              1379656 ops/s  server-cpu= 3.95 cores  348865 ops/server-core-s  p99=1.441792ms  load=9.27
+echo_twine loops=8              2119720 ops/s  server-cpu= 7.51 cores  282407 ops/server-core-s  p99=1.245184ms  load=10.53
+echo_gnet loops=1                366990 ops/s  server-cpu= 1.00 cores  368536 ops/server-core-s  p99=4.718592ms  load=10.16
+echo_gnet loops=2                743746 ops/s  server-cpu= 1.99 cores  374494 ops/server-core-s  p99=2.62144ms  load=9.41
+echo_gnet loops=4               1393347 ops/s  server-cpu= 3.94 cores  353361 ops/server-core-s  p99=1.572864ms  load=9.22
+echo_gnet loops=8               2084748 ops/s  server-cpu= 7.37 cores  282955 ops/server-core-s  p99=1.507328ms  load=9.84
+== http, server cpus 0-15
+http_nethttp c=256               485967 ops/s  server-cpu= 8.75 cores   55570 ops/server-core-s  p99=3.014656ms  load=9.69
+http_twine loops=8 c=256        1525749 ops/s  server-cpu= 7.16 cores  213198 ops/server-core-s  p99=655.36µs  load=9.72
+http_nethttp c=10000             845758 ops/s  server-cpu=14.75 cores   57357 ops/server-core-s  p99=18.874368ms  load=10.38
+http_twine loops=8 c=10000      1028936 ops/s  server-cpu= 6.71 cores  153364 ops/server-core-s  p99=12.058624ms  load=10.87
+
+########## 7. Sequential CallFromThread round trip vs SpinIterations (Loops(1), idle loop)
+spin=0: 35.648µs per round trip
+spin=50: 46.352µs per round trip
+spin=1000: 127.122µs per round trip
+spin=10000: 1.075683ms per round trip
+
+########## 8. Lost-wakeup reproduction (16 goroutines x CallFromThread+wait), core before the fix
+STUCK after 59 calls: task not run in 2s (Wakeups=4 Coalesced=55 TasksRun=43)
+STUCK after 48 calls: task not run in 2s (Wakeups=2 Coalesced=46 TasksRun=32)
+STUCK after 143 calls: task not run in 2s (Wakeups=11 Coalesced=132 TasksRun=127)
+# with wakePending.Store(false) before blocking (now in the tree): ok 3200000 (x5)
+
+########## 9. bench/ harness, -benchmem -count=5 after the linger-0 client close fix (this is the make bench configuration), 2026-11-06
+goos: linux
+goarch: amd64
+pkg: github.com/robert-malhotra/twine/bench
+cpu: Intel(R) Core(TM) i9-14900KF
+BenchmarkEchoSmall/twine-32    	    1964	    531582 ns/op	         0.6265 cpu-util	   1882453 msgs/s	    235307 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    5004 B/op	       2 allocs/op
+BenchmarkEchoSmall/twine-32    	    2085	    542708 ns/op	         0.6179 cpu-util	   1843793 msgs/s	    230474 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    4692 B/op	       2 allocs/op
+BenchmarkEchoSmall/twine-32    	    2026	    555361 ns/op	         0.6052 cpu-util	   1801876 msgs/s	    225234 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    4818 B/op	       2 allocs/op
+BenchmarkEchoSmall/twine-32    	    2068	    541836 ns/op	         0.6235 cpu-util	   1846835 msgs/s	    230854 msgs/s/loop	       507.9 p50-µs	      1311 p99-µs	    4721 B/op	       2 allocs/op
+BenchmarkEchoSmall/twine-32    	    1957	    534340 ns/op	         0.6288 cpu-util	   1872769 msgs/s	    234096 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    4995 B/op	       2 allocs/op
+BenchmarkEchoSmall/goroutine-32         	    1302	    858008 ns/op	         0.5475 cpu-util	   1166228 msgs/s	       819.2 p50-µs	      1966 p99-µs	    7508 B/op	       3 allocs/op
+BenchmarkEchoSmall/goroutine-32         	    1300	    869910 ns/op	         0.5445 cpu-util	   1150221 msgs/s	       819.2 p50-µs	      2097 p99-µs	    7509 B/op	       3 allocs/op
+BenchmarkEchoSmall/goroutine-32         	    1329	    867863 ns/op	         0.5407 cpu-util	   1152945 msgs/s	       819.2 p50-µs	      2032 p99-µs	    7345 B/op	       3 allocs/op
+BenchmarkEchoSmall/goroutine-32         	    1333	    868109 ns/op	         0.5428 cpu-util	   1152582 msgs/s	       819.2 p50-µs	      2032 p99-µs	    7337 B/op	       3 allocs/op
+BenchmarkEchoSmall/goroutine-32         	    1310	    867492 ns/op	         0.5315 cpu-util	   1153412 msgs/s	       819.2 p50-µs	      2032 p99-µs	    7451 B/op	       3 allocs/op
+BenchmarkEchoSmall/gnet-32              	    2134	    553382 ns/op	         0.6138 cpu-util	   1808153 msgs/s	    226019 msgs/s/loop	       507.9 p50-µs	      1442 p99-µs	   14854 B/op	      13 allocs/op
+BenchmarkEchoSmall/gnet-32              	    2077	    557707 ns/op	         0.6145 cpu-util	   1794185 msgs/s	    224273 msgs/s/loop	       507.9 p50-µs	      1507 p99-µs	   14950 B/op	      13 allocs/op
+BenchmarkEchoSmall/gnet-32              	    2160	    554743 ns/op	         0.6146 cpu-util	   1803712 msgs/s	    225464 msgs/s/loop	       507.9 p50-µs	      1442 p99-µs	   14835 B/op	      13 allocs/op
+BenchmarkEchoSmall/gnet-32              	    2108	    568810 ns/op	         0.5925 cpu-util	   1759191 msgs/s	    219899 msgs/s/loop	       491.5 p50-µs	      1376 p99-µs	   15714 B/op	      13 allocs/op
+BenchmarkEchoSmall/gnet-32              	    2140	    548138 ns/op	         0.6189 cpu-util	   1825553 msgs/s	    228194 msgs/s/loop	       507.9 p50-µs	      1507 p99-µs	   14733 B/op	      13 allocs/op
+BenchmarkEchoScaling/loops=1-32         	     403	   3015895 ns/op	         0.1836 cpu-util	         0.9991 loop-busy	    331773 msgs/s	    331773 msgs/s/loop	      5767 p99-µs	   24249 B/op	      12 allocs/op
+BenchmarkEchoScaling/loops=1-32         	     399	   3029273 ns/op	         0.1846 cpu-util	         0.9989 loop-busy	    330306 msgs/s	    330306 msgs/s/loop	      5505 p99-µs	   24493 B/op	      12 allocs/op
+BenchmarkEchoScaling/loops=1-32         	     398	   2925441 ns/op	         0.1847 cpu-util	         0.9994 loop-busy	    342044 msgs/s	    342044 msgs/s/loop	      5505 p99-µs	   24526 B/op	      12 allocs/op
+BenchmarkEchoScaling/loops=1-32         	     397	   3036122 ns/op	         0.1840 cpu-util	         0.9990 loop-busy	    329577 msgs/s	    329577 msgs/s/loop	      5505 p99-µs	   24588 B/op	      12 allocs/op
+BenchmarkEchoScaling/loops=1-32         	     403	   3004692 ns/op	         0.1834 cpu-util	         0.9990 loop-busy	    333002 msgs/s	    333002 msgs/s/loop	      5505 p99-µs	   24222 B/op	      12 allocs/op
+BenchmarkEchoScaling/loops=2-32         	     780	   1533305 ns/op	         0.2593 cpu-util	         0.9799 linearity	         0.9966 loop-busy	    652602 msgs/s	    326301 msgs/s/loop	      3539 p99-µs	   12515 B/op	       6 allocs/op
+BenchmarkEchoScaling/loops=2-32         	     801	   1545996 ns/op	         0.2602 cpu-util	         0.9718 linearity	         0.9967 loop-busy	    647216 msgs/s	    323608 msgs/s/loop	      3146 p99-µs	   12186 B/op	       6 allocs/op
+BenchmarkEchoScaling/loops=2-32         	     776	   1534157 ns/op	         0.2598 cpu-util	         0.9793 linearity	         0.9980 loop-busy	    652228 msgs/s	    326114 msgs/s/loop	      3408 p99-µs	   12579 B/op	       6 allocs/op
+BenchmarkEchoScaling/loops=2-32         	     792	   1481153 ns/op	         0.2653 cpu-util	         1.014 linearity	         0.9964 loop-busy	    675642 msgs/s	    337821 msgs/s/loop	      3408 p99-µs	   12325 B/op	       6 allocs/op
+BenchmarkEchoScaling/loops=2-32         	     781	   1507666 ns/op	         0.2625 cpu-util	         0.9965 linearity	         0.9966 loop-busy	    663706 msgs/s	    331853 msgs/s/loop	      3408 p99-µs	   12499 B/op	       6 allocs/op
+BenchmarkEchoScaling/loops=4-32         	    1357	    800197 ns/op	         0.4272 cpu-util	         0.9388 linearity	         0.9959 loop-busy	   1250512 msgs/s	    312628 msgs/s/loop	      1638 p99-µs	    7193 B/op	       3 allocs/op
+BenchmarkEchoScaling/loops=4-32         	    1432	    800185 ns/op	         0.4300 cpu-util	         0.9388 linearity	         0.9945 loop-busy	   1250478 msgs/s	    312620 msgs/s/loop	      1638 p99-µs	    6816 B/op	       3 allocs/op
+BenchmarkEchoScaling/loops=4-32         	    1462	    829145 ns/op	         0.4147 cpu-util	         0.9060 linearity	         0.9961 loop-busy	   1206826 msgs/s	    301707 msgs/s/loop	      1704 p99-µs	    6676 B/op	       3 allocs/op
+BenchmarkEchoScaling/loops=4-32         	    1330	    844620 ns/op	         0.4107 cpu-util	         0.8895 linearity	         0.9949 loop-busy	   1184777 msgs/s	    296194 msgs/s/loop	      1638 p99-µs	    7339 B/op	       3 allocs/op
+BenchmarkEchoScaling/loops=4-32         	    1460	    788206 ns/op	         0.4349 cpu-util	         0.9531 linearity	         0.9960 loop-busy	   1269484 msgs/s	    317371 msgs/s/loop	      1573 p99-µs	    6686 B/op	       3 allocs/op
+BenchmarkEchoScaling/loops=8-32         	    2062	    555477 ns/op	         0.6083 cpu-util	         0.6762 linearity	         0.9608 loop-busy	   1801464 msgs/s	    225183 msgs/s/loop	      1311 p99-µs	    4734 B/op	       2 allocs/op
+BenchmarkEchoScaling/loops=8-32         	    2070	    547664 ns/op	         0.6192 cpu-util	         0.6859 linearity	         0.9613 loop-busy	   1827125 msgs/s	    228391 msgs/s/loop	      1311 p99-µs	    4715 B/op	       2 allocs/op
+BenchmarkEchoScaling/loops=8-32         	    2059	    559677 ns/op	         0.6059 cpu-util	         0.6712 linearity	         0.9592 loop-busy	   1788054 msgs/s	    223507 msgs/s/loop	      1311 p99-µs	    4741 B/op	       2 allocs/op
+BenchmarkEchoScaling/loops=8-32         	    2125	    544170 ns/op	         0.6224 cpu-util	         0.6902 linearity	         0.9603 loop-busy	   1838829 msgs/s	    229854 msgs/s/loop	      1311 p99-µs	    4593 B/op	       2 allocs/op
+BenchmarkEchoScaling/loops=8-32         	    2059	    545754 ns/op	         0.6216 cpu-util	         0.6883 linearity	         0.9619 loop-busy	   1833581 msgs/s	    229198 msgs/s/loop	      1311 p99-µs	    4741 B/op	       2 allocs/op
+BenchmarkEchoScalingGnet/loops=1-32     	     412	   2996178 ns/op	         0.1826 cpu-util	    333941 msgs/s	    333941 msgs/s/loop	      5767 p99-µs	   23793 B/op	      12 allocs/op
+BenchmarkEchoScalingGnet/loops=1-32     	     406	   3062978 ns/op	         0.1790 cpu-util	    326667 msgs/s	    326667 msgs/s/loop	      6029 p99-µs	   24134 B/op	      12 allocs/op
+BenchmarkEchoScalingGnet/loops=1-32     	     404	   3001884 ns/op	         0.1821 cpu-util	    333311 msgs/s	    333311 msgs/s/loop	      5767 p99-µs	   24251 B/op	      12 allocs/op
+BenchmarkEchoScalingGnet/loops=1-32     	     388	   2992597 ns/op	         0.1827 cpu-util	    334358 msgs/s	    334358 msgs/s/loop	      5767 p99-µs	   25251 B/op	      12 allocs/op
+BenchmarkEchoScalingGnet/loops=1-32     	     403	   2994390 ns/op	         0.1826 cpu-util	    334146 msgs/s	    334146 msgs/s/loop	      5767 p99-µs	   24314 B/op	      12 allocs/op
+BenchmarkEchoScalingGnet/loops=2-32     	     740	   1530885 ns/op	         0.2585 cpu-util	         0.9781 linearity	    653628 msgs/s	    326814 msgs/s/loop	      3539 p99-µs	   15552 B/op	       7 allocs/op
+BenchmarkEchoScalingGnet/loops=2-32     	     735	   1483864 ns/op	         0.2675 cpu-util	         1.009 linearity	    674442 msgs/s	    337221 msgs/s/loop	      3932 p99-µs	   13517 B/op	       6 allocs/op
+BenchmarkEchoScalingGnet/loops=2-32     	     787	   1485988 ns/op	         0.2633 cpu-util	         1.008 linearity	    673361 msgs/s	    336681 msgs/s/loop	      3408 p99-µs	   12465 B/op	       6 allocs/op
+BenchmarkEchoScalingGnet/loops=2-32     	     729	   1484710 ns/op	         0.2635 cpu-util	         1.009 linearity	    674000 msgs/s	    337000 msgs/s/loop	      3277 p99-µs	   13472 B/op	       6 allocs/op
+BenchmarkEchoScalingGnet/loops=2-32     	     769	   1494683 ns/op	         0.2625 cpu-util	         1.002 linearity	    669467 msgs/s	    334733 msgs/s/loop	      3408 p99-µs	   13123 B/op	       6 allocs/op
+BenchmarkEchoScalingGnet/loops=4-32     	    1425	    818737 ns/op	         0.4245 cpu-util	         0.9150 linearity	   1222966 msgs/s	    305741 msgs/s/loop	      1901 p99-µs	   10165 B/op	       4 allocs/op
+BenchmarkEchoScalingGnet/loops=4-32     	    1320	    836994 ns/op	         0.4163 cpu-util	         0.8945 linearity	   1195575 msgs/s	    298894 msgs/s/loop	      1966 p99-µs	   11167 B/op	       5 allocs/op
+BenchmarkEchoScalingGnet/loops=4-32     	    1254	    855228 ns/op	         0.4079 cpu-util	         0.8755 linearity	   1170157 msgs/s	    292539 msgs/s/loop	      1901 p99-µs	   12105 B/op	       5 allocs/op
+BenchmarkEchoScalingGnet/loops=4-32     	    1441	    859837 ns/op	         0.4134 cpu-util	         0.8707 linearity	   1163734 msgs/s	    290934 msgs/s/loop	      2097 p99-µs	   10921 B/op	       5 allocs/op
+BenchmarkEchoScalingGnet/loops=4-32     	    1470	    846094 ns/op	         0.4204 cpu-util	         0.8849 linearity	   1182682 msgs/s	    295671 msgs/s/loop	      2228 p99-µs	   10571 B/op	       4 allocs/op
+BenchmarkEchoScalingGnet/loops=8-32     	    2061	    567623 ns/op	         0.6079 cpu-util	         0.6595 linearity	   1762895 msgs/s	    220362 msgs/s/loop	      1573 p99-µs	   15640 B/op	      13 allocs/op
+BenchmarkEchoScalingGnet/loops=8-32     	    2110	    557750 ns/op	         0.6185 cpu-util	         0.6712 linearity	   1794113 msgs/s	    224264 msgs/s/loop	      1573 p99-µs	   15390 B/op	      13 allocs/op
+BenchmarkEchoScalingGnet/loops=8-32     	    2186	    548904 ns/op	         0.6160 cpu-util	         0.6819 linearity	   1822961 msgs/s	    227870 msgs/s/loop	      1442 p99-µs	   14633 B/op	      13 allocs/op
+BenchmarkEchoScalingGnet/loops=8-32     	    2140	    560815 ns/op	         0.6067 cpu-util	         0.6675 linearity	   1784324 msgs/s	    223041 msgs/s/loop	      1507 p99-µs	   15173 B/op	      13 allocs/op
+BenchmarkEchoScalingGnet/loops=8-32     	    2160	    563652 ns/op	         0.6091 cpu-util	         0.6641 linearity	   1775205 msgs/s	    221901 msgs/s/loop	      1573 p99-µs	   14948 B/op	      13 allocs/op
+BenchmarkEchoStream/twine-32            	     166	   6610943 ns/op	15861.22 MB/s	        15.86 GB/s	   90807 B/op	       4 allocs/op
+BenchmarkEchoStream/twine-32            	     176	   8601669 ns/op	12190.38 MB/s	        12.19 GB/s	   80409 B/op	       3 allocs/op
+BenchmarkEchoStream/twine-32            	     166	   6496169 ns/op	16141.45 MB/s	        16.14 GB/s	   88834 B/op	       4 allocs/op
+BenchmarkEchoStream/twine-32            	     180	   7077335 ns/op	14815.97 MB/s	        14.82 GB/s	   83727 B/op	       3 allocs/op
+BenchmarkEchoStream/twine-32            	     177	   6767054 ns/op	15495.31 MB/s	        15.50 GB/s	   79759 B/op	       3 allocs/op
+BenchmarkEchoStream/goroutine-32        	     170	   7034946 ns/op	14905.25 MB/s	        14.91 GB/s	   77176 B/op	       3 allocs/op
+BenchmarkEchoStream/goroutine-32        	     171	   6928015 ns/op	15135.30 MB/s	        15.14 GB/s	   76725 B/op	       3 allocs/op
+BenchmarkEchoStream/goroutine-32        	     168	   7102054 ns/op	14764.41 MB/s	        14.76 GB/s	   78095 B/op	       3 allocs/op
+BenchmarkEchoStream/goroutine-32        	     171	   7013447 ns/op	14950.94 MB/s	        14.95 GB/s	   76725 B/op	       3 allocs/op
+BenchmarkEchoStream/goroutine-32        	     171	   7129280 ns/op	14708.02 MB/s	        14.71 GB/s	   76725 B/op	       3 allocs/op
+BenchmarkEchoStream/gnet-32             	     147	   7485441 ns/op	14008.21 MB/s	        14.01 GB/s	  106332 B/op	       5 allocs/op
+BenchmarkEchoStream/gnet-32             	     159	   7539764 ns/op	13907.28 MB/s	        13.91 GB/s	  103775 B/op	       5 allocs/op
+BenchmarkEchoStream/gnet-32             	     156	   7665968 ns/op	13678.33 MB/s	        13.68 GB/s	  137936 B/op	       6 allocs/op
+BenchmarkEchoStream/gnet-32             	     150	   7675613 ns/op	13661.14 MB/s	        13.66 GB/s	   87467 B/op	       4 allocs/op
+BenchmarkEchoStream/gnet-32             	     144	   8862854 ns/op	11831.13 MB/s	        11.83 GB/s	  159790 B/op	       7 allocs/op
+BenchmarkHTTPPlaintext/c=256/nethttp-32 	    5925	    199783 ns/op	         0.8406 cpu-util	       163.8 p50-µs	      1442 p99-µs	   1281618 req/s	  560380 B/op	    4610 allocs/op
+BenchmarkHTTPPlaintext/c=256/nethttp-32 	    5164	    202093 ns/op	         0.8313 cpu-util	       163.8 p50-µs	      1507 p99-µs	   1266970 req/s	  560461 B/op	    4610 allocs/op
+BenchmarkHTTPPlaintext/c=256/nethttp-32 	    5323	    200414 ns/op	         0.8423 cpu-util	       163.8 p50-µs	      1442 p99-µs	   1277570 req/s	  560455 B/op	    4610 allocs/op
+BenchmarkHTTPPlaintext/c=256/nethttp-32 	    5584	    199018 ns/op	         0.8408 cpu-util	       163.8 p50-µs	      1442 p99-µs	   1286519 req/s	  560426 B/op	    4609 allocs/op
+BenchmarkHTTPPlaintext/c=256/nethttp-32 	    5912	    200979 ns/op	         0.8355 cpu-util	       163.8 p50-µs	      1442 p99-µs	   1273954 req/s	  560382 B/op	    4610 allocs/op
+BenchmarkHTTPPlaintext/c=256/twine-32   	    5415	    212683 ns/op	         0.4911 cpu-util	       139.3 p50-µs	       983.0 p99-µs	   1203881 req/s	    150485 req/s/loop	         0.9450 x-nethttp	     651 B/op	       0 allocs/op
+BenchmarkHTTPPlaintext/c=256/twine-32   	    5216	    217768 ns/op	         0.4843 cpu-util	       139.3 p50-µs	      1114 p99-µs	   1175776 req/s	    146972 req/s/loop	         0.9229 x-nethttp	     676 B/op	       0 allocs/op
+BenchmarkHTTPPlaintext/c=256/twine-32   	    4962	    214224 ns/op	         0.4905 cpu-util	       139.3 p50-µs	      1016 p99-µs	   1195243 req/s	    149405 req/s/loop	         0.9382 x-nethttp	     710 B/op	       0 allocs/op
+BenchmarkHTTPPlaintext/c=256/twine-32   	    5701	    212859 ns/op	         0.4930 cpu-util	       139.3 p50-µs	      1114 p99-µs	   1202876 req/s	    150360 req/s/loop	         0.9442 x-nethttp	     618 B/op	       0 allocs/op
+BenchmarkHTTPPlaintext/c=256/twine-32   	    5745	    213300 ns/op	         0.4927 cpu-util	       139.3 p50-µs	      1016 p99-µs	   1200394 req/s	    150049 req/s/loop	         0.9423 x-nethttp	     613 B/op	       0 allocs/op
+BenchmarkHTTPPlaintext/c=10000/nethttp-32         	      64	  18911910 ns/op	         0.5878 cpu-util	     17826 p50-µs	     29360 p99-µs	    531711 req/s	24000770 B/op	  180678 allocs/op
+BenchmarkHTTPPlaintext/c=10000/nethttp-32         	      62	  18745252 ns/op	         0.5885 cpu-util	     17826 p50-µs	     29360 p99-µs	    536378 req/s	24070633 B/op	  180707 allocs/op
+BenchmarkHTTPPlaintext/c=10000/nethttp-32         	      64	  18636540 ns/op	         0.5942 cpu-util	     17826 p50-µs	     29360 p99-µs	    539629 req/s	24003544 B/op	  180722 allocs/op
+BenchmarkHTTPPlaintext/c=10000/nethttp-32         	      63	  18773664 ns/op	         0.5886 cpu-util	     17826 p50-µs	     29360 p99-µs	    535715 req/s	24035643 B/op	  180718 allocs/op
+BenchmarkHTTPPlaintext/c=10000/nethttp-32         	      63	  18791398 ns/op	         0.5905 cpu-util	     17826 p50-µs	     29360 p99-µs	    535073 req/s	24030716 B/op	  180699 allocs/op
+BenchmarkHTTPPlaintext/c=10000/twine-32           	     116	  10341029 ns/op	         0.5640 cpu-util	     10486 p50-µs	     12059 p99-µs	    972789 req/s	    121599 req/s/loop	         1.818 x-nethttp	 1184266 B/op	     345 allocs/op
+BenchmarkHTTPPlaintext/c=10000/twine-32           	     116	  10323861 ns/op	         0.5632 cpu-util	     10486 p50-µs	     12583 p99-µs	    974311 req/s	    121789 req/s/loop	         1.821 x-nethttp	 1184242 B/op	     344 allocs/op
+BenchmarkHTTPPlaintext/c=10000/twine-32           	     116	  10360047 ns/op	         0.5630 cpu-util	     10486 p50-µs	     12583 p99-µs	    970817 req/s	    121352 req/s/loop	         1.814 x-nethttp	 1184243 B/op	     344 allocs/op
+BenchmarkHTTPPlaintext/c=10000/twine-32           	     115	  10334695 ns/op	         0.5632 cpu-util	     10486 p50-µs	     12059 p99-µs	    973646 req/s	    121706 req/s/loop	         1.820 x-nethttp	 1194663 B/op	     349 allocs/op
+BenchmarkHTTPPlaintext/c=10000/twine-32           	     116	  10360629 ns/op	         0.5627 cpu-util	     10486 p50-µs	     12583 p99-µs	    970764 req/s	    121346 req/s/loop	         1.814 x-nethttp	 1184253 B/op	     345 allocs/op
+BenchmarkEchoIdle/twine-32                        	       1	1481791715 ns/op	       481.7 go-B/conn	       655.4 heap-B/conn	       481.7 rss-B/conn	         0.4817 rss-GB@1M	      -173.7 stack-B/conn	19243072 B/op	   80691 allocs/op
+BenchmarkEchoIdle/twine-32                        	       1	1500386073 ns/op	       425.2 go-B/conn	       654.5 heap-B/conn	       396.9 rss-B/conn	         0.3969 rss-GB@1M	      -229.4 stack-B/conn	19079312 B/op	   80693 allocs/op
+BenchmarkEchoIdle/twine-32                        	       1	1477908982 ns/op	       507.9 go-B/conn	       655.4 heap-B/conn	       511.2 rss-B/conn	         0.5112 rss-GB@1M	      -147.5 stack-B/conn	19144784 B/op	   80692 allocs/op
+BenchmarkEchoIdle/twine-32                        	       1	1488390681 ns/op	       518.6 go-B/conn	       652.9 heap-B/conn	       521.0 rss-B/conn	         0.5210 rss-GB@1M	      -134.3 stack-B/conn	19243312 B/op	   80697 allocs/op
+BenchmarkEchoIdle/twine-32                        	       1	1498225453 ns/op	       678.3 go-B/conn	       658.6 heap-B/conn	       679.9 rss-B/conn	         0.6799 rss-GB@1M	        19.66 stack-B/conn	19243088 B/op	   80693 allocs/op
+BenchmarkEchoIdle/goroutine-32                    	       1	2463001927 ns/op	     18936 go-B/conn	     16799 heap-B/conn	     18792 rss-B/conn	        18.79 rss-GB@1M	      2136 stack-B/conn	170100888 B/op	  110940 allocs/op
+BenchmarkEchoIdle/goroutine-32                    	       1	2487770356 ns/op	     18029 go-B/conn	     16708 heap-B/conn	     18029 rss-B/conn	        18.03 rss-GB@1M	      1321 stack-B/conn	169582392 B/op	  110313 allocs/op
+BenchmarkEchoIdle/goroutine-32                    	       1	2488363098 ns/op	     18322 go-B/conn	     16713 heap-B/conn	     18319 rss-B/conn	        18.32 rss-GB@1M	      1609 stack-B/conn	169592248 B/op	  110367 allocs/op
+BenchmarkEchoIdle/goroutine-32                    	       1	3494357377 ns/op	     18290 go-B/conn	     16711 heap-B/conn	     18287 rss-B/conn	        18.29 rss-GB@1M	      1579 stack-B/conn	169582680 B/op	  110317 allocs/op
+BenchmarkEchoIdle/goroutine-32                    	       1	2467253319 ns/op	     18023 go-B/conn	     16709 heap-B/conn	     18018 rss-B/conn	        18.02 rss-GB@1M	      1314 stack-B/conn	169583960 B/op	  110331 allocs/op
+BenchmarkEchoIdle/gnet-32                         	       1	1975190460 ns/op	       361.3 go-B/conn	       410.4 heap-B/conn	       332.6 rss-B/conn	         0.3326 rss-GB@1M	       -49.15 stack-B/conn	 6573792 B/op	   70692 allocs/op
+BenchmarkEchoIdle/gnet-32                         	       1	1971498305 ns/op	       388.3 go-B/conn	       378.5 heap-B/conn	       382.6 rss-B/conn	         0.3826 rss-GB@1M	         9.830 stack-B/conn	 6573840 B/op	   70693 allocs/op
+BenchmarkEchoIdle/gnet-32                         	       1	1981262586 ns/op	       352.3 go-B/conn	       368.6 heap-B/conn	       365.0 rss-B/conn	         0.3650 rss-GB@1M	       -16.38 stack-B/conn	 6573648 B/op	   70691 allocs/op
+BenchmarkEchoIdle/gnet-32                         	       1	1993896985 ns/op	       399.0 go-B/conn	       399.0 heap-B/conn	       371.1 rss-B/conn	         0.3711 rss-GB@1M	         0 stack-B/conn	 6573808 B/op	   70692 allocs/op
+BenchmarkEchoIdle/gnet-32                         	       1	1997689398 ns/op	       331.0 go-B/conn	       347.3 heap-B/conn	       350.2 rss-B/conn	         0.3502 rss-GB@1M	       -16.38 stack-B/conn	 6573632 B/op	   70691 allocs/op
+BenchmarkEchoIdle/raw-baseline-32                 	       1	2434120612 ns/op	       -40.14 go-B/conn	        18.84 heap-B/conn	       -38.50 rss-B/conn	        -0.03850 rss-GB@1M	       -58.98 stack-B/conn	 2269864 B/op	   30234 allocs/op
+BenchmarkEchoIdle/raw-baseline-32                 	       1	2458539931 ns/op	        15.56 go-B/conn	        18.84 heap-B/conn	        14.75 rss-B/conn	         0.01475 rss-GB@1M	        -3.277 stack-B/conn	 2269960 B/op	   30235 allocs/op
+BenchmarkEchoIdle/raw-baseline-32                 	       1	2418632971 ns/op	         5.734 go-B/conn	        18.84 heap-B/conn	         4.915 rss-B/conn	         0.004915 rss-GB@1M	       -13.11 stack-B/conn	 2269864 B/op	   30234 allocs/op
+BenchmarkEchoIdle/raw-baseline-32                 	       1	2447999774 ns/op	       -36.86 go-B/conn	        18.84 heap-B/conn	       -37.27 rss-B/conn	        -0.03727 rss-GB@1M	       -55.71 stack-B/conn	 2269864 B/op	   30234 allocs/op
+BenchmarkEchoIdle/raw-baseline-32                 	       1	2459337558 ns/op	        12.29 go-B/conn	        18.84 heap-B/conn	        12.70 rss-B/conn	         0.01270 rss-GB@1M	        -6.554 stack-B/conn	 2269864 B/op	   30234 allocs/op
+PASS
+ok  	github.com/robert-malhotra/twine/bench	264.813s
+?   	github.com/robert-malhotra/twine/bench/echo_gnet	[no test files]
+?   	github.com/robert-malhotra/twine/bench/echo_goroutine	[no test files]
+?   	github.com/robert-malhotra/twine/bench/echo_twine	[no test files]
+?   	github.com/robert-malhotra/twine/bench/echoclient	[no test files]
+?   	github.com/robert-malhotra/twine/bench/http_nethttp	[no test files]
+?   	github.com/robert-malhotra/twine/bench/http_twine	[no test files]
+?   	github.com/robert-malhotra/twine/bench/httpclient	[no test files]
+
+real	4m25.115s
+user	9m45.730s
+sys	30m46.151s

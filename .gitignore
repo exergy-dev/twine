@@ -5,3 +5,4 @@
 *.trace
 /bench/results/*.txt
 !/bench/results/.keep
+!/bench/results/baseline.txt
