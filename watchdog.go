@@ -2,7 +2,6 @@ package twine
 
 import (
 	"bytes"
-	"fmt"
 	"runtime"
 	"strconv"
 	"time"
@@ -47,8 +46,10 @@ func (e *Engine) watchdog() {
 			lastReport[i] = now
 			l.metrics.SlowCallbacks.Add(1)
 			proto := "<none>"
-			if c := l.cbProto.Load(); c != nil && c.proto != nil {
-				proto = fmt.Sprintf("%T", c.proto)
+			if c := l.cbProto.Load(); c != nil {
+				if n := c.protoName.Load(); n != nil {
+					proto = *n
+				}
 			}
 			e.cfg.logger.Warn("twine: slow callback",
 				"loop", l.id, "elapsed", elapsed, "protocol", proto,

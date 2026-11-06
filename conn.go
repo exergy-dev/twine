@@ -2,6 +2,9 @@ package twine
 
 import (
 	"net"
+	"reflect"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -66,6 +69,25 @@ type conn struct {
 	// gen is bumped on recycle so stale transport handles become inert.
 	gen uint32
 	h   *transport
+
+	// protoName is the protocol's type name for the watchdog, which reads
+	// it from another goroutine; it is resolved once per type.
+	protoName atomic.Pointer[string]
+}
+
+var protoNames sync.Map // reflect.Type -> *string
+
+// setProto records the protocol and its cached type name.
+func (c *conn) setProto(p Protocol) {
+	c.proto = p
+	t := reflect.TypeOf(p)
+	if v, ok := protoNames.Load(t); ok {
+		c.protoName.Store(v.(*string))
+		return
+	}
+	name := t.String()
+	v, _ := protoNames.LoadOrStore(t, &name)
+	c.protoName.Store(v.(*string))
 }
 
 // reset clears user-visible state before the conn goes on the free list.
@@ -112,10 +134,11 @@ func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory, noDelay bool) *
 	l.register(c)
 	l.metrics.Connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
-	c.proto = f.BuildProtocol(peer)
-	if c.proto == nil {
-		c.proto = nopProtocol{}
+	p := f.BuildProtocol(peer)
+	if p == nil {
+		p = nopProtocol{}
 	}
+	c.setProto(p)
 	if err := l.poller.Add(fd, poll.Readable); err != nil {
 		c.lostErr = err
 		c.abortNoCallback()

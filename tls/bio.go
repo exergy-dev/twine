@@ -170,10 +170,6 @@ func (b *bio) unlend() {
 	b.borrowed = nil
 }
 
-// buffered reports whether ciphertext is waiting to be read. Loop-only, loop
-// mode.
-func (b *bio) buffered() bool { return b.r < len(b.in) || len(b.borrowed) > 0 }
-
 // Write implements net.Conn. In handshake mode it queues p and schedules a
 // flush on the loop; in loop mode it writes p to the transport directly.
 func (b *bio) Write(p []byte) (int, error) {
@@ -234,8 +230,8 @@ func (b *bio) shutdown(err error) {
 	if b.err == nil {
 		b.err = err
 	}
-	b.in, b.r = nil, 0
-	b.borrowed = nil
+	// Queued ciphertext is kept: a handshake worker reads it before it sees
+	// err, so an alert that arrived just before the close is still reported.
 	b.cond.Broadcast()
 	b.mu.Unlock()
 }

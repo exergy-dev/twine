@@ -1,0 +1,845 @@
+package tls_test
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	ctls "crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/robert-malhotra/twine"
+	twtls "github.com/robert-malhotra/twine/tls"
+)
+
+// --- helpers -----------------------------------------------------------------
+
+var (
+	certOnce sync.Once
+	testCert ctls.Certificate
+	testPool *x509.CertPool
+)
+
+// selfSigned returns a self-signed ECDSA P-256 certificate for localhost and
+// 127.0.0.1, and a pool that trusts it.
+func selfSigned(t testing.TB) (ctls.Certificate, *x509.CertPool) {
+	t.Helper()
+	certOnce.Do(func() {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			panic(err)
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber:          big.NewInt(1),
+			Subject:               pkix.Name{CommonName: "twine test"},
+			NotBefore:             time.Now().Add(-time.Hour),
+			NotAfter:              time.Now().Add(24 * time.Hour),
+			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			BasicConstraintsValid: true,
+			IsCA:                  true,
+			DNSNames:              []string{"localhost"},
+			IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		if err != nil {
+			panic(err)
+		}
+		leaf, err := x509.ParseCertificate(der)
+		if err != nil {
+			panic(err)
+		}
+		testCert = ctls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
+		testPool = x509.NewCertPool()
+		testPool.AddCert(leaf)
+	})
+	return testCert, testPool
+}
+
+func serverConfig(t testing.TB) *ctls.Config {
+	cert, _ := selfSigned(t)
+	return &ctls.Config{Certificates: []ctls.Certificate{cert}}
+}
+
+func startEngine(t testing.TB, opts ...twine.Option) *twine.Engine {
+	t.Helper()
+	opts = append([]twine.Option{twine.Loops(2), twine.Watchdog(0)}, opts...)
+	e := twine.New(opts...)
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Run(context.Background()) }()
+	t.Cleanup(func() {
+		e.Stop()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("Run: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Error("engine did not stop")
+		}
+	})
+	return e
+}
+
+// echo is a plaintext echo protocol.
+type echo struct{ t twine.Transport }
+
+func (p *echo) ConnectionMade(t twine.Transport) { p.t = t }
+func (p *echo) DataReceived(b []byte)            { p.t.Write(b) }
+func (p *echo) ConnectionLost(error)             {}
+
+func echoFactory() twine.Factory {
+	return twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+}
+
+func listen(t testing.TB, e *twine.Engine, cfg *ctls.Config, f twine.Factory, opts ...twtls.Option) string {
+	t.Helper()
+	lst, err := twtls.Listen(e, "127.0.0.1:0", cfg, f, opts...)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	return lst.Addr().String()
+}
+
+func dial(t testing.TB, addr string, cfg *ctls.Config) *ctls.Conn {
+	t.Helper()
+	if cfg == nil {
+		cfg = &ctls.Config{InsecureSkipVerify: true}
+	}
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	c, err := ctls.DialWithDialer(d, "tcp", addr, cfg)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+	return c
+}
+
+// --- server tests ------------------------------------------------------------
+
+func TestEchoServerMessages(t *testing.T) {
+	e := startEngine(t)
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	c := dial(t, addr, nil)
+	defer c.Close()
+	buf := make([]byte, 64)
+	for i := 0; i < 1000; i++ {
+		msg := []byte(fmt.Sprintf("message %04d", i))
+		if _, err := c.Write(msg); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		if _, err := io.ReadFull(c, buf[:len(msg)]); err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if !bytes.Equal(buf[:len(msg)], msg) {
+			t.Fatalf("echo %d: got %q want %q", i, buf[:len(msg)], msg)
+		}
+	}
+}
+
+func TestEchoServerStream1MiB(t *testing.T) {
+	e := startEngine(t)
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	c := dial(t, addr, nil)
+	defer c.Close()
+	data := make([]byte, 1<<20)
+	_, _ = rand.Read(data)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Write(data)
+		errCh <- err
+	}()
+	got := make([]byte, len(data))
+	if _, err := io.ReadFull(c, got); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("1 MiB stream corrupted")
+	}
+}
+
+// stateProto reports the server-side ConnectionState and echoes.
+type stateProto struct {
+	echo
+	ch chan ctls.ConnectionState
+}
+
+func (p *stateProto) ConnectionMade(t twine.Transport) {
+	p.t = t
+	p.ch <- t.(*twtls.Transport).ConnectionState()
+}
+
+func TestVersionsAndALPN(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ver  uint16
+	}{{"TLS12", ctls.VersionTLS12}, {"TLS13", ctls.VersionTLS13}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := startEngine(t)
+			ch := make(chan ctls.ConnectionState, 1)
+			cfg := serverConfig(t)
+			cfg.NextProtos = []string{"h2", "twine/1"}
+			addr := listen(t, e, cfg, twine.FactoryFunc(func(net.Addr) twine.Protocol {
+				return &stateProto{ch: ch}
+			}))
+			c := dial(t, addr, &ctls.Config{
+				InsecureSkipVerify: true,
+				MinVersion:         tc.ver,
+				MaxVersion:         tc.ver,
+				NextProtos:         []string{"twine/1"},
+				ServerName:         "sni.example",
+			})
+			defer c.Close()
+			var st ctls.ConnectionState
+			select {
+			case st = <-ch:
+			case <-time.After(10 * time.Second):
+				t.Fatal("no ConnectionMade")
+			}
+			if !st.HandshakeComplete || st.Version != tc.ver {
+				t.Fatalf("server state: complete=%v version=%x want %x", st.HandshakeComplete, st.Version, tc.ver)
+			}
+			if st.NegotiatedProtocol != "twine/1" {
+				t.Fatalf("server ALPN = %q", st.NegotiatedProtocol)
+			}
+			if st.ServerName != "sni.example" {
+				t.Fatalf("server SNI = %q", st.ServerName)
+			}
+			if cs := c.ConnectionState(); cs.Version != tc.ver || cs.NegotiatedProtocol != "twine/1" {
+				t.Fatalf("client state: version=%x alpn=%q", cs.Version, cs.NegotiatedProtocol)
+			}
+			// And data flows.
+			if _, err := c.Write([]byte("ping")); err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, 4)
+			if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "ping" {
+				t.Fatalf("echo: %q %v", buf, err)
+			}
+		})
+	}
+}
+
+// byeProto writes a message, then loses the connection.
+type byeProto struct {
+	lost chan error
+	big  []byte
+}
+
+func (p *byeProto) ConnectionMade(t twine.Transport) {
+	t.Write([]byte("bye"))
+	if p.big != nil {
+		t.Write(p.big)
+	}
+	t.LoseConnection()
+	t.Write([]byte("dropped")) // after LoseConnection: dropped
+}
+func (p *byeProto) DataReceived([]byte)      {}
+func (p *byeProto) ConnectionLost(err error) { p.lost <- err }
+
+func TestLoseConnectionSendsCloseNotify(t *testing.T) {
+	e := startEngine(t)
+	lost := make(chan error, 1)
+	big := bytes.Repeat([]byte("x"), 300<<10) // forces ring buffering
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &byeProto{lost: lost, big: big}
+	}))
+	c := dial(t, addr, nil)
+	got, err := io.ReadAll(c) // io.ReadAll returns nil on io.EOF
+	if err != nil {
+		t.Fatalf("ReadAll: %v (want clean close_notify EOF)", err)
+	}
+	want := append([]byte("bye"), big...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(want))
+	}
+	// A further Read must also be a clean io.EOF, not io.ErrUnexpectedEOF.
+	if _, err := c.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("Read after close_notify: %v", err)
+	}
+	c.Close()
+	select {
+	case err := <-lost:
+		if err != nil {
+			t.Fatalf("ConnectionLost(%v), want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no ConnectionLost")
+	}
+}
+
+// lostProto records lifecycle calls.
+type lostProto struct {
+	echo
+	made atomic.Int32
+	lost chan error
+}
+
+func (p *lostProto) ConnectionMade(t twine.Transport) { p.made.Add(1); p.t = t }
+func (p *lostProto) ConnectionLost(err error)         { p.lost <- err }
+
+func TestPeerCloseNotify(t *testing.T) {
+	e := startEngine(t)
+	lost := make(chan error, 1)
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &lostProto{lost: lost}
+	}))
+	c := dial(t, addr, nil)
+	if _, err := c.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(c, buf); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CloseWrite(); err != nil { // client close_notify
+		t.Fatal(err)
+	}
+	// The server answers with its own close_notify.
+	if _, err := c.Read(buf); err != io.EOF {
+		t.Fatalf("client Read after CloseWrite: %v, want io.EOF", err)
+	}
+	c.Close()
+	select {
+	case err := <-lost:
+		if err != nil {
+			t.Fatalf("ConnectionLost(%v), want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no ConnectionLost")
+	}
+}
+
+func TestServerHandshakeFailure(t *testing.T) {
+	e := startEngine(t)
+	hsErr := make(chan error, 1)
+	p := &lostProto{lost: make(chan error, 1)}
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }),
+		twtls.OnHandshakeError(func(err error) { hsErr <- err }))
+	// A verifying client that does not trust the self-signed cert. With TLS
+	// 1.2 the server is still reading when the client's alert arrives, so
+	// the alert itself reaches the server (TLS 1.3 servers write session
+	// tickets into the closed socket and usually see a reset instead).
+	c, err := ctls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr,
+		&ctls.Config{ServerName: "localhost", MaxVersion: ctls.VersionTLS12})
+	if err == nil {
+		c.Close()
+		t.Fatal("client handshake unexpectedly succeeded")
+	}
+	select {
+	case err := <-hsErr:
+		if err == nil || !strings.Contains(err.Error(), "bad certificate") {
+			t.Fatalf("server handshake error %v, want the client's bad_certificate alert", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("OnHandshakeError not called")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if p.made.Load() != 0 {
+		t.Fatal("inner ConnectionMade called after failed handshake")
+	}
+	select {
+	case err := <-p.lost:
+		t.Fatalf("inner ConnectionLost(%v) called after failed handshake", err)
+	default:
+	}
+}
+
+func TestHandshakeTimeout(t *testing.T) {
+	e := startEngine(t)
+	hsErr := make(chan error, 1)
+	addr := listen(t, e, serverConfig(t), echoFactory(),
+		twtls.HandshakeTimeout(100*time.Millisecond),
+		twtls.OnHandshakeError(func(err error) { hsErr <- err }))
+	c, err := net.Dial("tcp", addr) // never sends a ClientHello
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	select {
+	case err := <-hsErr:
+		if !errors.Is(err, twtls.ErrHandshakeTimeout) {
+			t.Fatalf("handshake error %v, want ErrHandshakeTimeout", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("handshake did not time out")
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("connection still open after handshake timeout")
+	}
+}
+
+func TestConcurrentClients(t *testing.T) {
+	e := startEngine(t)
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	const n = 100
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			c, err := ctls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
+				&ctls.Config{InsecureSkipVerify: true})
+			if err != nil {
+				errs <- fmt.Errorf("client %d dial: %w", i, err)
+				return
+			}
+			defer c.Close()
+			_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+			buf := make([]byte, 64)
+			for j := 0; j < 10; j++ {
+				msg := []byte(fmt.Sprintf("client %03d msg %02d", i, j))
+				if _, err := c.Write(msg); err != nil {
+					errs <- err
+					return
+				}
+				if _, err := io.ReadFull(c, buf[:len(msg)]); err != nil {
+					errs <- err
+					return
+				}
+				if !bytes.Equal(buf[:len(msg)], msg) {
+					errs <- fmt.Errorf("client %d: got %q", i, buf[:len(msg)])
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+// pauser pauses reading on every chunk and resumes shortly after, echoing.
+type pauser struct {
+	t       twine.Transport
+	resumes atomic.Int32
+}
+
+func (p *pauser) ConnectionMade(t twine.Transport) { p.t = t }
+func (p *pauser) DataReceived(b []byte) {
+	p.t.Write(b)
+	p.t.PauseReading()
+	p.t.Loop().CallLater(time.Millisecond, func() {
+		p.resumes.Add(1)
+		p.t.ResumeReading()
+	})
+}
+func (p *pauser) ConnectionLost(error) {}
+
+func TestPauseResumeReading(t *testing.T) {
+	e := startEngine(t)
+	p := &pauser{}
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))
+	c := dial(t, addr, nil)
+	defer c.Close()
+	data := make([]byte, 512<<10)
+	_, _ = rand.Read(data)
+	go func() { _, _ = c.Write(data) }()
+	got := make([]byte, len(data))
+	if _, err := io.ReadFull(c, got); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("data corrupted across pause/resume")
+	}
+	if p.resumes.Load() == 0 {
+		t.Fatal("never paused")
+	}
+}
+
+// panicker panics in DataReceived.
+type panicker struct{ lost chan error }
+
+func (p *panicker) ConnectionMade(twine.Transport) {}
+func (p *panicker) DataReceived([]byte)            { panic("boom") }
+func (p *panicker) ConnectionLost(err error)       { p.lost <- err }
+
+func TestInnerPanic(t *testing.T) {
+	e := startEngine(t, twine.Logger(nil))
+	lost := make(chan error, 1)
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &panicker{lost: lost}
+	}))
+	c := dial(t, addr, nil)
+	defer c.Close()
+	_, _ = c.Write([]byte("x"))
+	select {
+	case err := <-lost:
+		var pe *twine.PanicError
+		if !errors.As(err, &pe) {
+			t.Fatalf("ConnectionLost(%v), want PanicError", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no ConnectionLost")
+	}
+}
+
+func TestKernelOffloadFallsBack(t *testing.T) {
+	t.Logf("KTLSAvailable=%v KTLSSupported=%v", twtls.KTLSAvailable(), twtls.KTLSSupported())
+	if twtls.KTLSSupported() {
+		t.Fatal("KTLSSupported must be false")
+	}
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp"); err == nil {
+		want := strings.Contains(string(b), "tls")
+		if twtls.KTLSAvailable() != want {
+			t.Errorf("KTLSAvailable=%v but tcp_available_ulp=%q", twtls.KTLSAvailable(), b)
+		}
+	}
+	e := startEngine(t)
+	offloaded := make(chan bool, 1)
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &offloadProto{ch: offloaded}
+	}), twtls.KernelOffload(true))
+	c := dial(t, addr, nil)
+	defer c.Close()
+	if _, err := c.Write([]byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 3)
+	if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "abc" {
+		t.Fatalf("echo: %q %v", buf, err)
+	}
+	if <-offloaded {
+		t.Fatal("KernelOffloaded() = true")
+	}
+}
+
+type offloadProto struct {
+	echo
+	ch chan bool
+}
+
+func (p *offloadProto) ConnectionMade(t twine.Transport) {
+	p.t = t
+	p.ch <- t.(*twtls.Transport).KernelOffloaded()
+}
+
+// --- client tests ------------------------------------------------------------
+
+// goEchoServer runs a crypto/tls echo server and returns its address.
+func goEchoServer(t testing.TB, cfg *ctls.Config) string {
+	t.Helper()
+	ln, err := ctls.Listen("tcp", "127.0.0.1:0", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				_, _ = io.Copy(c, c)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// clientProto sends lines and collects the echo.
+type clientProto struct {
+	t       twine.Transport
+	want    int
+	got     bytes.Buffer
+	done    chan []byte
+	state   chan ctls.ConnectionState
+	made    atomic.Int32
+	payload []byte
+}
+
+func (p *clientProto) ConnectionMade(t twine.Transport) {
+	p.made.Add(1)
+	p.t = t
+	if p.state != nil {
+		p.state <- t.(*twtls.Transport).ConnectionState()
+	}
+	t.Write(p.payload)
+}
+func (p *clientProto) DataReceived(b []byte) {
+	p.got.Write(b)
+	if p.got.Len() >= p.want {
+		select {
+		case p.done <- bytes.Clone(p.got.Bytes()):
+		default:
+		}
+		p.t.LoseConnection()
+	}
+}
+func (p *clientProto) ConnectionLost(error) {}
+
+func TestClientConnect(t *testing.T) {
+	cert, pool := selfSigned(t)
+	for _, tc := range []struct {
+		name string
+		ver  uint16
+	}{{"TLS12", ctls.VersionTLS12}, {"TLS13", ctls.VersionTLS13}} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := goEchoServer(t, &ctls.Config{
+				Certificates: []ctls.Certificate{cert},
+				NextProtos:   []string{"twine/1"},
+				MaxVersion:   tc.ver,
+			})
+			e := startEngine(t)
+			payload := bytes.Repeat([]byte("0123456789abcdef"), 20000) // 320 KB
+			p := &clientProto{want: len(payload), done: make(chan []byte, 1),
+				state: make(chan ctls.ConnectionState, 1), payload: payload}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			// ServerName defaults from addr's host (127.0.0.1, an IP SAN).
+			tr, err := twtls.Connect(e.NextLoop(), addr,
+				&ctls.Config{RootCAs: pool, NextProtos: []string{"twine/1"}},
+				twine.FactoryFunc(func(net.Addr) twine.Protocol { return p })).Await(ctx)
+			if err != nil {
+				t.Fatalf("Connect: %v", err)
+			}
+			if _, ok := tr.(*twtls.Transport); !ok {
+				t.Fatalf("Connect resolved with %T", tr)
+			}
+			st := <-p.state
+			if st.Version != tc.ver || st.NegotiatedProtocol != "twine/1" {
+				t.Fatalf("client state: version=%x alpn=%q", st.Version, st.NegotiatedProtocol)
+			}
+			select {
+			case got := <-p.done:
+				if !bytes.Equal(got, payload) {
+					t.Fatal("echo mismatch")
+				}
+			case <-ctx.Done():
+				t.Fatal("timeout waiting for echo")
+			}
+		})
+	}
+}
+
+func TestClientHandshakeFailure(t *testing.T) {
+	cert, pool := selfSigned(t)
+	addr := goEchoServer(t, &ctls.Config{Certificates: []ctls.Certificate{cert}})
+	e := startEngine(t)
+	hsErr := make(chan error, 1)
+	p := &clientProto{done: make(chan []byte, 1), payload: []byte("x")}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := twtls.Connect(e.NextLoop(), addr,
+		&ctls.Config{RootCAs: pool, ServerName: "wrong.example"},
+		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }),
+		twtls.OnHandshakeError(func(err error) { hsErr <- err })).Await(ctx)
+	var verr *ctls.CertificateVerificationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Connect error %v (%T), want CertificateVerificationError", err, err)
+	}
+	select {
+	case herr := <-hsErr:
+		if herr != err {
+			t.Fatalf("OnHandshakeError(%v) != Connect error %v", herr, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnHandshakeError not called")
+	}
+	if p.made.Load() != 0 {
+		t.Fatal("inner ConnectionMade called after failed handshake")
+	}
+}
+
+func TestClientDialError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	e := startEngine(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = twtls.Connect(e.NextLoop(), addr, &ctls.Config{InsecureSkipVerify: true}, echoFactory()).Await(ctx)
+	if err == nil {
+		t.Fatal("Connect to closed port succeeded")
+	}
+}
+
+// TestTwineToTwine runs both ends in one engine; both handshakes share the
+// worker pool.
+func TestTwineToTwine(t *testing.T) {
+	e := startEngine(t)
+	_, pool := selfSigned(t)
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			payload := []byte(fmt.Sprintf("twine client %d", i))
+			p := &clientProto{want: len(payload), done: make(chan []byte, 1), payload: payload}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			_, err := twtls.Connect(e.NextLoop(), addr, &ctls.Config{RootCAs: pool, ServerName: "localhost"},
+				twine.FactoryFunc(func(net.Addr) twine.Protocol { return p })).Await(ctx)
+			if err != nil {
+				t.Errorf("Connect %d: %v", i, err)
+				return
+			}
+			select {
+			case got := <-p.done:
+				if !bytes.Equal(got, payload) {
+					t.Errorf("client %d: got %q", i, got)
+				}
+			case <-ctx.Done():
+				t.Errorf("client %d: timeout", i)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// --- interop -----------------------------------------------------------------
+
+func TestOpenSSLClient(t *testing.T) {
+	bin, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Skip("openssl not on PATH")
+	}
+	e := startEngine(t)
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	for _, ver := range []string{"-tls1_2", "-tls1_3"} {
+		t.Run(ver, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, bin, "s_client", "-connect", addr, "-quiet", ver)
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				_ = stdin.Close()
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}()
+			const line = "hello from openssl s_client"
+			if _, err := io.WriteString(stdin, line+"\n"); err != nil {
+				t.Fatal(err)
+			}
+			got := make(chan string, 1)
+			go func() {
+				s, _ := bufio.NewReader(stdout).ReadString('\n')
+				got <- s
+			}()
+			select {
+			case s := <-got:
+				if strings.TrimRight(s, "\r\n") != line {
+					t.Fatalf("openssl echo %q; stderr:\n%s", s, stderr.String())
+				}
+			case <-ctx.Done():
+				t.Fatalf("timeout; stderr:\n%s", stderr.String())
+			}
+		})
+	}
+}
+
+// TestSilentPeersDoNotStallHandshakes: peers that connect and never send a
+// ClientHello must not block other handshakes, even with a one-worker pool.
+func TestSilentPeersDoNotStallHandshakes(t *testing.T) {
+	e := startEngine(t, twine.WorkerPool(1))
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	for i := 0; i < 4; i++ {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+	}
+	time.Sleep(20 * time.Millisecond)
+	d := &net.Dialer{Timeout: 3 * time.Second, Deadline: time.Now().Add(3 * time.Second)}
+	c, err := ctls.DialWithDialer(d, "tcp", addr, &ctls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("handshake stalled behind silent peers: %v", err)
+	}
+	c.Close()
+}
+
+// reentrantProducer writes from PauseProducing, which the core calls
+// synchronously from inside the ciphertext write that tls.Conn.Write makes.
+type reentrantProducer struct {
+	t      twine.Transport
+	pauses atomic.Int32
+}
+
+func (p *reentrantProducer) PauseProducing() {
+	p.pauses.Add(1)
+	p.t.Write([]byte("P"))
+}
+func (p *reentrantProducer) ResumeProducing() {}
+func (p *reentrantProducer) StopProducing()   {}
+
+type producerProto struct {
+	prod  *reentrantProducer
+	total int
+}
+
+func (p *producerProto) ConnectionMade(t twine.Transport) {
+	p.prod.t = t
+	t.RegisterProducer(p.prod, true)
+	chunk := bytes.Repeat([]byte("d"), 64<<10)
+	for i := 0; i < p.total/len(chunk); i++ {
+		t.Write(chunk)
+	}
+	t.LoseConnection()
+}
+func (p *producerProto) DataReceived([]byte)  {}
+func (p *producerProto) ConnectionLost(error) {}
+
+func TestReentrantWriteFromProducer(t *testing.T) {
+	e := startEngine(t, twine.WriteHighWater(64<<10), twine.WriteLowWater(16<<10))
+	prod := &reentrantProducer{}
+	const total = 2 << 20
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &producerProto{prod: prod, total: total}
+	}), twtls.WithListenOptions(twine.SocketBuffers(0, 16<<10)))
+	c := dial(t, addr, nil)
+	defer c.Close()
+	time.Sleep(50 * time.Millisecond) // let the ring fill past the high-water mark
+	got, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	n := int(prod.pauses.Load())
+	if n == 0 {
+		t.Skip("producer was never paused; re-entrancy not exercised")
+	}
+	if len(got) != total+n || bytes.Count(got, []byte("P")) != n {
+		t.Fatalf("got %d bytes with %d P, want %d with %d", len(got), bytes.Count(got, []byte("P")), total+n, n)
+	}
+}

@@ -105,10 +105,11 @@ func (l *Loop) completeConnect(c *conn) {
 	c.kind = kindTCP
 	l.metrics.Connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
-	c.proto = d.factory.BuildProtocol(c.peer)
-	if c.proto == nil {
-		c.proto = nopProtocol{}
+	p := d.factory.BuildProtocol(c.peer)
+	if p == nil {
+		p = nopProtocol{}
 	}
+	c.setProto(p)
 	// The fd may already be registered with Writable interest; set the
 	// steady-state interest set.
 	var err error

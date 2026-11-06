@@ -48,6 +48,9 @@ func (nopProtocol) ConnectionLost(error)           {}
 // *Transport once the handshake has completed; DataReceived then carries
 // plaintext. The returned Factory is used with twine.Engine.ListenTCP.
 func Server(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory {
+	if cfg == nil {
+		cfg = &ctls.Config{} // every handshake fails: no certificate
+	}
 	return &factory{cfg: cfg, inner: inner, opts: buildOptions(opts)}
 }
 

@@ -661,6 +661,7 @@ Decisions deferred to implementation time, and the risks most likely to cost the
 - `OnShutdown` hooks run once on the `Run` goroutine after listeners close and before connections are closed (Section 8 rule 7 says "on each loop"; a single run is what the Twisted trigger does and is what users expect).
 - The watchdog dumps the loop goroutine via `runtime.Stack(all)` filtered by goroutine id instead of a signal to the locked thread (portable, no signal handler).
 - `CallFromThread` after loop exit drops the function and counts `BacklogDrops`; there is no return value to carry `ErrLoopStopped`, and `Loop.Stopped()` exposes the state.
+- TLS handshakes run on a dedicated short-lived goroutine per connection rather than on the bounded `DeferToThread` pool: a handshake blocks for network round trips, so a few silent peers would otherwise occupy every worker for `HandshakeTimeout` and stall all other `DeferToThread` users. The result still settles on the loop through `CallFromThread`, so the concurrency rule (no `crypto/tls.Conn` touched from two goroutines) holds. `tls/transport.go` keeps a one-line switch back to the pool.
 - kTLS offload is not implementable on `crypto/tls` (Go 1.25): record-layer traffic secrets are unexported and `ExportKeyingMaterial` derives different keys. `tls.KernelOffload(true)` probes the kernel and falls back to memory-BIO.
 
 **Risks**
