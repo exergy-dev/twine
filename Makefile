@@ -32,11 +32,15 @@ crossbuild:
 	GOOS=freebsd GOARCH=amd64 $(GO) build $(PKGS)
 	GOOS=darwin  GOARCH=arm64 $(GO) vet $(PKGS)
 
+# golangci-lint and staticcheck are looked up in GOBIN then PATH; a missing
+# tool is reported and skipped, but findings from an installed tool fail.
+GOLANGCI := $(shell test -x $(GOBIN)/golangci-lint && echo $(GOBIN)/golangci-lint || which golangci-lint 2>/dev/null)
+STATICCHECK := $(shell test -x $(GOBIN)/staticcheck && echo $(GOBIN)/staticcheck || which staticcheck 2>/dev/null)
+
 lint: vet crossbuild
-	@test -x $(GOBIN)/golangci-lint && $(GOBIN)/golangci-lint run $(PKGS) || \
-	 (which golangci-lint >/dev/null && golangci-lint run $(PKGS)) || \
-	 echo "golangci-lint not installed; ran go vet only"
-	@test -x $(GOBIN)/staticcheck && $(GOBIN)/staticcheck $(PKGS) || true
+	@if [ -n "$(GOLANGCI)" ]; then $(GOLANGCI) run $(PKGS); else echo "golangci-lint not installed; skipped"; fi
+	@if [ -n "$(STATICCHECK)" ]; then $(STATICCHECK) $(PKGS); else echo "staticcheck not installed; skipped"; fi
+	@cd bench && $(GO) vet ./...
 
 fmt:
 	gofmt -l -w .

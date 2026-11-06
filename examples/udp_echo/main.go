@@ -39,7 +39,8 @@ func main() {
 	eng := twine.New(twine.Loops(1))
 	ln, err := eng.ListenUDP(*addr, &udpEcho{})
 	if err != nil {
-		log.Fatal(err)
+		stop()
+		log.Fatal(err) //nolint:gocritic // stop() called explicitly above
 	}
 	log.Printf("udp_echo: listening on %s", ln.Addr())
 	if err := eng.Run(ctx); err != nil {

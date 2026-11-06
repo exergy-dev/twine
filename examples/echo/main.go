@@ -39,9 +39,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if err := trace.Start(f); err != nil {
-			log.Fatal(err)
+			_ = f.Close()
+			log.Fatal(err) //nolint:gocritic // deferred close handled above
 		}
 		defer trace.Stop()
 	}
