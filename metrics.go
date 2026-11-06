@@ -9,27 +9,48 @@ import (
 // LoopMetrics holds per-loop counters. They are updated on the loop without
 // contention and may be read from any goroutine via Snapshot.
 type LoopMetrics struct {
-	Connections      atomic.Uint64 // currently open (gauge)
-	Accepts          atomic.Uint64
-	Closes           atomic.Uint64
-	Reads            atomic.Uint64
-	ReadBytes        atomic.Uint64
-	WriteBytes       atomic.Uint64
-	Writev           atomic.Uint64 // flush syscalls
-	WriteDirectHit   atomic.Uint64 // writes that bypassed the ring
-	WriteAfterClose  atomic.Uint64 // ErrClosed occurrences
-	TimersFired      atomic.Uint64
-	TasksRun         atomic.Uint64
-	Wakeups          atomic.Uint64
+	// Connections is the number of currently open connections (gauge).
+	Connections atomic.Uint64
+	// Accepts is the number of accepted connections.
+	Accepts atomic.Uint64
+	// Closes is the number of closed connections.
+	Closes atomic.Uint64
+	// Reads is the number of read(2) calls that returned data.
+	Reads atomic.Uint64
+	// ReadBytes is the number of bytes read.
+	ReadBytes atomic.Uint64
+	// WriteBytes is the number of bytes written.
+	WriteBytes atomic.Uint64
+	// Writev is the number of flush writev(2) calls.
+	Writev atomic.Uint64
+	// WriteDirectHit is the number of writes that bypassed the ring.
+	WriteDirectHit atomic.Uint64
+	// WriteAfterClose is the number of writes on closed or stale transports (ErrClosed).
+	WriteAfterClose atomic.Uint64
+	// TimersFired is the number of timers fired.
+	TimersFired atomic.Uint64
+	// TasksRun is the number of CallFromThread tasks run.
+	TasksRun atomic.Uint64
+	// Wakeups is the number of eventfd wakeups issued.
+	Wakeups atomic.Uint64
+	// WakeupsCoalesced is the number of wakeups avoided by coalescing.
 	WakeupsCoalesced atomic.Uint64
-	Iterations       atomic.Uint64
-	PollBlockNanos   atomic.Uint64
-	Panics           atomic.Uint64
-	BacklogDrops     atomic.Uint64 // tasks dropped after loop exit
-	AcceptErrors     atomic.Uint64
-	Datagrams        atomic.Uint64
-	DatagramsSent    atomic.Uint64
-	SlowCallbacks    atomic.Uint64
+	// Iterations: loop iterations.
+	Iterations atomic.Uint64
+	// PollBlockNanos is the number of nanoseconds spent blocked in poll.
+	PollBlockNanos atomic.Uint64
+	// Panics is the number of recovered panics.
+	Panics atomic.Uint64
+	// BacklogDrops is the number of tasks dropped after loop exit.
+	BacklogDrops atomic.Uint64
+	// AcceptErrors is the number of accept(2) errors.
+	AcceptErrors atomic.Uint64
+	// Datagrams is the number of datagrams received.
+	Datagrams atomic.Uint64
+	// DatagramsSent is the number of datagrams sent.
+	DatagramsSent atomic.Uint64
+	// SlowCallbacks is the number of watchdog reports.
+	SlowCallbacks atomic.Uint64
 
 	// Published by the loop at the end of each iteration.
 	slabInUse     atomic.Int64
@@ -41,37 +62,65 @@ type LoopMetrics struct {
 
 // MetricsSnapshot is a plain copy of LoopMetrics plus derived values.
 type MetricsSnapshot struct {
-	LoopID           int
-	Connections      uint64
-	Accepts          uint64
-	Closes           uint64
-	Reads            uint64
-	ReadBytes        uint64
-	WriteBytes       uint64
-	Writev           uint64
-	WriteDirectHit   uint64
-	WriteAfterClose  uint64
-	TimersFired      uint64
-	TasksRun         uint64
-	Wakeups          uint64
+	// LoopID: index of the loop within its Engine.
+	LoopID int
+	// Connections is the number of currently open connections (gauge).
+	Connections uint64
+	// Accepts is the number of accepted connections.
+	Accepts uint64
+	// Closes is the number of closed connections.
+	Closes uint64
+	// Reads is the number of read(2) calls that returned data.
+	Reads uint64
+	// ReadBytes is the number of bytes read.
+	ReadBytes uint64
+	// WriteBytes is the number of bytes written.
+	WriteBytes uint64
+	// Writev is the number of flush writev(2) calls.
+	Writev uint64
+	// WriteDirectHit is the number of writes that bypassed the ring.
+	WriteDirectHit uint64
+	// WriteAfterClose is the number of writes on closed or stale transports (ErrClosed).
+	WriteAfterClose uint64
+	// TimersFired is the number of timers fired.
+	TimersFired uint64
+	// TasksRun is the number of CallFromThread tasks run.
+	TasksRun uint64
+	// Wakeups is the number of eventfd wakeups issued.
+	Wakeups uint64
+	// WakeupsCoalesced is the number of wakeups avoided by coalescing.
 	WakeupsCoalesced uint64
-	Iterations       uint64
-	PollBlockNanos   uint64
-	Panics           uint64
-	BacklogDrops     uint64
-	AcceptErrors     uint64
-	Datagrams        uint64
-	DatagramsSent    uint64
-	SlowCallbacks    uint64
+	// Iterations: loop iterations.
+	Iterations uint64
+	// PollBlockNanos is the number of nanoseconds spent blocked in poll.
+	PollBlockNanos uint64
+	// Panics is the number of recovered panics.
+	Panics uint64
+	// BacklogDrops is the number of tasks dropped after loop exit.
+	BacklogDrops uint64
+	// AcceptErrors is the number of accept(2) errors.
+	AcceptErrors uint64
+	// Datagrams is the number of datagrams received.
+	Datagrams uint64
+	// DatagramsSent is the number of datagrams sent.
+	DatagramsSent uint64
+	// SlowCallbacks is the number of watchdog reports.
+	SlowCallbacks uint64
 
 	// Iteration duration percentiles over the last 10 seconds.
+	// IterationP50: iteration duration p50 over the last 10 s.
 	IterationP50 time.Duration
+	// IterationP99: iteration duration p99 over the last 10 s.
 	IterationP99 time.Duration
+	// IterationMax: longest iteration over the last 10 s.
 	IterationMax time.Duration
 
 	// Memory.
-	SlabInUse     int
-	SlabFree      int
+	// SlabInUse: slab bytes handed out to rings.
+	SlabInUse int
+	// SlabFree: slab bytes sitting in free lists.
+	SlabFree int
+	// RingHighWater: largest pending-write backlog seen.
 	RingHighWater int
 }
 

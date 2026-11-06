@@ -56,7 +56,9 @@ var (
 
 // PanicError wraps a panic recovered from protocol or Future callback code.
 type PanicError struct {
+	// Value is the recovered panic value.
 	Value any
+	// Stack is the goroutine stack at the point of recovery.
 	Stack []byte
 }
 
