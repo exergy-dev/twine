@@ -690,3 +690,25 @@ nethttp1 RESULT rate=160457 p50_us=1573 p99_us=3408 server_cores=1.00 client_cor
 twine1   RESULT rate=372862 p50_us=688 p99_us=1180 server_cores=1.00 client_cores=8.01
 nethttp1 RESULT rate=161418 p50_us=1573 p99_us=3408 server_cores=1.00 client_cores=7.89
 # ratio of medians 374K / 161K = 2.32x; twine HTTP at 1 loop equals its 1-loop echo ceiling (371K msgs/s)
+
+=== FOLLOW-UP E (orchestrator): host compute capacity vs number of busy vCPUs (bench/cpuspeed) ===
+n=1 stride=2  per-thread Mloops/s: 1345
+n=4 stride=2  per-thread Mloops/s: 1296..1302
+n=8 stride=2  per-thread Mloops/s: 1270..1284 (median 1282)
+n=12 stride=2 per-thread Mloops/s: 1040..1151 (median 1103)
+n=16 stride=2 per-thread Mloops/s: 947..1057 (median 999)   -> 22% slower per vCPU than with 8 busy
+n=32 stride=1 per-thread Mloops/s: 778..1124 (median 988, max/min 1.45)
+
+=== FOLLOW-UP F (orchestrator): Phase 2 at 1000 conns with host load held constant ===
+# client: twineload -proto echo -size 64 -conns 1000 -loops 8 -spin 5000 -pin 16..30, 8 s, 3 rounds
+# loops1+7busy = 1 server loop on cpu 0 while bench/cpuspeed -n 7 -offset 2 -stride 2 keeps cpus 2..14 busy
+loops8        RESULT rate=2253500 p50_us=442 p99_us=852 server_cores=8.02
+loops1+7busy  RESULT rate=296545 p50_us=2884 p99_us=5243 server_cores=1.00
+loops1idle    RESULT rate=370387 p50_us=2753 p99_us=3015 server_cores=1.00
+loops8        RESULT rate=2255389 p50_us=459 p99_us=819 server_cores=8.02
+loops1+7busy  RESULT rate=290648 p50_us=3015 p99_us=5243 server_cores=1.00
+loops1idle    RESULT rate=370766 p50_us=2753 p99_us=3015 server_cores=1.00
+loops8        RESULT rate=2249560 p50_us=459 p99_us=819 server_cores=8.01
+loops1+7busy  RESULT rate=296306 p50_us=2884 p99_us=5243 server_cores=1.00
+loops1idle    RESULT rate=373608 p50_us=2753 p99_us=3015 server_cores=1.00
+# medians: 8 loops 2.2535M; 1 loop (equal host load) 296.3K -> linearity 0.950; 1 loop (idle host) 370.8K -> 0.760

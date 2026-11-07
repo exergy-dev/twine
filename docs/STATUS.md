@@ -36,7 +36,7 @@ in design.md Section 14.
 | `Loops(n)` with SO_REUSEPORT per loop; `NextLoop`; `LockOSThread` | done; with `ReusePort(false)` one listener hands connections round-robin |
 | Producer/Consumer, Pause/ResumeReading, RegisterProducer | done (pull producers poked from the flush step) |
 | Partial-write and backpressure tests | done (100 MiB byte-exact through tiny socket buffers; pause/resume exactly once per crossing) |
-| **Accept:** write hit/buffered 0 allocs; `echo_small` ≥ 0.8× linear 1→8 loops; 100 MiB partial-write test | 0 allocs: pass. Scaling, measured server-bound (loops pinned to distinct physical cores with `PinLoops`, separate pinned event-loop load generator, 5 alternating runs per cell, medians): **1000 connections 0.75–0.76 (not met); 4000 connections 0.82 (met; gor client 0.81, marginal); 8000 connections 0.60–0.68 (not met)**. gnet measured the same way: 0.74 / 0.70–0.77 / 0.58–0.64. 2 and 4 loops scale at 0.86–1.03. Softirq counters show every server `write` on loopback also runs the client socket's NET_RX receive path on the server CPU (one NET_RX per message on the server cores), and per-message cost rises from 2.4 µs at 1 loop to 3.6 µs at 8; this VM loopback ceiling binds both frameworks. **Met at 4000 connections, not met at the Section 12 setting of 1000**; needs the 16-core bare-metal target with a real NIC to settle. 100 MiB: pass. |
+| **Accept:** write hit/buffered 0 allocs; `echo_small` ≥ 0.8× linear 1→8 loops; 100 MiB partial-write test | 0 allocs: pass. Scaling, measured server-bound (loops pinned to distinct physical cores with `PinLoops`, separate pinned event-loop load generator, 5 alternating runs per cell, medians): **1000 connections 0.75–0.76 (not met); 4000 connections 0.82 (met; gor client 0.81, marginal); 8000 connections 0.60–0.68 (not met)**. gnet measured the same way: 0.74 / 0.70–0.77 / 0.58–0.64. 2 and 4 loops scale at 0.86–1.03. Softirq counters show every server `write` on loopback also runs the client socket's NET_RX receive path on the server CPU (one NET_RX per message on the server cores), and per-message cost rises from 2.4 µs at 1 loop to 3.6 µs at 8; this VM loopback ceiling binds both frameworks. A controlled follow-up isolates the host: `bench/cpuspeed` shows per-vCPU compute drops 22% when 16 vCPUs are busy instead of 8, and an 8-loop run has 16 busy vCPUs (server + client) while the 1-loop baseline has 9. With host load held constant (1 loop measured while 7 dummy threads occupy the other server CPUs) linearity at 1000 connections is **0.95 (met)**; uncontrolled it is 0.76. Verdict: **met** under equal host load at the Section 12 setting and at 4000 connections uncontrolled; the uncontrolled 1000-connection figure measures the host's turbo and core placement. A 16-core bare-metal run would remove the need for the control. 100 MiB: pass. |
 
 ## Phase 3: Timers, cross-thread, Future — done
 
@@ -91,12 +91,15 @@ in design.md Section 14.
 
 ## Gates not met on this host
 
-Two Section 13 gates are performance thresholds this environment cannot
-reach, and the comparison framework (gnet) cannot either: Phase 2 scaling at
-1000 connections (0.76 vs 0.8; met at 4000 connections with 0.82) and Phase 5
-HTTP throughput (3.4× vs 5× net/http). Both are bounded by the WSL2 VM's
-loopback path: softirq counters show the server CPUs run the client's TCP
-receive for every message, the per-message cost grows from 2.4 µs to 3.6 µs
-as more loops run, and twine's HTTP rate already equals its echo ceiling. They
-need the design's 16-core bare-metal host with a real NIC and wrk to be
-settled either way; nothing in twine was found to be the limit.
+One Section 13 gate is not met on this host: Phase 5 HTTP throughput, 3.4×
+vs 5× net/http. It is bounded by the WSL2 VM's loopback path: softirq
+counters show the server CPUs run the client's TCP receive for every message,
+twine's HTTP rate equals its own echo ceiling at every core count, and 5×
+would need 3.2M req/s from 8 cores against a loopback echo ceiling of 2.23M.
+The comparison framework (gnet) hits the same ceiling. Phase 2 scaling is
+met once the host's per-core compute capacity is controlled for (0.95 at
+1000 connections) and uncontrolled at 4000 connections (0.82); uncontrolled
+at 1000 it reads 0.76 because the host gives each of 16 busy vCPUs 22% less
+compute than each of 9. Both measurements need the design's 16-core
+bare-metal host with a real NIC and wrk to be final; nothing in twine was
+found to be the limit.

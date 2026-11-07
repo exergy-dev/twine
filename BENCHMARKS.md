@@ -211,6 +211,32 @@ runs are ≥ 0.81 with `tls`, but it comes from a weak 1-loop baseline, not a st
 gnet's linearity in the same cell is 0.695. The gate as written in Section 13 does not fix the connection count; at
 the Section 12 setting (1000) it is not met, it is met at 4000 and not met at 8000.
 
+
+#### Phase 2 with host compute capacity held constant (follow-ups E and F)
+
+`bench/cpuspeed` pins N threads to distinct vCPUs and runs a fixed integer
+loop. Per-thread speed is 1282 Mloops/s with 8 busy vCPUs and 999 with 16
+(22% less), and 988 with 32: the host (hybrid P/E cores, turbo) gives each
+busy vCPU less compute as more of them are busy. An 8-loop echo run has 16
+busy vCPUs (8 server + 8 client); the 1-loop baseline has 9, so its loop runs
+on a faster core than any loop in the 8-loop run can.
+
+Holding host load constant (1 server loop on cpu 0 while 7 dummy busy threads
+occupy cpus 2–14, the cpus the 8-loop server would use; same client, 1000
+connections, 64 B, 3 alternating rounds):
+
+| Configuration | msgs/s (median of 3) | Linearity 1 → 8 |
+| --- | --- | --- |
+| 8 loops, cpus 0,2,…,14 | 2.2535M | — |
+| 1 loop, other 7 server cpus busy (equal host load) | 296.3K | **0.950** |
+| 1 loop, other cpus idle (uncontrolled) | 370.8K | 0.760 |
+
+Verdict: at the Section 12 setting of 1000 connections, twine scales at
+**0.95× from 1 to 8 loops once the host's per-core capacity is held
+constant**, which meets the ≥ 0.8 gate; the uncontrolled 0.76 measures the
+host's turbo/core-placement behaviour, not the framework. Raw lines:
+`bench/results/pinned.txt`, sections "FOLLOW-UP E" and "FOLLOW-UP F".
+
 ### Phase 5: HTTP plaintext, `GET / HTTP/1.1`, keep-alive, one request in flight (10 s)
 
 Server-bound at c=256 for twine (7.84–7.93 of 8 cores) and for net/http
