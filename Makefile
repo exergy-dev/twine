@@ -3,7 +3,7 @@ GOBIN   ?= $(shell $(GO) env GOPATH)/bin
 PKGS    := ./...
 SHA     := $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
 
-.PHONY: all test test-short test-race bench bench-compare lint vet fuzz fmt tidy crossbuild api
+.PHONY: all test test-short test-race bench bench-compare lint vet fuzz fmt tidy crossbuild api tunsink
 
 all: lint test
 
@@ -24,6 +24,10 @@ vet:
 	$(GO) vet $(PKGS)
 	$(GO) vet -tags twine_debug $(PKGS)
 	$(GO) vet -tags twine_uring . ./internal/...
+
+# examples/tunsink is its own module (it depends on franz-go); vet and build it.
+tunsink:
+	cd examples/tunsink && $(GO) vet ./... && $(GO) build -o /dev/null . && $(GO) build ./cmd/...
 
 # Cross-compile the kqueue and BSD code paths; they cannot run on Linux CI
 # but they must build.
