@@ -1,0 +1,21 @@
+[package]
+name = "twine-tls"
+description = "TLS for twine: rustls on the reactor loop (design Section 10)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+twine = { workspace = true }
+log = { workspace = true }
+libc = { workspace = true }
+ring = { version = "0.17", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pki-types = "1"
+
+[dev-dependencies]
+twine-alloccount = { workspace = true }
+twine-http = { workspace = true }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }

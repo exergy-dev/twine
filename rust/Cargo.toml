@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "twine",
+    "twine/internal/poll",
+    "twine/internal/sock",
+    "twine/internal/slab",
+    "twine/internal/ring",
+    "twine/internal/mpsc",
+    "twine/internal/wheel",
+    "twine/internal/alloccount",
+    "twine-proto",
+    "twine-http",
+    "twine-tls",
+    "examples",
+    "bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+libc = "0.2"
+log = "0.4"
+twine = { path = "twine" }
+twine-poll = { path = "twine/internal/poll" }
+twine-sock = { path = "twine/internal/sock" }
+twine-slab = { path = "twine/internal/slab" }
+twine-ring = { path = "twine/internal/ring" }
+twine-mpsc = { path = "twine/internal/mpsc" }
+twine-wheel = { path = "twine/internal/wheel" }
+twine-alloccount = { path = "twine/internal/alloccount" }
+twine-proto = { path = "twine-proto" }
+twine-http = { path = "twine-http" }
+twine-tls = { path = "twine-tls" }
+
+# Every profile keeps panic = "unwind": a panic in protocol code is caught and
+# aborts only that connection (design Section 8 rule 8).
+[profile.release]
+debug = 1
+lto = "thin"
+codegen-units = 4
+
+[profile.bench]
+inherits = "release"

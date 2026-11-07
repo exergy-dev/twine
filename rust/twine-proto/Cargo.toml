@@ -1,0 +1,15 @@
+[package]
+name = "twine-proto"
+description = "twine proto library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+twine = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+twine-alloccount = { workspace = true }

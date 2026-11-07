@@ -1,0 +1,17 @@
+[package]
+name = "twine-examples"
+description = "twine example programs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+twine = { workspace = true }
+twine-proto = { workspace = true }
+twine-http = { workspace = true }
+twine-tls = { workspace = true }
+log = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }

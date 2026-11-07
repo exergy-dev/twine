@@ -1,0 +1,26 @@
+[package]
+name = "twine"
+description = "Twisted-style reactor networking framework: one epoll loop per core, zero-allocation hot path"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# io_uring readiness backend (Linux). Opt-in, like the Go `twine_uring` tag.
+uring = ["twine-poll/uring"]
+
+[dependencies]
+libc = { workspace = true }
+log = { workspace = true }
+twine-poll = { workspace = true }
+twine-sock = { workspace = true }
+twine-slab = { workspace = true }
+twine-ring = { workspace = true }
+twine-mpsc = { workspace = true }
+twine-wheel = { workspace = true }
+
+[dev-dependencies]
+twine-alloccount = { workspace = true }
