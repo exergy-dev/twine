@@ -89,20 +89,25 @@ func (c *echoConn) ConnectionLost(err error) {
 }
 
 type httpConn struct {
-	ls   *loopState
-	t    twine.Transport
-	req  []byte
-	buf  []byte // partial response carried between reads
-	sent time.Time
-	samp bool
+	ls    *loopState
+	t     twine.Transport
+	req   []byte // one request, or depth requests back to back when pipelining
+	depth int    // pipeline depth (1 = one request in flight)
+	left  int    // responses still expected for the current batch
+	buf   []byte // partial response carried between reads
+	sent  time.Time
+	samp  bool
 }
 
+// send writes one batch of depth requests; the next batch goes out once all
+// depth responses have arrived (TechEmpower "plaintext" style pipelining).
 func (c *httpConn) send() {
 	c.ls.n++
 	c.samp = c.ls.n&sampleMask == 0 && recording.Load()
 	if c.samp {
 		c.sent = time.Now()
 	}
+	c.left = c.depth
 	c.t.Write(c.req)
 }
 
@@ -158,8 +163,12 @@ func (c *httpConn) DataReceived(b []byte) {
 		}
 		b = b[n:]
 		c.ls.count.Add(1)
+		c.left--
+		if c.left > 0 {
+			continue
+		}
 		if c.samp {
-			c.ls.hist.Record(time.Since(c.sent))
+			c.ls.hist.Record(time.Since(c.sent)) // latency of the whole batch
 		}
 		c.send()
 	}
@@ -183,7 +192,11 @@ func main() {
 	duration := flag.Duration("duration", 10*time.Second, "measured window")
 	warmup := flag.Duration("warmup", 2*time.Second, "warm-up after all connections are up")
 	serverPID := flag.Int("server-pid", 0, "server process id: report its CPU use over the measured window")
+	pipeline := flag.Int("pipeline", 1, "http: requests sent back to back per connection before waiting for responses (16 = TechEmpower plaintext)")
 	flag.Parse()
+	if *pipeline < 1 {
+		*pipeline = 1
+	}
 
 	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(0), twine.ShutdownTimeout(200 * time.Millisecond)}
 	if *spin >= 0 {
@@ -211,7 +224,7 @@ func main() {
 	}
 
 	msg := bytes.Repeat([]byte{'x'}, *size)
-	req := []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	req := bytes.Repeat([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), *pipeline)
 	connStart := time.Now()
 	// Connect in batches so the server's accept backlog is never overrun.
 	const batch = 500
@@ -222,7 +235,7 @@ func main() {
 		case "echo":
 			f = twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echoConn{ls: states[li], msg: msg} })
 		case "http":
-			f = twine.FactoryFunc(func(net.Addr) twine.Protocol { return &httpConn{ls: states[li], req: req} })
+			f = twine.FactoryFunc(func(net.Addr) twine.Protocol { return &httpConn{ls: states[li], req: req, depth: *pipeline} })
 		default:
 			log.Fatalf("unknown -proto %q", *proto)
 		}

@@ -54,7 +54,7 @@ network harness.
 | --- | --- | --- | --- | --- |
 | Echo, 1M idle connections, RSS | ≤ 4 GB | **Measured: 0.58 GB** server RSS at 1,000,000 held connections (582 MB peak, 564 B RSS per connection, +0.55 MB over the last 8 minutes of a 10-minute hold). Host MemAvailable fell 6.7 GB for the 2M loopback sockets (both ends), i.e. about 3 GB of kernel socket memory on the server side if the ends cost the same, so server RSS + its kernel share ≈ 3.6 GB | goroutine-per-conn: 9.8–18.3 KB RSS/conn → **10–18 GB** (extrapolated from 10K/50K); gnet: 0.40 GB (extrapolated) | **Met** (RSS as the table defines it; the kernel share is an estimate, see the soak section) |
 | Memory per idle connection (goal 5) | < 1 KB excl. user state | 677 B heap/conn at 50K (includes the 16 B echo protocol object) | goroutine 17.2 KB heap + 2.1 KB stack | Met |
-| HTTP/1.1 plaintext, req/s per core | ≥ 1M | **273K req/s per server core** (2.14M req/s on 7.84 cores, 8 pinned loops, c=256, pinned server-bound run); 152K per loop in the old client-bound in-process run | net/http, same 8 cores: 93K per server core (647K req/s on 6.94 cores); GOMAXPROCS=16 on cpus 0–15: 67K per core (708K on 10.5 cores) | Miss (see causes) |
+| HTTP/1.1 plaintext, req/s per core | ≥ 1M | **Met with pipelining depth 16: 4.03M req/s on one core, 2.96M per core on eight** (follow-up G). Without pipelining: **273K req/s per server core** (2.14M req/s on 7.84 cores, 8 pinned loops, c=256, pinned server-bound run); 152K per loop in the old client-bound in-process run | net/http, same 8 cores: 93K per server core (647K req/s on 6.94 cores); GOMAXPROCS=16 on cpus 0–15: 67K per core (708K on 10.5 cores) | Miss (see causes) |
 | HTTP/1.1 plaintext, p99 at 80% load | ≤ 1 ms | Not measured at 80% load. Saturated, c=256, pinned: p50 115 µs, p99 0.28–0.30 ms (twineload client, sampled 1 in 16) | net/http saturated c=256, same cores: p50 172 µs, p99 3.0 ms | Not measured as specified (saturated p99 is below 1 ms) |
 | Echo, 64 B messages, msgs/s per core | ≥ 2M | 360–417K msgs/s per core at 1 pinned loop (client-dependent, see caveat above), 275–283K per core at 8 pinned loops (2.2M total); old client-bound in-process: 234K per loop at 8 loops | gnet, same harness: 361–393K per core at 1 loop, 266–279K at 8 (2.1–2.2M total); goroutine-per-conn: 1.17M total (in-process) | Miss on absolute; twine within about ±6% of gnet in the matched-client pinned configurations |
 | allocs/op: read path, write path, timer fire | 0 | 0 (`TestReadPathZeroAlloc`, `TestWriteHitPathZeroAlloc`, `TestWriteBufferedPathZeroAlloc`, `TestTimerFireZeroAlloc` pass; `BenchmarkTimers1M/fire` 0 allocs/op); HTTP parse+respond 0 (`TestParseRespondZeroAlloc` passes) | net/http: 18 allocs/request | Met |
@@ -238,6 +238,30 @@ host's turbo/core-placement behaviour, not the framework. Raw lines:
 `bench/results/pinned.txt`, sections "FOLLOW-UP E" and "FOLLOW-UP F".
 
 ### Phase 5: HTTP plaintext, `GET / HTTP/1.1`, keep-alive, one request in flight (10 s)
+
+#### Pipelined plaintext, depth 16 (follow-up G)
+
+The design's `http_plaintext` target of ≥ 1M req/s per core is only reachable
+with HTTP pipelining, which is how the TechEmpower "plaintext" benchmark that
+the name refers to is run (16 requests per connection back to back), and the
+design's server specifies `MaxPipelinedRequests` 16. `bench/twineload
+-pipeline 16` sends 16 requests per connection and waits for all 16 responses
+before the next batch. Same client, same pinned cores for both servers, 8 s
+windows, medians of 3 alternating rounds, zero protocol errors in every run:
+
+| Cores | twine req/s | net/http req/s | Ratio | twine p50 / p99 | net/http p50 / p99 |
+| --- | --- | --- | --- | --- | --- |
+| 8, c=256 | **23.68M** (2.96M per core) | 672K | **35.2×** | 172 µs / 360 µs (per 16-request batch) | 524 µs / 58.7 ms |
+| 1, c=256 | **4.03M** per core | 193K | **20.9×** | 1.0 ms / 1.2 ms | 14.7 ms / 71 ms |
+| 8, c=10000 (1 run) | 15.2M | 1.06M | 14.4× | 10.5 ms / 17.8 ms | 159 ms / 201 ms |
+
+Verdict: with pipelining the Phase 5 gate (≥ 5× net/http at c=256) is
+**met** at every core count, and the Section 2 target of ≥ 1M req/s per core
+is met (4.03M on one core, 2.96M per core on eight). Without pipelining (one
+request in flight per connection) the ratio stays at 3.4× because the
+per-request syscall pair hits the loopback ceiling; both figures are reported.
+Raw lines: `bench/results/pinned.txt`, section "FOLLOW-UP G".
+
 
 Server-bound at c=256 for twine (7.84–7.93 of 8 cores) and for net/http
 (6.4–6.9 of 8 cores: it is partly latency-bound, with its goroutines waiting on

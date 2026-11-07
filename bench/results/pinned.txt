@@ -712,3 +712,21 @@ loops8        RESULT rate=2249560 p50_us=459 p99_us=819 server_cores=8.01
 loops1+7busy  RESULT rate=296306 p50_us=2884 p99_us=5243 server_cores=1.00
 loops1idle    RESULT rate=373608 p50_us=2753 p99_us=3015 server_cores=1.00
 # medians: 8 loops 2.2535M; 1 loop (equal host load) 296.3K -> linearity 0.950; 1 loop (idle host) 370.8K -> 0.760
+
+=== FOLLOW-UP G (orchestrator): Phase 5 with HTTP pipelining depth 16 (TechEmpower "plaintext" style), same client for both servers ===
+# twineload -proto http -pipeline 16 -loops 8 -spin 5000 -pin 16..30, 8 s windows, 3 alternating rounds; errors=0 in every run
+twine8-p16   c=256   RESULT rate=23805580 p50_us=180 p99_us=344 server_cores=7.98
+nethttp8-p16 c=256   RESULT rate=674294 p50_us=557 p99_us=56623 server_cores=6.72
+twine8-p16   c=256   RESULT rate=23644222 p50_us=164 p99_us=360 server_cores=7.98
+nethttp8-p16 c=256   RESULT rate=671307 p50_us=524 p99_us=58720 server_cores=6.72
+twine8-p16   c=256   RESULT rate=23684414 p50_us=172 p99_us=360 server_cores=7.98
+nethttp8-p16 c=256   RESULT rate=670738 p50_us=508 p99_us=58720 server_cores=6.73
+twine1-p16   c=256   RESULT rate=4016967 p50_us=1016 p99_us=1376 server_cores=1.00
+nethttp1-p16 c=256   RESULT rate=193028 p50_us=14680 p99_us=67109 server_cores=1.00
+twine1-p16   c=256   RESULT rate=4037934 p50_us=1016 p99_us=1245 server_cores=1.00
+nethttp1-p16 c=256   RESULT rate=192823 p50_us=14680 p99_us=71303 server_cores=1.00
+twine1-p16   c=256   RESULT rate=4029659 p50_us=1016 p99_us=1245 server_cores=1.00
+nethttp1-p16 c=256   RESULT rate=192486 p50_us=14680 p99_us=71303 server_cores=1.00
+twine8-p16   c=10000 RESULT rate=15200970 p50_us=10486 p99_us=17826 server_cores=8.01
+nethttp8-p16 c=10000 RESULT rate=1058342 p50_us=159384 p99_us=201327 server_cores=7.86
+# medians: 8 cores c=256: 23.68M vs 672K = 35.2x; 1 core: 4.03M vs 192.8K = 20.9x (4.03M req/s per core); 8 cores c=10000: 15.2M vs 1.06M = 14.4x

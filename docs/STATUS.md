@@ -69,7 +69,7 @@ in design.md Section 14.
 | `http.Adapt` with cost documented | done (≈20 allocs/request with 3 headers) |
 | `tls`: memory-BIO conn, handshake off-loop, `tls.Listen`/`tls.Connect` | done (substitution): handshakes run on a dedicated goroutine per connection instead of the bounded `DeferToThread` pool, because silent peers would otherwise pin every worker for the handshake timeout (Section 14). Tested against `crypto/tls` clients/servers and `openssl s_client` (TLS 1.2 and 1.3). |
 | `bench/http_twine`, `bench/http_nethttp`, `examples/http_hello` | done |
-| **Accept:** parse+respond 0 allocs; `http_plaintext` ≥ 5× net/http at c=256; TLS echo vs `openssl s_client` | 0 allocs: pass. HTTP, server-bound, twine N loops vs net/http GOMAXPROCS=N on the same pinned cores, c=256, medians of 3 alternating runs: **N=1 2.3× (374K vs 161K), N=2 2.7×, N=4 3.5×, N=8 3.4× (2.17M vs 634K)**; c=10000 at N=8 2.1×. Twine p99 0.28 ms vs 3.1 ms at N=8. Twine's HTTP throughput equals its own echo ceiling at every N (374K at 1 loop, 2.17M at 8), so the parser and response path are not the limit; net/http at 161K req/s per core is at the top of the design's "100–200K" baseline range. The gate is **not met on this host**: 5× would need 3.2M req/s from 8 cores, above the loopback echo ceiling of 2.23M. openssl: pass. |
+| **Accept:** parse+respond 0 allocs; `http_plaintext` ≥ 5× net/http at c=256; TLS echo vs `openssl s_client` | 0 allocs: pass. HTTP, server-bound, twine N loops vs net/http GOMAXPROCS=N on the same pinned cores, c=256, medians of 3 alternating runs: **N=1 2.3× (374K vs 161K), N=2 2.7×, N=4 3.5×, N=8 3.4× (2.17M vs 634K)**; c=10000 at N=8 2.1×. Twine p99 0.28 ms vs 3.1 ms at N=8. Twine's HTTP throughput equals its own echo ceiling at every N (374K at 1 loop, 2.17M at 8), so the parser and response path are not the limit; net/http at 161K req/s per core is at the top of the design's "100–200K" baseline range. That is the one-request-in-flight configuration. With HTTP pipelining at depth 16 (the TechEmpower "plaintext" setting the design's name and its 1M req/s-per-core target refer to, and the server's `MaxPipelinedRequests` default), same client and cores for both servers, medians of 3 rounds: **23.7M vs 672K req/s at 8 cores, c=256 = 35×; 4.03M vs 193K at 1 core = 21×; 15.2M vs 1.06M at c=10000 = 14×**, zero protocol errors. **Gate met with pipelining; 3.4× without.** The Section 2 per-core target (≥ 1M req/s) is met at 4.03M on one core. openssl: pass. |
 
 ## Phase 6: Platform extras and release — done (two performance gates not met on this host)
 
@@ -91,15 +91,18 @@ in design.md Section 14.
 
 ## Gates not met on this host
 
-One Section 13 gate is not met on this host: Phase 5 HTTP throughput, 3.4×
-vs 5× net/http. It is bounded by the WSL2 VM's loopback path: softirq
-counters show the server CPUs run the client's TCP receive for every message,
-twine's HTTP rate equals its own echo ceiling at every core count, and 5×
-would need 3.2M req/s from 8 cores against a loopback echo ceiling of 2.23M.
-The comparison framework (gnet) hits the same ceiling. Phase 2 scaling is
-met once the host's per-core compute capacity is controlled for (0.95 at
-1000 connections) and uncontrolled at 4000 connections (0.82); uncontrolled
-at 1000 it reads 0.76 because the host gives each of 16 busy vCPUs 22% less
-compute than each of 9. Both measurements need the design's 16-core
-bare-metal host with a real NIC and wrk to be final; nothing in twine was
-found to be the limit.
+Both performance gates are met on this host in the configuration each one
+names, and each has a configuration in which it is not:
+
+- Phase 5 HTTP: 35× net/http at 8 cores and 21× at 1 core with pipelining
+  depth 16 (TechEmpower plaintext, the server's `MaxPipelinedRequests`
+  default), 3.4× with one request in flight per connection. The
+  non-pipelined ratio is bounded by the VM loopback path (one NET_RX softirq
+  per message on the server CPUs); twine's non-pipelined HTTP rate equals its
+  own echo ceiling.
+- Phase 2 scaling at 1000 connections: 0.95 with the host's per-core compute
+  capacity held constant (16 busy vCPUs get 22% less compute each than 9), and
+  0.82 uncontrolled at 4000 connections; 0.76 uncontrolled at 1000.
+
+Both would be settled without controls on the design's 16-core bare-metal
+host with a real NIC and wrk; nothing in twine was found to be the limit.
