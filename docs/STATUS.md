@@ -10,7 +10,7 @@ in design.md Section 14.
 | Item | Status |
 | --- | --- |
 | `go mod init`, Section 5 layout, Makefile (`test`, `test-race`, `bench`, `lint`) | done (`golangci-lint` v2 config with gocritic/staticcheck/errcheck; `lint` also cross-builds darwin/arm64 and freebsd/amd64 and vets the `twine_debug`/`twine_uring` tags) |
-| GitHub Actions Linux + macOS matrix, `-race` | done (`.github/workflows/ci.yml`: Go 1.24/1.25, plus a nightly job for the 64×1M MPSC stress and 10-minute fuzzing). Not executed here: no remote. |
+| GitHub Actions Linux + macOS matrix, `-race` | done (`.github/workflows/ci.yml`: Go 1.24/1.25, plus a nightly job for the 64×1M MPSC stress and 10-minute fuzzing). No remote exists, so the workflow's steps (test, race, debug tag, uring vet, golangci-lint, darwin/freebsd cross-builds, full MPSC stress under `-race`, 10-minute fuzz) were replayed locally with `scripts/ci-local.sh`: all pass. The macOS runner itself has not run. |
 | `errors.go`, `options.go` | done; options beyond Section 6.2 that the text implies were added (`WriteBufferLimit`, `ShutdownTimeout`, `MaxReadsPerEvent`, `MaxAcceptsPerEvent`, `TaskQueueSize`, `Logger`, `BusyPoll`, `UDPBatch`, `CloseLinger`, `Backlog`, `SocketBuffers`, `DialTimeout`, `DialNoDelay`, `LocalAddr`) |
 | README with the Section 3 table | done |
 | Go version | done (substitution): `go 1.24`, not 1.23, because `runtime.AddCleanup` (Section 11 debug Futures) needs 1.24. x/sys pinned at v0.30.0 (newer releases require Go 1.26). |
@@ -59,7 +59,7 @@ in design.md Section 14.
 | `watchdog.go`, `metrics.go`, `Logger`, `TWINE_DEBUG` assertions and poisoning | done (substitution): the watchdog dumps the loop goroutine via `runtime.Stack(all)` filtered by goroutine id instead of a signal to the locked thread. Prometheus text handler written by hand (no client library). |
 | Graceful shutdown (rule 7), panic recovery (rule 8), `twine.Blocking` | done; `OnShutdown` hooks run once on the Run goroutine (recorded in Section 14) |
 | Fuzz targets; `examples/chat`, `examples/udp_echo` | done; corpora checked in under `testdata/fuzz` |
-| **Accept:** fuzzers 10 min clean; shutdown calls ConnectionLost once per conn; watchdog detects 5 ms sleep | Fuzzers: 30 s per target locally (≈4–14M execs each) clean; the 10-minute run is the nightly CI job. Shutdown once-per-conn: pass (100 conns). Watchdog: pass. |
+| **Accept:** fuzzers run 10 minutes clean; shutdown test calls `ConnectionLost` exactly once per conn; watchdog detects 5 ms sleep | Fuzzers: **10 minutes per target, clean** (`scripts/ci-local.sh`, 4 targets in parallel: LineReceiver 38.3M execs, Netstring 40.3M, LengthPrefixed 25.3M, ParseRequest 18.2M; no crashers). Shutdown once-per-conn: pass (100 conns). Watchdog: pass. |
 
 ## Phase 5: HTTP/1.1 and TLS — done
 
@@ -86,7 +86,8 @@ in design.md Section 14.
 
 - `make test`, `go test -race -short ./...`, `make test-debug`, `make lint`: all pass.
 - Root package: 62 integration tests plus alloc gates; `proto` 60+, `http` 40+, `tls` 18 tests; internal packages property-tested with 100% coverage on slab/ring.
-- `make fuzz FUZZTIME=10s` and 30 s per-target runs: clean.
+- `scripts/ci-local.sh` (the CI workflow's steps replayed locally, including the nightly 10-minute fuzz of all four targets and the full MPSC stress under `-race`): all pass.
+- Section 2 p99 at 80% load measured open-loop (wrk2-style) with `bench/twineload -rate`: 1.25 ms on 4 pinned loops at c=256 against the ≤ 1 ms target, on a host whose p99 floor at 10% load is 0.59 ms (BENCHMARKS.md, follow-up H).
 - `make bench` completes; raw output in `bench/results/baseline.txt`; pinned server-bound runs in `bench/results/pinned.txt`; the 1M soak in `bench/results/idle1m.txt`.
 
 ## Gates not met on this host
