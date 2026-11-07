@@ -1,0 +1,53 @@
+# CI for the Rust port. Lives in rust/ because this repository has no remote;
+# scripts/ci-local.sh replays every step below on a developer machine.
+name: rust-ci
+on:
+  push:
+    branches: [main]
+    paths: ["rust/**"]
+  pull_request:
+    paths: ["rust/**"]
+  schedule:
+    - cron: "0 4 * * *"   # nightly: long stress, timing gates, 10-minute fuzz
+defaults:
+  run:
+    working-directory: rust
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+      - if: runner.os == 'Linux'
+        run: cargo check -p twine --features uring
+  cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin, x86_64-unknown-freebsd
+      # twine-tls (rustls/ring) and the examples need a macOS C toolchain; the kqueue
+      # path lives in the core and internal crates, so those are what gets cross-checked.
+      - run: cargo check -p twine -p twine-proto -p twine-http --target x86_64-apple-darwin
+      - run: cargo check -p twine -p twine-proto -p twine-http --target x86_64-unknown-freebsd
+  nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - run: cargo test --workspace --release -- --ignored
+      - run: scripts/fuzz.sh 600

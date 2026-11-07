@@ -1,0 +1,102 @@
+=== idle test N=100000 2026-11-07T14:23:52-05:00 host=6.18.33.2-microsoft-standard-WSL2 netns=root ===
+limits: ulimit -Hn=1048576 ulimit -Sn=1048576 nr_open=1048576
+conntrack_max=262144 port_range=32768	60999 somaxconn=4096
+MemAvailable_kB=22260904 client_procs=1 conns_per_proc=100000
+rss_before_bytes=9854976
+established_in_secs=3 rss_after_establish_bytes=129576960
+ESTABLISHED n=100000 secs=2.6 retries=0
+hold t=10s rss_bytes=129646592
+hold t=20s rss_bytes=129646592
+hold t=30s rss_bytes=129646592
+hold t=40s rss_bytes=129646592
+hold t=50s rss_bytes=129646592
+hold t=60s rss_bytes=129646592
+RESULT established=100000 failed=0 sampled_ok=500/500
+REPORT t=10s connections=100000 rss_bytes=129581056 bytes_per_conn=1208
+REPORT t=20s connections=100000 rss_bytes=129646592 bytes_per_conn=1209
+REPORT t=30s connections=100000 rss_bytes=129646592 bytes_per_conn=1209
+REPORT t=40s connections=100000 rss_bytes=129646592 bytes_per_conn=1209
+REPORT t=50s connections=100000 rss_bytes=129646592 bytes_per_conn=1209
+REPORT t=60s connections=100000 rss_bytes=129646592 bytes_per_conn=1209
+RESULT conns=100000 rss_bytes=129646592 bytes_per_conn=1209 rss_base_bytes=8724480 rss_peak_bytes=129646592
+SUMMARY N=100000 server_conns=100000 rss_before=9854976 rss_established=129576960 rss_end_hold=129646592 bytes_per_conn_delta=1197 bytes_per_conn_total=1296 hold_rss_min=129646592 hold_rss_max=129646592
+
+=== idle test N=1000000 2026-11-07T14:25:08-05:00 host=6.18.33.2-microsoft-standard-WSL2 netns=1 ===
+limits: ulimit -Hn=1048576 ulimit -Sn=1048576 nr_open=1048576
+conntrack_max=262144 port_range=32768	60999 somaxconn=4096
+MemAvailable_kB=22186708 client_procs=4 conns_per_proc=250000
+rss_before_bytes=9936896
+established_in_secs=25 rss_after_establish_bytes=980611072
+ESTABLISHED n=250000 secs=25.0 retries=0
+ESTABLISHED n=250000 secs=25.0 retries=0
+ESTABLISHED n=250000 secs=25.0 retries=0
+ESTABLISHED n=250000 secs=25.0 retries=0
+hold t=10s rss_bytes=980611072
+hold t=20s rss_bytes=980611072
+hold t=30s rss_bytes=980611072
+hold t=40s rss_bytes=980611072
+hold t=50s rss_bytes=980611072
+hold t=60s rss_bytes=980611072
+RESULT established=250000 failed=0 sampled_ok=500/500
+RESULT established=250000 failed=0 sampled_ok=500/500
+RESULT established=250000 failed=0 sampled_ok=500/500
+RESULT established=250000 failed=0 sampled_ok=500/500
+REPORT t=10s connections=356961 rss_bytes=490274816 bytes_per_conn=1348
+REPORT t=20s connections=757477 rss_bytes=972853248 bytes_per_conn=1272
+REPORT t=30s connections=1000000 rss_bytes=980611072 bytes_per_conn=971
+REPORT t=40s connections=1000000 rss_bytes=980611072 bytes_per_conn=971
+REPORT t=50s connections=1000000 rss_bytes=980611072 bytes_per_conn=971
+REPORT t=60s connections=1000000 rss_bytes=980611072 bytes_per_conn=971
+REPORT t=70s connections=1000000 rss_bytes=980611072 bytes_per_conn=971
+REPORT t=80s connections=1000000 rss_bytes=980611072 bytes_per_conn=971
+RESULT conns=1000000 rss_bytes=980611072 bytes_per_conn=971 rss_base_bytes=8806400 rss_peak_bytes=980611072
+SUMMARY N=1000000 server_conns=1000000 rss_before=9936896 rss_established=980611072 rss_end_hold=980611072 bytes_per_conn_delta=970 bytes_per_conn_total=980 hold_rss_min=980611072 hold_rss_max=980611072
+
+### LOOPS=8 probe (SRV_CPUS=24-31 shares cores; memory-only check)
+=== idle test N=100000 2026-11-07T14:27:19-05:00 host=6.18.33.2-microsoft-standard-WSL2 netns=root ===
+limits: ulimit -Hn=1048576 ulimit -Sn=1048576 nr_open=1048576
+conntrack_max=262144 port_range=32768	60999 somaxconn=4096
+MemAvailable_kB=22206608 client_procs=1 conns_per_proc=100000
+rss_before_bytes=32141312
+established_in_secs=3 rss_after_establish_bytes=501436416
+ESTABLISHED n=100000 secs=2.6 retries=0
+hold t=10s rss_bytes=501440512
+RESULT established=100000 failed=0 sampled_ok=500/500
+REPORT t=10s connections=100000 rss_bytes=501440512 bytes_per_conn=4737
+RESULT conns=100000 rss_bytes=501440512 bytes_per_conn=4737 rss_base_bytes=27660288 rss_peak_bytes=501440512
+SUMMARY N=100000 server_conns=100000 rss_before=32141312 rss_established=501436416 rss_end_hold=501440512 bytes_per_conn_delta=4692 bytes_per_conn_total=5014 hold_rss_min=501440512 hold_rss_max=501440512
+
+=== idle test N=100000 2026-11-07T14:36:15-05:00 host=6.18.33.2-microsoft-standard-WSL2 netns=root ===
+limits: ulimit -Hn=1048576 ulimit -Sn=1048576 nr_open=1048576
+conntrack_max=262144 port_range=32768	60999 somaxconn=4096
+MemAvailable_kB=24145024 client_procs=1 conns_per_proc=100000
+rss_before_bytes=29007872
+established_in_secs=4 rss_after_establish_bytes=79294464
+ESTABLISHED n=100000 secs=2.6 retries=0
+hold t=10s rss_bytes=79364096
+RESULT established=100000 failed=0 sampled_ok=500/500
+REPORT t=10s connections=100000 rss_bytes=79298560 bytes_per_conn=516
+RESULT conns=100000 rss_bytes=79364096 bytes_per_conn=517 rss_base_bytes=27639808 rss_peak_bytes=79364096
+SUMMARY N=100000 server_conns=100000 rss_before=29007872 rss_established=79294464 rss_end_hold=79364096 bytes_per_conn_delta=503 bytes_per_conn_total=793 hold_rss_min=79364096 hold_rss_max=79364096
+
+=== idle test N=1000000 2026-11-07T14:36:39-05:00 host=6.18.33.2-microsoft-standard-WSL2 netns=1 ===
+limits: ulimit -Hn=1048576 ulimit -Sn=1048576 nr_open=1048576
+conntrack_max=262144 port_range=32768	60999 somaxconn=4096
+MemAvailable_kB=24220924 client_procs=4 conns_per_proc=250000
+rss_before_bytes=29003776
+established_in_secs=25 rss_after_establish_bytes=499204096
+ESTABLISHED n=250000 secs=25.0 retries=0
+ESTABLISHED n=250000 secs=25.0 retries=0
+ESTABLISHED n=250000 secs=25.0 retries=0
+ESTABLISHED n=250000 secs=25.0 retries=0
+hold t=10s rss_bytes=499204096
+RESULT established=250000 failed=0 sampled_ok=500/500
+RESULT established=250000 failed=0 sampled_ok=500/500
+RESULT established=250000 failed=0 sampled_ok=500/500
+RESULT established=250000 failed=0 sampled_ok=500/500
+REPORT t=10s connections=356136 rss_bytes=215683072 bytes_per_conn=528
+REPORT t=20s connections=758745 rss_bytes=418136064 bytes_per_conn=514
+REPORT t=30s connections=1000000 rss_bytes=499204096 bytes_per_conn=471
+RESULT conns=1000000 rss_bytes=499204096 bytes_per_conn=471 rss_base_bytes=27635712 rss_peak_bytes=499204096
+SUMMARY N=1000000 server_conns=1000000 rss_before=29003776 rss_established=499204096 rss_end_hold=499204096 bytes_per_conn_delta=470 bytes_per_conn_total=499 hold_rss_min=499204096 hold_rss_max=499204096
+

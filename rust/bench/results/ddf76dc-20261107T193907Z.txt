@@ -1,0 +1,157 @@
+twine bench  sha=ddf76dc  date=2026-11-07T19:39:11Z
+host: Linux 6.18.33.2-microsoft-standard-WSL2 x86_64, 32 cpus, Intel(R) Core(TM) i9-14900KF
+layout: loadgen threads=8 pinned to 24-31; baselines/http servers on 0-3; DUR=8s WARMUP=1s
+
+### echo_small | twine 1 loop(s)
+mode=echo addr=127.0.0.1:19200 conns=1000 threads=8 window=8.02s closed-loop
+msgs=1381795 rate=172289/s (172/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=1000
+latency_us p50=6029 p90=6291 p99=6816 p99.9=15204 max=19376 (per request, 1381795 samples)
+bytes tx=88434880 rx=88434880
+cpu server_cores=1.00 client_cores=0.64
+RESULT mode=echo conns=1000 threads=8 pipeline=1 rate=0 rps=172289 per_conn=172.3 p50_us=6029 p90_us=6291 p99_us=6816 p999_us=15204 max_us=19376 errors=0 bytes_rx=88434880 server_cores=1.00 client_cores=0.64 latency_unit=request non200=0 overdue=0 conns_used=1000
+
+### echo_small | twine 2 loop(s)
+mode=echo addr=127.0.0.1:19200 conns=1000 threads=8 window=8.02s closed-loop
+msgs=2757696 rate=343843/s (344/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=1000
+latency_us p50=3015 p90=3146 p99=3408 p99.9=4456 max=11607 (per request, 2757696 samples)
+bytes tx=176492544 rx=176492544
+cpu server_cores=2.00 client_cores=1.29
+RESULT mode=echo conns=1000 threads=8 pipeline=1 rate=0 rps=343843 per_conn=343.8 p50_us=3015 p90_us=3146 p99_us=3408 p999_us=4456 max_us=11607 errors=0 bytes_rx=176492544 server_cores=2.00 client_cores=1.29 latency_unit=request non200=0 overdue=0 conns_used=1000
+
+### echo_small | twine 4 loop(s)
+mode=echo addr=127.0.0.1:19200 conns=1000 threads=8 window=8.02s closed-loop
+msgs=7962864 rate=992840/s (993/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=1000
+latency_us p50=1016 p90=1180 p99=1638 p99.9=2621 max=7566 (per request, 7962864 samples)
+bytes tx=509623296 rx=509623296
+cpu server_cores=4.01 client_cores=4.43
+RESULT mode=echo conns=1000 threads=8 pipeline=1 rate=0 rps=992840 per_conn=992.8 p50_us=1016 p90_us=1180 p99_us=1638 p999_us=2621 max_us=7566 errors=0 bytes_rx=509623296 server_cores=4.01 client_cores=4.43 latency_unit=request non200=0 overdue=0 conns_used=1000
+
+### echo_small | twine 8 loop(s)
+mode=echo addr=127.0.0.1:19200 conns=1000 threads=8 window=8.02s closed-loop
+msgs=19616929 rate=2445909/s (2446/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=1000
+latency_us p50=393 p90=688 p99=918 p99.9=1180 max=4497 (per request, 19616929 samples)
+bytes tx=1255483456 rx=1255483456
+cpu server_cores=7.91 client_cores=7.88
+RESULT mode=echo conns=1000 threads=8 pipeline=1 rate=0 rps=2445909 per_conn=2445.9 p50_us=393 p90_us=688 p99_us=918 p999_us=1180 max_us=4497 errors=0 bytes_rx=1255483456 server_cores=7.91 client_cores=7.88 latency_unit=request non200=0 overdue=0 conns_used=1000
+
+### echo_small | threads (4 cpus)
+mode=echo addr=127.0.0.1:19200 conns=1000 threads=8 window=8.02s closed-loop
+msgs=5159479 rate=643292/s (643/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=1000
+latency_us p50=1049 p90=3015 p99=4063 p99.9=8126 max=85415 (per request, 5159479 samples)
+bytes tx=330206656 rx=330206656
+cpu server_cores=4.00 client_cores=3.98
+RESULT mode=echo conns=1000 threads=8 pipeline=1 rate=0 rps=643292 per_conn=643.3 p50_us=1049 p90_us=3015 p99_us=4063 p999_us=8126 max_us=85415 errors=0 bytes_rx=330206656 server_cores=4.00 client_cores=3.98 latency_unit=request non200=0 overdue=0 conns_used=1000
+
+### echo_small | tokio (4 workers)
+mode=echo addr=127.0.0.1:19200 conns=1000 threads=8 window=8.02s closed-loop
+msgs=6403681 rate=798437/s (798/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=1000
+latency_us p50=885 p90=2884 p99=4719 p99.9=6554 max=9222 (per request, 6403681 samples)
+bytes tx=409835584 rx=409835584
+cpu server_cores=4.00 client_cores=3.95
+RESULT mode=echo conns=1000 threads=8 pipeline=1 rate=0 rps=798437 per_conn=798.4 p50_us=885 p90_us=2884 p99_us=4719 p999_us=6554 max_us=9222 errors=0 bytes_rx=409835584 server_cores=4.00 client_cores=3.95 latency_unit=request non200=0 overdue=0 conns_used=1000
+
+### http | twine 4c c=256 p=1
+mode=http addr=127.0.0.1:19200 conns=256 threads=8 window=8.02s closed-loop
+msgs=7498834 rate=934986/s (3652/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=256
+latency_us p50=279 p90=328 p99=459 p99.9=983 max=9801 (per request, 7498834 samples)
+bytes tx=202468518 rx=974848420
+cpu server_cores=4.01 client_cores=4.29
+RESULT mode=http conns=256 threads=8 pipeline=1 rate=0 rps=934986 per_conn=3652.3 p50_us=279 p90_us=328 p99_us=459 p999_us=983 max_us=9801 errors=0 bytes_rx=974848420 server_cores=4.01 client_cores=4.29 latency_unit=request non200=0 overdue=0 conns_used=256
+
+### http | twine 4c c=256 p=16
+mode=http addr=127.0.0.1:19200 conns=256 threads=8 window=8.02s closed-loop
+msgs=89108176 rate=11110384/s (43400/s per connection) pipeline/batch=16 errors=0 non200=0 conns_used=256
+latency_us p50=377 p90=459 p99=590 p99.9=1180 max=3372 (per batch, 5569261 samples)
+bytes tx=2405920752 rx=11584062880
+cpu server_cores=4.01 client_cores=4.39
+RESULT mode=http conns=256 threads=8 pipeline=16 rate=0 rps=11110384 per_conn=43399.9 p50_us=377 p90_us=459 p99_us=590 p999_us=1180 max_us=3372 errors=0 bytes_rx=11584062880 server_cores=4.01 client_cores=4.39 latency_unit=batch non200=0 overdue=0 conns_used=256
+
+### http | twine 4c c=10000 p=16
+mode=http addr=127.0.0.1:19200 conns=10000 threads=8 window=8.02s closed-loop
+msgs=63049504 rate=7861273/s (786/s per connection) pipeline/batch=16 errors=0 non200=0 conns_used=10000
+latency_us p50=20972 p90=22020 p99=24117 p99.9=26214 max=28361 (per batch, 3940594 samples)
+bytes tx=1702336608 rx=8196435520
+cpu server_cores=4.01 client_cores=3.59
+RESULT mode=http conns=10000 threads=8 pipeline=16 rate=0 rps=7861273 per_conn=786.1 p50_us=20972 p90_us=22020 p99_us=24117 p999_us=26214 max_us=28361 errors=0 bytes_rx=8196435520 server_cores=4.01 client_cores=3.59 latency_unit=batch non200=0 overdue=0 conns_used=10000
+
+### http_open | twine 4c c=256 rate=747988 (80% of peak)
+mode=http addr=127.0.0.1:19200 conns=256 threads=8 window=8.02s open-loop offered=747988/s
+msgs=5999093 rate=747989/s (2922/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=256
+latency_us p50=19 p90=47 p99=102 p99.9=262 max=4090 (per request, 5999093 samples)
+bytes tx=161975160 rx=779882090
+offered=747988/s achieved=747989/s overdue_ticks=718
+cpu server_cores=3.72 client_cores=8.00
+RESULT mode=http conns=256 threads=8 pipeline=1 rate=747988 rps=747989 per_conn=2921.8 p50_us=19 p90_us=47 p99_us=102 p999_us=262 max_us=4090 errors=0 bytes_rx=779882090 server_cores=3.72 client_cores=8.00 latency_unit=request non200=0 overdue=718 conns_used=256
+
+### http | tokio 4c c=256 p=1
+mode=http addr=127.0.0.1:19200 conns=256 threads=8 window=8.02s closed-loop
+msgs=6375314 rate=794900/s (3105/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=256
+latency_us p50=328 p90=508 p99=688 p99.9=950 max=1678 (per request, 6375314 samples)
+bytes tx=172133478 rx=828790820
+cpu server_cores=3.99 client_cores=3.96
+RESULT mode=http conns=256 threads=8 pipeline=1 rate=0 rps=794900 per_conn=3105.1 p50_us=328 p90_us=508 p99_us=688 p999_us=950 max_us=1678 errors=0 bytes_rx=828790820 server_cores=3.99 client_cores=3.96 latency_unit=request non200=0 overdue=0 conns_used=256
+
+### http | tokio 4c c=256 p=16
+mode=http addr=127.0.0.1:19200 conns=256 threads=8 window=8.02s closed-loop
+msgs=99746192 rate=12436639/s (48581/s per connection) pipeline/batch=16 errors=0 non200=0 conns_used=256
+latency_us p50=328 p90=508 p99=688 p99.9=950 max=1971 (per batch, 6234137 samples)
+bytes tx=2693147184 rx=12967004960
+cpu server_cores=3.99 client_cores=4.84
+RESULT mode=http conns=256 threads=8 pipeline=16 rate=0 rps=12436639 per_conn=48580.6 p50_us=328 p90_us=508 p99_us=688 p999_us=950 max_us=1971 errors=0 bytes_rx=12967004960 server_cores=3.99 client_cores=4.84 latency_unit=batch non200=0 overdue=0 conns_used=256
+
+### http | tokio 4c c=10000 p=16
+mode=http addr=127.0.0.1:19200 conns=10000 threads=8 window=8.02s closed-loop
+msgs=82188784 rate=10247625/s (1025/s per connection) pipeline/batch=16 errors=0 non200=0 conns_used=10000
+latency_us p50=1114 p90=67109 p99=75497 p99.9=79692 max=80100 (per batch, 5136799 samples)
+bytes tx=2219097168 rx=10684541920
+cpu server_cores=3.98 client_cores=4.54
+RESULT mode=http conns=10000 threads=8 pipeline=16 rate=0 rps=10247625 per_conn=1024.8 p50_us=1114 p90_us=67109 p99_us=75497 p999_us=79692 max_us=80100 errors=0 bytes_rx=10684541920 server_cores=3.98 client_cores=4.54 latency_unit=batch non200=0 overdue=0 conns_used=10000
+
+### http_open | tokio 4c c=256 rate=635920 (80% of peak)
+mode=http addr=127.0.0.1:19200 conns=256 threads=8 window=8.02s open-loop offered=635920/s
+msgs=5100236 rate=635917/s (2484/s per connection) pipeline/batch=1 errors=0 non200=0 conns_used=256
+latency_us p50=102 p90=188 p99=295 p99.9=377 max=1270 (per request, 5100236 samples)
+bytes tx=137706966 rx=663030680
+offered=635920/s achieved=635917/s overdue_ticks=113
+cpu server_cores=3.07 client_cores=8.00
+RESULT mode=http conns=256 threads=8 pipeline=1 rate=635920 rps=635917 per_conn=2484.1 p50_us=102 p90_us=188 p99_us=295 p999_us=377 max_us=1270 errors=0 bytes_rx=663030680 server_cores=3.07 client_cores=8.00 latency_unit=request non200=0 overdue=113 conns_used=256
+
+### timers
+timers n=1000000
+  insert                   32.3 ns/op
+  cancel                    9.6 ns/op
+  insert+cancel cycle      14.9 ns/op  (1000000 timers active)
+  fire                     39.6 ns/op
+RESULT timers n=1000000 insert_ns=32.3 cancel_ns=9.6 cycle_ns=14.9 fire_ns=39.6
+
+### callfromthread
+callfromthread threads=16 window=5.00s
+  calls   24929216 (4.98M/s), rejected 0
+  tasks run 24929217, wakeups 3068387, coalesced 21860830
+RESULT callfromthread threads=16 ops_per_s=4984108 wakeups_per_call=0.123084
+
+| bench | config | req/s | req/s per server core | p50 us | p99 us | p99.9 us | server cores | errors | non200 | conns used | flags |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| echo_small | twine 1 loop(s) | 172289 | 172289 | 6029 | 6816 | 15204 | 1.00 | 0 | 0 | 1000 |  |
+| echo_small | twine 2 loop(s) | 343843 | 171922 | 3015 | 3408 | 4456 | 2.00 | 0 | 0 | 1000 |  |
+| echo_small | twine 4 loop(s) | 992840 | 247591 | 1016 | 1638 | 2621 | 4.01 | 0 | 0 | 1000 |  |
+| echo_small | twine 8 loop(s) | 2445909 | 309217 | 393 | 918 | 1180 | 7.91 | 0 | 0 | 1000 | LG-SATURATED(lower-bound) |
+| echo_small | threads (4 cpus) | 643292 | 160823 | 1049 | 4063 | 8126 | 4.00 | 0 | 0 | 1000 |  |
+| echo_small | tokio (4 workers) | 798437 | 199609 | 885 | 4719 | 6554 | 4.00 | 0 | 0 | 1000 |  |
+| http | twine 4c c=256 p=1 | 934986 | 233164 | 279 | 459 | 983 | 4.01 | 0 | 0 | 256 |  |
+| http | twine 4c c=256 p=16 | 11110384 | 2770669 | 377 | 590 | 1180 | 4.01 | 0 | 0 | 256 |  |
+| http | twine 4c c=10000 p=16 | 7861273 | 1960417 | 20972 | 24117 | 26214 | 4.01 | 0 | 0 | 10000 |  |
+| http_open | twine 4c c=256 rate=747988 (80% of peak) | 747989 | 201072 | 19 | 102 | 262 | 3.72 | 0 | 0 | 256 | LG-SATURATED(lower-bound) |
+| http | tokio 4c c=256 p=1 | 794900 | 199223 | 328 | 688 | 950 | 3.99 | 0 | 0 | 256 |  |
+| http | tokio 4c c=256 p=16 | 12436639 | 3116952 | 328 | 688 | 950 | 3.99 | 0 | 0 | 256 |  |
+| http | tokio 4c c=10000 p=16 | 10247625 | 2574780 | 1114 | 75497 | 79692 | 3.98 | 0 | 0 | 10000 |  |
+| http_open | tokio 4c c=256 rate=635920 (80% of peak) | 635917 | 207139 | 102 | 295 | 377 | 3.07 | 0 | 0 | 256 | LG-SATURATED(lower-bound) |
+
+latency: per request, except pipeline=16 cells where it is per batch of 16 requests
+flags: NON200 / ERRORS = bad responses; BELOW-RATE = open-loop rps < 0.98 x rate; LG-SATURATED = client_cores > 0.85 x loadgen threads (numbers are a lower bound)
+
+| timers (1M) | insert ns | cancel ns | insert+cancel ns | fire ns |
+| --- | ---: | ---: | ---: | ---: |
+| ns/op | 32.3 | 9.6 | 14.9 | 39.6 |
+
+callfromthread (16 producers): 4984108 calls/s, wakeups/call = 0.123084

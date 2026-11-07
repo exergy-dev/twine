@@ -1,0 +1,14 @@
+[package]
+name = "twine-sock"
+description = "raw non-blocking socket helpers (twine internal)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+twine-alloccount = { workspace = true }

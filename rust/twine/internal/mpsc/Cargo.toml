@@ -1,0 +1,11 @@
+[package]
+name = "twine-mpsc"
+description = "bounded lock-free MPSC queue (twine internal)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+twine-alloccount = { workspace = true }
