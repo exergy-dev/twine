@@ -55,7 +55,7 @@ network harness.
 | Echo, 1M idle connections, RSS | ≤ 4 GB | **Measured: 0.58 GB** server RSS at 1,000,000 held connections (582 MB peak, 564 B RSS per connection, +0.55 MB over the last 8 minutes of a 10-minute hold). Host MemAvailable fell 6.7 GB for the 2M loopback sockets (both ends), i.e. about 3 GB of kernel socket memory on the server side if the ends cost the same, so server RSS + its kernel share ≈ 3.6 GB | goroutine-per-conn: 9.8–18.3 KB RSS/conn → **10–18 GB** (extrapolated from 10K/50K); gnet: 0.40 GB (extrapolated) | **Met** (RSS as the table defines it; the kernel share is an estimate, see the soak section) |
 | Memory per idle connection (goal 5) | < 1 KB excl. user state | 677 B heap/conn at 50K (includes the 16 B echo protocol object) | goroutine 17.2 KB heap + 2.1 KB stack | Met |
 | HTTP/1.1 plaintext, req/s per core | ≥ 1M | **Met with pipelining depth 16: 4.03M req/s on one core, 2.96M per core on eight** (follow-up G). Without pipelining: **273K req/s per server core** (2.14M req/s on 7.84 cores, 8 pinned loops, c=256, pinned server-bound run); 152K per loop in the old client-bound in-process run | net/http, same 8 cores: 93K per server core (647K req/s on 6.94 cores); GOMAXPROCS=16 on cpus 0–15: 67K per core (708K on 10.5 cores) | **Met** with pipelining (4.03M/core); miss without (273K/core, loopback-bound, see causes) |
-| HTTP/1.1 plaintext, p99 at 80% load | ≤ 1 ms | Not measured at 80% load. Saturated, c=256, pinned: p50 115 µs, p99 0.28–0.30 ms (twineload client, sampled 1 in 16) | net/http saturated c=256, same cores: p50 172 µs, p99 3.0 ms | Not measured as specified (saturated p99 is below 1 ms) |
+| HTTP/1.1 plaintext, p99 latency at 80% load | ≤ 1 ms | **Measured (follow-up H, open-loop wrk2-style, 4 pinned loops, c=256, 80% of the 1.18M saturation = 944K req/s): p50 14 µs, p99 1.25 ms, p99.9 5 ms.** At 50% load p99 1.05 ms, 25% 0.79 ms, 10% 0.59 ms: the VM's p99 floor is ~0.6 ms (vCPU jitter), so the target sits at this host's noise floor. 8-loop runs at 1.71M are client-saturated (p99 4.5 ms is not a server number) | net/http at 80% of its own saturation (270K on 4 cores): p99 2.36 ms, p50 70 µs | Not met here (1.25 ms vs 1 ms; 0.6 ms of it is the host floor) |
 | Echo, 64 B messages, msgs/s per core | ≥ 2M | 360–417K msgs/s per core at 1 pinned loop (client-dependent, see caveat above), 275–283K per core at 8 pinned loops (2.2M total); old client-bound in-process: 234K per loop at 8 loops | gnet, same harness: 361–393K per core at 1 loop, 266–279K at 8 (2.1–2.2M total); goroutine-per-conn: 1.17M total (in-process) | Miss on absolute; twine within about ±6% of gnet in the matched-client pinned configurations |
 | allocs/op: read path, write path, timer fire | 0 | 0 (`TestReadPathZeroAlloc`, `TestWriteHitPathZeroAlloc`, `TestWriteBufferedPathZeroAlloc`, `TestTimerFireZeroAlloc` pass; `BenchmarkTimers1M/fire` 0 allocs/op); HTTP parse+respond 0 (`TestParseRespondZeroAlloc` passes) | net/http: 18 allocs/request | Met |
 | Timer insert + cancel, 1M active timers | O(1), ≤ 50 ns | **34.7 ns**, 1 alloc (80 B) on the current tree; 9.9 ns, 0 allocs on the earlier pooled-Timer core | `time.AfterFunc`+`Stop`: 159 ns, 1 alloc (112 B) | ns met, 4.6× faster than the runtime; see the 0-alloc note under Phase 3 |
@@ -238,6 +238,30 @@ host's turbo/core-placement behaviour, not the framework. Raw lines:
 `bench/results/pinned.txt`, sections "FOLLOW-UP E" and "FOLLOW-UP F".
 
 ### Phase 5: HTTP plaintext, `GET / HTTP/1.1`, keep-alive, one request in flight (10 s)
+
+#### p99 at 80% load (follow-up H)
+
+`bench/twineload -rate R` offers R requests/s open-loop (a pacer running on
+every client loop iteration issues each request at its scheduled time; latency
+is measured from that scheduled time, as wrk2 does, so client-side queueing
+counts). The 8-loop server cannot be measured this way on this host: at 80% of
+its 2.14M saturation the 8-loop client is itself saturated (p99 4.5 ms is a
+client number). With 4 pinned server loops (saturation 1.18M) the client has
+2× headroom:
+
+| Offered load | twine p50 / p99 / p99.9 | net/http (80% of its 337K) p50 / p99 |
+| --- | --- | --- |
+| 10% (100K) | 31 µs / 0.59 ms / 3.7 ms | — |
+| 25% (300K) | 14 µs / 0.79 ms / 3.7 ms | — |
+| 50% (590K) | 11 µs / 1.05 ms / 4.7 ms | — |
+| **80% (944K), c=256** | **14 µs / 1.25 ms / 5.0 ms** | 70 µs / 2.36 ms |
+| 80% (944K), c=512 | 15 µs / 1.18 ms / 3.9 ms | 57 µs / 2.62 ms |
+
+Verdict: p99 at 80% load is **1.25 ms against the ≤ 1 ms target: not met on
+this host**, where the p99 floor at 10% load is already 0.59 ms (hypervisor
+vCPU jitter; p50 stays at 11–31 µs throughout). Raw lines:
+`bench/results/pinned.txt`, section "FOLLOW-UP H".
+
 
 #### Pipelined plaintext, depth 16 (follow-up G)
 

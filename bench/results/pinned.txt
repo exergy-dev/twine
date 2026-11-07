@@ -730,3 +730,20 @@ nethttp1-p16 c=256   RESULT rate=192486 p50_us=14680 p99_us=71303 server_cores=1
 twine8-p16   c=10000 RESULT rate=15200970 p50_us=10486 p99_us=17826 server_cores=8.01
 nethttp8-p16 c=10000 RESULT rate=1058342 p50_us=159384 p99_us=201327 server_cores=7.86
 # medians: 8 cores c=256: 23.68M vs 672K = 35.2x; 1 core: 4.03M vs 192.8K = 20.9x (4.03M req/s per core); 8 cores c=10000: 15.2M vs 1.06M = 14.4x
+
+=== FOLLOW-UP H (orchestrator): p99 at 80% load, open loop (twineload -rate, wrk2-style latency from scheduled send time) ===
+# pacer runs every client loop iteration; latency counted from the scheduled send time so client-side queueing is not hidden
+# 8 server loops (saturation 2.14M non-pipelined) -> 80% = 1.71M; client at 8 loops is itself near saturation here (client_cores ~7.95)
+twine8   c=256  offered=1000000 achieved=999997  p50_us=13  p99_us=1311 p999_us=4063 server_cores=6.15 client_cores=7.86
+twine8   c=256  offered=1710000 achieved=1709989 p50_us=180 p99_us=4456 p999_us=6554 server_cores=7.60 client_cores=7.95
+twine8   c=1024 offered=1710000 achieved=1710082 p50_us=393 p99_us=4981 p999_us=7864 server_cores=7.61 client_cores=7.96
+nethttp8 c=256  offered=538000  achieved=538412  p50_us=1966 p99_us=31457 p999_us=39846 server_cores=6.51 client_cores=7.62
+nethttp8 c=1024 offered=538000  achieved=537955  p50_us=115 p99_us=3801 p999_us=6554 server_cores=6.55 client_cores=7.74
+# 4 server loops (saturation 1.18M) -> 80% = 944K; client has 2x headroom
+twine4   c=256  offered=944000  achieved=944037  p50_us=14 p99_us=1245 p999_us=4981 server_cores=3.77
+twine4   c=512  offered=944000  achieved=944053  p50_us=15 p99_us=1180 p999_us=3932 server_cores=3.76
+twine4   c=256  offered=590000  achieved=590001  p50_us=11 p99_us=1049 p999_us=4719 server_cores=3.08   (50% load)
+twine4   c=256  offered=300000  achieved=300003  p50_us=14 p99_us=786  p999_us=3670 server_cores=2.23   (25% load)
+twine4   c=256  offered=100000  achieved=100000  p50_us=31 p99_us=590  p999_us=3670 server_cores=1.27   (10% load: latency floor of this VM)
+nethttp4 c=256  offered=270000  achieved=270010  p50_us=70 p99_us=2359 p999_us=5767 server_cores=3.01   (80% of net/http's 337K)
+nethttp4 c=512  offered=270000  achieved=269998  p50_us=57 p99_us=2621 p999_us=6291 server_cores=2.99

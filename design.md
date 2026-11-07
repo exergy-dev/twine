@@ -571,73 +571,73 @@ Work the phases in order. Each phase is a mergeable milestone with acceptance cr
 
 ### Phase 0: Scaffold
 
-- [ ] `go mod init`, directory layout from Section 5, `Makefile` with `test`, `test-race`, `bench`, `lint` (`golangci-lint` with `gocritic`, `staticcheck`, `errcheck`)
-- [ ] GitHub Actions: Linux + macOS matrix, Go 1.23, `-race`
-- [ ] `errors.go`, `options.go` with the option types from Section 6.2 (no behaviour yet)
-- [ ] `README.md` with the Twisted → Twine table from Section 3
+- [x] `go mod init`, directory layout from Section 5, `Makefile` with `test`, `test-race`, `bench`, `lint` (`golangci-lint` with `gocritic`, `staticcheck`, `errcheck`)
+- [x] GitHub Actions: Linux + macOS matrix, Go 1.23, `-race`
+- [x] `errors.go`, `options.go` with the option types from Section 6.2 (no behaviour yet)
+- [x] `README.md` with the Twisted → Twine table from Section 3
 
 **Accept:** `make test` and `make lint` pass on an empty module.
 
 ### Phase 1: Single loop, epoll, echo
 
-- [ ] `internal/poll`: `Poller` interface; epoll (edge-triggered) and kqueue implementations; eventfd/pipe wakeup
-- [ ] `internal/sock`: nonblocking accept4/socket helpers, `TCP_NODELAY`, `SO_REUSEPORT`
-- [ ] `loop.go`: single loop, iteration order from Section 4, shared read buffer, fd-indexed conn slice
-- [ ] `conn.go` + `transport.go`: `Write` with direct-write-first and a naive `[]byte` append buffer (ring comes in Phase 2)
-- [ ] `protocol.go` interfaces; `engine.go` with `New`, `Run`, `Stop`, `ListenTCP` for `Loops(1)` only
-- [ ] `examples/echo`, `bench/echo_twine`, `bench/echo_goroutine`
+- [x] `internal/poll`: `Poller` interface; epoll (edge-triggered) and kqueue implementations; eventfd/pipe wakeup
+- [x] `internal/sock`: nonblocking accept4/socket helpers, `TCP_NODELAY`, `SO_REUSEPORT`
+- [x] `loop.go`: single loop, iteration order from Section 4, shared read buffer, fd-indexed conn slice
+- [x] `conn.go` + `transport.go`: `Write` with direct-write-first and a naive `[]byte` append buffer (ring comes in Phase 2)
+- [x] `protocol.go` interfaces; `engine.go` with `New`, `Run`, `Stop`, `ListenTCP` for `Loops(1)` only
+- [x] `examples/echo`, `bench/echo_twine`, `bench/echo_goroutine`
 
 **Accept:** echo integration test passes on Linux and macOS; `echo_small` benchmark runs and prints msgs/s; read path has 0 allocs/op.
 
 ### Phase 2: Multi-loop, write ring, slabs
 
-- [ ] `internal/slab`, `internal/ring` with `writev` iovec export
-- [ ] Replace the Phase 1 append buffer with the ring; implement EPOLLOUT arming, end-of-iteration `writev` flush, `WriteHighWater`/`WriteLowWater`
-- [ ] `Loops(n)` with one SO_REUSEPORT listener per loop; `NextLoop` round-robin; `LockOSThread`
-- [ ] `Producer`/`Consumer`, `PauseReading`/`ResumeReading`, `RegisterProducer`
-- [ ] Partial-write and backpressure integration tests from Section 12
+- [x] `internal/slab`, `internal/ring` with `writev` iovec export
+- [x] Replace the Phase 1 append buffer with the ring; implement EPOLLOUT arming, end-of-iteration `writev` flush, `WriteHighWater`/`WriteLowWater`
+- [x] `Loops(n)` with one SO_REUSEPORT listener per loop; `NextLoop` round-robin; `LockOSThread`
+- [x] `Producer`/`Consumer`, `PauseReading`/`ResumeReading`, `RegisterProducer`
+- [x] Partial-write and backpressure integration tests from Section 12
 
-**Accept:** write hit path and buffered path 0 allocs/op; `echo_small` scales ≥ 0.8× linearly from 1 to 8 loops; 100 MiB partial-write test passes byte-exact.
+**Accept:** write hit path and buffered path 0 allocs/op; `echo_small` scales ≥ 0.8× linearly from 1 to 8 loops; 100 MiB partial-write test passes byte-exact. *Status: 0 allocs and 100 MiB pass; scaling 0.95 at 1000 connections with host per-core capacity held constant, 0.82 uncontrolled at 4000 connections, 0.76 uncontrolled at 1000 on the WSL2 host (gnet 0.74); see BENCHMARKS.md.*
 
 ### Phase 3: Timers, cross-thread, Future
 
-- [ ] `internal/wheel` hierarchical timing wheel; `CallLater`, `Timer.Stop/Reset`, `SetIdleTimeout`
-- [ ] `internal/mpsc` + coalesced wakeup; `CallFromThread`; `InLoop`
-- [ ] `future.go`: `Future[T]`, `Resolver`, `Then/Catch/Finally`, `Await`, `Map`, `All`, `Any`, `Sleep`
-- [ ] Worker pool and `DeferToThread`
-- [ ] `ConnectTCP` with non-blocking connect completing on EPOLLOUT; `DialOption` timeout
-- [ ] `examples/client_reconnect` (plain reconnect loop; `ReconnectingClient` lands in Phase 4)
+- [x] `internal/wheel` hierarchical timing wheel; `CallLater`, `Timer.Stop/Reset`, `SetIdleTimeout`
+- [x] `internal/mpsc` + coalesced wakeup; `CallFromThread`; `InLoop`
+- [x] `future.go`: `Future[T]`, `Resolver`, `Then/Catch/Finally`, `Await`, `Map`, `All`, `Any`, `Sleep`
+- [x] Worker pool and `DeferToThread`
+- [x] `ConnectTCP` with non-blocking connect completing on EPOLLOUT; `DialOption` timeout
+- [x] `examples/client_reconnect` (plain reconnect loop; `ReconnectingClient` lands in Phase 4)
 
-**Accept:** `timers_1m` ≤ 50 ns insert+cancel, 0 allocs; `callfromthread` wakeups/op ≤ 0.1 under 16 producers; Future tests pass under `-race`; `Await` on loop panics with `ErrAwaitOnLoop`.
+**Accept:** `timers_1m` ≤ 50 ns insert+cancel, 0 allocs; `callfromthread` wakeups/op ≤ 0.1 under 16 producers; Future tests pass under `-race`; `Await` on loop panics with `ErrAwaitOnLoop`. *Status: all pass (34.7 ns, 0 allocs; 0.017 wakeups/op).*
 
 ### Phase 4: Protocol library and observability
 
-- [ ] `proto`: `LineReceiver`, `NetstringReceiver`, `LengthPrefixed`, `ReconnectingClient`, `Broadcast`
-- [ ] `DatagramProtocol`, `ListenUDP` with `recvmmsg`/`sendmmsg` (Linux) and plain recvfrom fallback (BSD)
-- [ ] `watchdog.go`, `metrics.go`, `Logger` option, `TWINE_DEBUG` affinity assertions and buffer poisoning
-- [ ] Graceful shutdown per Section 8 rule 7; panic recovery per rule 8; `twine.Blocking` adapter
-- [ ] Fuzz targets for all framing parsers; `examples/chat`, `examples/udp_echo`
+- [x] `proto`: `LineReceiver`, `NetstringReceiver`, `LengthPrefixed`, `ReconnectingClient`, `Broadcast`
+- [x] `DatagramProtocol`, `ListenUDP` with `recvmmsg`/`sendmmsg` (Linux) and plain recvfrom fallback (BSD)
+- [x] `watchdog.go`, `metrics.go`, `Logger` option, `TWINE_DEBUG` affinity assertions and buffer poisoning
+- [x] Graceful shutdown per Section 8 rule 7; panic recovery per rule 8; `twine.Blocking` adapter
+- [x] Fuzz targets for all framing parsers; `examples/chat`, `examples/udp_echo`
 
-**Accept:** fuzzers run 10 minutes clean; shutdown test calls `ConnectionLost` exactly once per conn; watchdog detects an injected 5 ms sleep.
+**Accept:** fuzzers run 10 minutes clean; shutdown test calls `ConnectionLost` exactly once per conn; watchdog detects an injected 5 ms sleep. *Status: all pass (10-minute fuzz via `scripts/ci-local.sh`, see docs/STATUS.md).*
 
 ### Phase 5: HTTP/1.1 and TLS (memory-BIO)
 
-- [ ] `http`: parser state machine, `RequestCtx`, response writer, keep-alive, pipelining, limits, cached `Date`
-- [ ] `http.Adapt(net/http.Handler)` with its cost documented
-- [ ] `tls`: memory-BIO `net.Conn`, handshake via `DeferToThread`, `tls.Listen`/`tls.Connect` wrappers
-- [ ] `bench/http_twine`, `bench/http_nethttp`, `examples/http_hello`
+- [x] `http`: parser state machine, `RequestCtx`, response writer, keep-alive, pipelining, limits, cached `Date`
+- [x] `http.Adapt(net/http.Handler)` with its cost documented
+- [x] `tls`: memory-BIO `net.Conn`, handshake via `DeferToThread`, `tls.Listen`/`tls.Connect` wrappers
+- [x] `bench/http_twine`, `bench/http_nethttp`, `examples/http_hello`
 
-**Accept:** HTTP parse+respond 0 allocs/op; `http_plaintext` ≥ 5× `net/http` req/s at `-c256`; TLS echo passes against `openssl s_client` (HTTP/2 not in scope).
+**Accept:** HTTP parse+respond 0 allocs/op; `http_plaintext` ≥ 5× `net/http` req/s at `-c256`; TLS echo passes against `openssl s_client` (HTTP/2 not in scope). *Status: 0 allocs and openssl pass; 35× with pipelining depth 16 (TechEmpower plaintext), 3.4× with one request in flight; see BENCHMARKS.md.*
 
 ### Phase 6: Platform extras and release
 
-- [ ] `internal/poll/uring_linux.go` behind `twine_uring` build tag: batched accept/read/write submissions, same `Poller` interface
-- [ ] kTLS offload with capability probe and fallback
-- [ ] `proto.AMP`; `SO_BUSY_POLL` and `TCP_DEFER_ACCEPT` options
-- [ ] 1M-connection soak on a 16-core host; publish numbers against the Section 2 targets in `BENCHMARKS.md`
-- [ ] API freeze, `v1.0.0` tag, godoc pass on every exported symbol
+- [x] `internal/poll/uring_linux.go` behind `twine_uring` build tag: batched accept/read/write submissions, same `Poller` interface
+- [x] kTLS offload with capability probe and fallback *(TLS 1.3 AES-GCM via reflected traffic secrets; see Section 14)*
+- [x] `proto.AMP`; `SO_BUSY_POLL` and `TCP_DEFER_ACCEPT` options
+- [x] 1M-connection soak on a 16-core host; publish numbers against the Section 2 targets in `BENCHMARKS.md` *(run on a 32-vCPU WSL2 host inside an unprivileged netns: 1,000,000 connections held 10 min at 582 MB RSS; see BENCHMARKS.md)*
+- [x] API freeze, `v1.0.0` tag, godoc pass on every exported symbol *(docs/API.md; local tag, no remote)*
 
-**Accept:** every Section 2 target met or the miss documented with a cause; `go vet`, `staticcheck`, `-race` clean; godoc coverage 100% of exported identifiers.
+**Accept:** every Section 2 target met or the miss documented with a cause; `go vet`, `staticcheck`, `-race` clean; godoc coverage 100% of exported identifiers. *Status: 6 targets met, 2 missed with measured causes (BENCHMARKS.md); lint and race clean; godoc 100%.*
 
 ---
 

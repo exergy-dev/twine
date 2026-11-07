@@ -32,8 +32,18 @@ type loopState struct {
 	count atomic.Uint64
 	hist  bench.Histogram
 	n     uint32 // messages seen on this loop, for latency sampling
-	_     [64]byte
+	// open-loop (-rate) mode
+	idle     []*httpConn   // connections with no request in flight
+	nextAt   time.Time     // scheduled time of the next request
+	interval time.Duration // 1 / per-loop rate
+	overdue  atomic.Uint64 // pacer ticks that found every connection busy
+	_        [64]byte
 }
+
+// openLoop is true when -rate > 0: requests are issued on a fixed schedule
+// regardless of responses (an open-loop load), so latency includes queueing
+// and the measurement is "p99 at X% load" rather than closed-loop saturation.
+var openLoop bool
 
 var (
 	recording atomic.Bool
@@ -103,7 +113,7 @@ type httpConn struct {
 // depth responses have arrived (TechEmpower "plaintext" style pipelining).
 func (c *httpConn) send() {
 	c.ls.n++
-	c.samp = c.ls.n&sampleMask == 0 && recording.Load()
+	c.samp = openLoop || (c.ls.n&sampleMask == 0 && recording.Load())
 	if c.samp {
 		c.sent = time.Now()
 	}
@@ -114,7 +124,42 @@ func (c *httpConn) send() {
 func (c *httpConn) ConnectionMade(t twine.Transport) {
 	c.t = t
 	connected.Add(1)
+	if openLoop {
+		c.ls.idle = append(c.ls.idle, c)
+		return
+	}
 	c.send()
+}
+
+// pace runs once per loop iteration (a zero-delay timer re-armed from itself;
+// the client loops spin, so iterations are microseconds apart) and issues
+// every request whose scheduled time has passed to an idle connection. Latency is measured from the scheduled send time, as
+// wrk2 does, so client-side queueing when all connections are busy counts
+// against the server (coordinated omission is not hidden). When every
+// connection is busy the tick is counted as overdue and the backlog drains as
+// responses arrive.
+func pace(l *twine.Loop, ls *loopState) {
+	l.CallLater(0, func() { pace(l, ls) })
+	now := time.Now()
+	for !ls.nextAt.After(now) {
+		if len(ls.idle) == 0 {
+			ls.overdue.Add(1)
+			return
+		}
+		c := ls.idle[len(ls.idle)-1]
+		ls.idle = ls.idle[:len(ls.idle)-1]
+		c.sendAt(ls.nextAt)
+		ls.nextAt = ls.nextAt.Add(ls.interval)
+	}
+}
+
+// sendAt is send with the latency clock started at the scheduled time.
+func (c *httpConn) sendAt(scheduled time.Time) {
+	c.ls.n++
+	c.samp = true
+	c.sent = scheduled
+	c.left = c.depth
+	c.t.Write(c.req)
 }
 
 // respLen returns the total length of the response at the start of b, or -1
@@ -167,8 +212,18 @@ func (c *httpConn) DataReceived(b []byte) {
 		if c.left > 0 {
 			continue
 		}
-		if c.samp {
+		if c.samp && (recording.Load() || !openLoop) {
 			c.ls.hist.Record(time.Since(c.sent)) // latency of the whole batch
+		}
+		if openLoop {
+			if now := time.Now(); !c.ls.nextAt.After(now) {
+				// Backlog: a scheduled request was waiting for a connection.
+				c.sendAt(c.ls.nextAt)
+				c.ls.nextAt = c.ls.nextAt.Add(c.ls.interval)
+			} else {
+				c.ls.idle = append(c.ls.idle, c)
+			}
+			continue
 		}
 		c.send()
 	}
@@ -193,7 +248,9 @@ func main() {
 	warmup := flag.Duration("warmup", 2*time.Second, "warm-up after all connections are up")
 	serverPID := flag.Int("server-pid", 0, "server process id: report its CPU use over the measured window")
 	pipeline := flag.Int("pipeline", 1, "http: requests sent back to back per connection before waiting for responses (16 = TechEmpower plaintext)")
+	offered := flag.Float64("rate", 0, "http: open-loop offered load in requests/s spread over the loops (0 = closed loop, one batch in flight per connection)")
 	flag.Parse()
+	openLoop = *offered > 0 && *proto == "http"
 	if *pipeline < 1 {
 		*pipeline = 1
 	}
@@ -260,6 +317,14 @@ func main() {
 	if failed.Load() > 0 {
 		log.Fatalf("%d connections failed", failed.Load())
 	}
+	if openLoop {
+		perLoop := *offered / float64(len(lps)) / float64(*pipeline)
+		for i, l := range lps {
+			ls := states[i]
+			ls.interval = time.Duration(float64(time.Second) / perLoop)
+			l.CallFromThread(func() { ls.nextAt = time.Now(); pace(l, ls) })
+		}
+	}
 	time.Sleep(*warmup)
 
 	total := func() uint64 {
@@ -292,6 +357,13 @@ func main() {
 	cliCores := (cli1 - cli0).Seconds() / el
 	fmt.Printf("proto=%s conns=%d client-loops=%d window=%.2fs errors=%d\n", *proto, *conns, len(lps), el, protoErrs.Load())
 	fmt.Printf("msgs=%d rate=%.0f/s p50=%v p99=%v (sampled 1/%d)\n", n1-n0, rate, h.Percentile(0.5), h.Percentile(0.99), sampleMask+1)
+	if openLoop {
+		var over uint64
+		for _, s := range states {
+			over += s.overdue.Load()
+		}
+		fmt.Printf("offered=%.0f/s achieved=%.0f/s overdue_ticks=%d p999_us=%.0f\n", *offered, rate, over, float64(h.Percentile(0.999))/1e3)
+	}
 	fmt.Printf("RESULT rate=%.0f p50_us=%.0f p99_us=%.0f server_cores=%.2f client_cores=%.2f\n",
 		rate, float64(h.Percentile(0.5))/1e3, float64(h.Percentile(0.99))/1e3, srvCores, cliCores)
 }
