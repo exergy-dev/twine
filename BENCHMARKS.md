@@ -1,8 +1,11 @@
 # Benchmarks
 
 Measured numbers against the design Section 2 performance targets and the
-Section 13 phase gates. Raw output: [`bench/results/baseline.txt`](bench/results/baseline.txt).
-Reproduce with `make bench` (root micro-benchmarks, then the `bench/` harness).
+Section 13 phase gates. Raw output: [`bench/results/baseline.txt`](bench/results/baseline.txt)
+(in-process harness), [`bench/results/pinned.txt`](bench/results/pinned.txt) (pinned,
+server-bound runs: Phase 2 and Phase 5) and [`bench/results/idle1m.txt`](bench/results/idle1m.txt)
+(1M-connection soak). Reproduce with `make bench` (root micro-benchmarks, then the
+`bench/` harness); the pinned runs and the soak are separate programs, see "Running".
 
 ## Read this first: what this host is and is not
 
@@ -15,13 +18,28 @@ Reproduce with `make bench` (root micro-benchmarks, then the `bench/` harness).
 
 Consequences:
 
-- **The ping-pong echo and HTTP harnesses are client-bound.** The in-process
-  Go client (one goroutine per connection, one message in flight) costs more
-  CPU per message than the server. The `cpu-util` metric (process CPU / wall
-  time / 32) is reported so that this is visible. Separate-process runs with the
-  server and client pinned to disjoint CPUs are reported alongside.
-- **1M connections were not measured.** Idle memory was measured at 10K and
-  50K connections and extrapolated linearly.
+- **The in-process `go test` harness is client-bound.** The in-process Go
+  client (one goroutine per connection, one message in flight) costs more
+  CPU per message than the server, so those numbers (the "Full harness results"
+  and "Echo scaling (in-process)" sections) are kept only as a secondary note.
+  The gate verdicts below use the **pinned, server-bound methodology**: the
+  server and the load generator are separate processes on disjoint CPUs, the
+  load generator is itself a twine event-loop client (`bench/twineload`), and
+  the server process's CPU time is read from `/proc/<pid>/stat` for every run
+  to show that the server is the saturated side.
+- **1M connections were measured** (soak below), but inside a private network
+  namespace: the host's root namespace tracks loopback connections in
+  `nf_conntrack` (`nf_conntrack_max` = 262144, not changeable without root),
+  which capped the first attempt at 261,600 connections.
+- **A load generator influences the server's per-message cost.** A server
+  `write(2)` on loopback wakes the peer's thread inside the syscall; if the
+  client thread is asleep (an event-loop client with spare capacity) that
+  wake-up is charged to the server. The same 1-loop twine server does 152K
+  msgs/s against a sleepy 8-loop client with spinning off, 204K with the
+  default spin, 367K with `SpinIterations(5000)`, and 412K against a client
+  with one busy loop. Every scaling number therefore comes with the client
+  configuration that produced it, and the 1-loop baseline is taken with the
+  same client.
 - **No wrk.** HTTP numbers use `bench/httpclient` (wrk-style: keep-alive, no
   pipelining, one request in flight per connection). The design's "p99 at 80%
   load" needs an open-loop rate-limited client, which was not built; saturated
@@ -34,11 +52,11 @@ network harness.
 
 | Metric | Target | Measured here | Baseline | Status |
 | --- | --- | --- | --- | --- |
-| Echo, 1M idle connections, RSS | ≤ 4 GB | **0.69–0.75 GB** extrapolated (677–740 B heap, 694–748 B RSS per conn at 10K/50K) | goroutine-per-conn: 9.8–18.3 KB RSS/conn → **10–18 GB**; gnet: 0.40 GB | On track (extrapolated; kernel socket memory not counted, see below) |
+| Echo, 1M idle connections, RSS | ≤ 4 GB | **Measured: 0.58 GB** server RSS at 1,000,000 held connections (582 MB peak, 564 B RSS per connection, +0.55 MB over the last 8 minutes of a 10-minute hold). Host MemAvailable fell 6.7 GB for the 2M loopback sockets (both ends), i.e. about 3 GB of kernel socket memory on the server side if the ends cost the same, so server RSS + its kernel share ≈ 3.6 GB | goroutine-per-conn: 9.8–18.3 KB RSS/conn → **10–18 GB** (extrapolated from 10K/50K); gnet: 0.40 GB (extrapolated) | **Met** (RSS as the table defines it; the kernel share is an estimate, see the soak section) |
 | Memory per idle connection (goal 5) | < 1 KB excl. user state | 677 B heap/conn at 50K (includes the 16 B echo protocol object) | goroutine 17.2 KB heap + 2.1 KB stack | Met |
-| HTTP/1.1 plaintext, req/s per core | ≥ 1M | 152K req/s per loop in-process (8 loops, client-bound, c=256); **213K req/s per server core** pinned separate process (c=256) | net/http: 55.6K req/s per server core pinned | Miss (see causes) |
-| HTTP/1.1 plaintext, p99 at 80% load | ≤ 1 ms | Not measured at 80% load. Saturated, c=256: p99 0.66 ms (pinned), 1.05 ms (in-process) | net/http saturated c=256: p99 3.0 ms (pinned), 2.2 ms (in-process) | Not measured as specified |
-| Echo, 64 B messages, msgs/s per core | ≥ 2M | 234K msgs/s per loop at 8 loops (in-process); 350K per server core at 1 loop (pinned) | gnet: 222K/loop in-process (twine +5%); 369K per core pinned at 1 loop (twine −5%); goroutine-per-conn: 1.17M total | Miss on absolute; gnet within ±5% in every configuration (within-10% met) |
+| HTTP/1.1 plaintext, req/s per core | ≥ 1M | **273K req/s per server core** (2.14M req/s on 7.84 cores, 8 pinned loops, c=256, pinned server-bound run); 152K per loop in the old client-bound in-process run | net/http, same 8 cores: 93K per server core (647K req/s on 6.94 cores); GOMAXPROCS=16 on cpus 0–15: 67K per core (708K on 10.5 cores) | Miss (see causes) |
+| HTTP/1.1 plaintext, p99 at 80% load | ≤ 1 ms | Not measured at 80% load. Saturated, c=256, pinned: p50 115 µs, p99 0.28–0.30 ms (twineload client, sampled 1 in 16) | net/http saturated c=256, same cores: p50 172 µs, p99 3.0 ms | Not measured as specified (saturated p99 is below 1 ms) |
+| Echo, 64 B messages, msgs/s per core | ≥ 2M | 360–417K msgs/s per core at 1 pinned loop (client-dependent, see caveat above), 275–283K per core at 8 pinned loops (2.2M total); old client-bound in-process: 234K per loop at 8 loops | gnet, same harness: 361–393K per core at 1 loop, 266–279K at 8 (2.1–2.2M total); goroutine-per-conn: 1.17M total (in-process) | Miss on absolute; twine within about ±6% of gnet in the matched-client pinned configurations |
 | allocs/op: read path, write path, timer fire | 0 | 0 (`TestReadPathZeroAlloc`, `TestWriteHitPathZeroAlloc`, `TestWriteBufferedPathZeroAlloc`, `TestTimerFireZeroAlloc` pass; `BenchmarkTimers1M/fire` 0 allocs/op); HTTP parse+respond 0 (`TestParseRespondZeroAlloc` passes) | net/http: 18 allocs/request | Met |
 | Timer insert + cancel, 1M active timers | O(1), ≤ 50 ns | **34.7 ns**, 1 alloc (80 B) on the current tree; 9.9 ns, 0 allocs on the earlier pooled-Timer core | `time.AfterFunc`+`Stop`: 159 ns, 1 alloc (112 B) | ns met, 4.6× faster than the runtime; see the 0-alloc note under Phase 3 |
 
@@ -60,26 +78,206 @@ as the design table states.
 | Phase | Gate | Measured | Result |
 | --- | --- | --- | --- |
 | 1 | `echo_small` runs and prints msgs/s; read path 0 allocs | `BenchmarkEchoSmall/twine` 1.87M msgs/s; read path 0 allocs | Pass |
-| 2 | `echo_small` scales ≥ 0.8× linearly from 1 to 8 loops | in-process: 0.99 (2 loops), 0.88–0.94 (4), **0.69–0.70 (8)** (median of 5: 0.69). Pinned separate process, one hyperthread per core: 0.97 (2), 0.99 (4), **0.76 (8)** | **Fail on this host.** gnet control, same harness: 0.66–0.67 in-process and 0.71 pinned at 8 loops. The falloff is the host's (see below), not twine-specific |
+| 2 | `echo_small` scales ≥ 0.8× linearly from 1 to 8 loops | Pinned, server-bound (server on cpus 0,2,…,14, client on 16–31, server CPU 7.8–7.9 cores at 8 loops): **0.74 (tls) to 0.76 (goroutine client) at 1000 conns**, 0.67–0.68 with a client whose 1-loop baseline is best (2.22M vs 8 × 417K); at 4000 conns 0.75 (goroutine client), **0.7998 (tls)**; 2 loops 0.92–1.03, 4 loops 0.86–0.99 | **Not met on this host.** The closest case is 0.7998 at 4000 connections with `twineload` at `SpinIterations(5000)` (283K → 1.811M msgs/s), 0.0002 under the line; no saturated configuration at 1000 connections passes (best 0.76). gnet control, same runs: 0.70–0.74 (1000), 0.71–0.77 (4000). The 8-loop total saturates near 2.2M msgs/s for twine and gnet alike |
 | 3 | `timers_1m` ≤ 50 ns insert+cancel, 0 allocs | 34.7 ns, **1 alloc/op** (80 B) | **ns pass, 0-alloc fail** on the current tree (Timers are no longer pooled; 9.9 ns / 0 allocs before that change) |
 | 3 | `callfromthread` wakeups/op ≤ 0.1 under 16 producers | **0.017 wakeups/op** (window=2048), 0.018 (flood); 164 ns/op | Pass |
-| 5 | `http_plaintext` ≥ 5× net/http req/s at c=256 | in-process **0.94–1.16×** (median of 5: 0.94, 1.20M vs 1.28M req/s; client-bound, so the ratio is noise around 1); pinned separate process, both servers on cpus 0–15: **3.14×** (1.53M vs 486K req/s); per server core 3.8× (213K vs 55.6K) | **Fail on this host** |
+| 5 | `http_plaintext` ≥ 5× net/http req/s at c=256 | Pinned, server-bound, c=256: twine (8 loops, cpus 0,2,…,14) **2.14M req/s** vs net/http GOMAXPROCS=8 on the same cpus **647K** = **3.30×** (four runs: 3.30, 3.31, 3.37, 3.36); vs net/http GOMAXPROCS=16 on cpus 0–15 (708K) = **3.02×**. With the goroutine-per-connection client: 1.46M vs 586K (2.50×) and vs 507K (2.89×). Best single ratio 3.72× (2.106M vs 566K, one noisy net/http run). c=10000: 1.29M vs 605K = 2.1× (vs GOMAXPROCS=16: 952K, 1.35×) | **Not met on this host** (best 3.7×, typical 3.0–3.3×). The twine server is the saturated side (7.84 of 8 cores), and twine HTTP (2.14M) is already at the host's echo ceiling (2.2M msgs/s at 8 loops), so more server efficiency cannot buy much; the old unpinned in-process (0.94–1.16×) and pinned Go-client (3.14×) numbers are the secondary note below |
 
-Phase 2 detail: at 8 loops the twine loops are 96% busy (`loop-busy`), so they
-are saturated. What drops is work per core: messages per server-core-second
-fall from 350K at 1 loop to 282K at 8 loops in the pinned run, and gnet shows
-the same 368K → 283K drop. On this host 8 loops spill onto hyperthread
-siblings or E-cores shared with the client, and the loopback path in the
-kernel is shared. The ratio has to be re-checked on a dedicated 16-core server
-with an external client before it can be read as a twine result.
+## Pinned, server-bound results (Phase 2 and Phase 5 gates)
 
-Phase 5 detail: the in-process ratio says little because the shared client
-saturates first: server plus client use 74% of all 32 CPUs in the net/http
-run (net/http is unrestricted) and 49% in the twine run (held to 8 loops). The pinned run is the fairer comparison, and twine is 3.1× ahead on
-throughput and 3.8× on CPU efficiency. Both runs are bounded by a Go client
-on WSL2 loopback, so this is not a substitute for wrk on the target host.
+Raw output: [`bench/results/pinned.txt`](bench/results/pinned.txt). Runner:
+`bench/scaling` (`cd bench && go run ./scaling -mode echo|http ...`).
 
-## Full harness results (`bench/`, `-count=1`)
+Method:
+
+- The server is its own process under `taskset` on the first N **even** CPUs
+  (0,2,…,14: one thread per physical core as the VM presents the topology;
+  odd siblings left idle) and twine loops are also pinned with
+  `twine.PinLoops` to the same list (loop i on cpus[i]). For net/http,
+  `GOMAXPROCS` is N under the same `taskset` (and GOMAXPROCS=16 on cpus 0–15 as
+  the second baseline). gnet is run under `taskset` only (it has no pinning).
+- The load generator is another process under `taskset -c 16-31`.
+  `bench/twineload` is an event-loop client on twine itself (`Loop.ConnectTCP`,
+  one request in flight per connection, 8 loops pinned to 16,18,…,30, latency
+  sampled on 1 round trip in 16). `gor` is the existing goroutine-per-connection
+  `bench/echoclient` / `bench/httpclient`.
+- Each run: connect all connections, 2 s warm-up, then a 10 s window. The
+  server's CPU time (utime+stime from `/proc/<pid>/stat`) is read at the
+  window's start and end by the client; "server cores" is that delta over wall
+  time. A server that shows N.0 cores at N loops is saturated, i.e. the run is
+  server-bound. The client's own cores are shown too.
+- Client configurations: `gor` goroutine client (16 CPUs available); `tl`
+  twineload, 8 loops, default spin; `tls` twineload, 8 loops, `SpinIterations(5000)`
+  (the client's threads stay awake); `tlm` twineload with as many loops as the
+  server (pinned on 16,18,…); `tlms` = `tlm` with spin 5000.
+- Linearity = (msgs/s at N loops) / (N × msgs/s at 1 loop) **with the same client
+  configuration**. † the 1-loop run of that column was not saturating the
+  server (0.91–0.96 cores), so its baseline is client-limited and the linearity
+  is flattered. `tl` columns are not valid for linearity: its 1-loop baseline is
+  depressed by the wake-up cost described in the caveats (204K vs 417K for the
+  same server), which is why its 4- and 8-loop "linearity" exceeds 1.
+
+### Phase 2: echo scaling, 64 B, one message in flight per connection (10 s)
+
+twine, 1000 connections: msgs/s (linearity vs the 1-loop run of the same client; server cores used in brackets)
+
+| client | 1 loop | 2 loops | 4 loops | 8 loops |
+| --- | --- | --- | --- | --- |
+| gor | 359K [1.00] | 743K (1.03) [2.00] | 1,403K (0.98) [3.99] | 2,188K (0.76) [7.84] |
+| tl | 204K [1.00] | 447K (1.09) [2.00] | 1,188K (1.45) [3.99] | 2,254K (1.38) [7.90] |
+| tls | 371K [1.00] | 711K (0.96) [2.00] | 1,350K (0.91) [3.99] | 2,212K (0.74) [7.94] |
+| tlm | 414K [1.00] | 760K (0.92) [2.00] | 1,447K (0.87) [3.99] | 2,242K (0.68) [7.90] |
+| tlms | 417K [1.00] | 764K (0.92) [2.00] | 1,450K (0.87) [3.99] | 2,223K (0.67) [7.94] |
+
+twine, 4000 connections: msgs/s (linearity vs the 1-loop run of the same client; server cores used in brackets)
+
+| client | 1 loop | 2 loops | 4 loops | 8 loops |
+| --- | --- | --- | --- | --- |
+| gor | 243K [1.00] | 505K (1.04) [2.00] | 964K (0.99) [3.99] | 1,447K (0.75) [7.27] |
+| tl | 134K [1.00] | 336K (1.26) [2.00] | 867K (1.62) [3.99] | 1,881K (1.76) [7.90] |
+| tls | 283K [1.00] | 546K (0.96) [2.00] | 1,057K (0.93) [3.99] | 1,811K (0.80) [7.93] |
+| tlm | 276K [0.96] † | 552K (1.00) [1.98] | 1,017K (0.92) [3.66] | 1,881K (0.85) [7.90] |
+| tlms | 295K [0.93] † | 566K (0.96) [2.00] | 1,011K (0.86) [3.66] | 1,851K (0.79) [7.93] |
+
+gnet, 1000 connections: msgs/s (linearity vs the 1-loop run of the same client; server cores used in brackets)
+
+| client | 1 loop | 2 loops | 4 loops | 8 loops |
+| --- | --- | --- | --- | --- |
+| gor | 362K [1.00] | 658K (0.91) [1.79] | 1,307K (0.90) [3.65] | 2,129K (0.74) [7.60] |
+| tl | 109K [1.00] | 269K (1.23) [1.88] | 1,064K (2.44) [3.76] | 2,235K (2.56) [7.79] |
+| tls | 373K [1.00] | 645K (0.86) [1.88] | 1,218K (0.82) [3.78] | 2,184K (0.73) [7.71] |
+| tlm | 391K [1.00] | 709K (0.91) [1.90] | 1,378K (0.88) [3.81] | 2,229K (0.71) [7.77] |
+| tlms | 393K [1.00] | 713K (0.91) [1.89] | 1,381K (0.88) [3.80] | 2,193K (0.70) [7.78] |
+
+gnet, 4000 connections: msgs/s (linearity vs the 1-loop run of the same client; server cores used in brackets)
+
+| client | 1 loop | 2 loops | 4 loops | 8 loops |
+| --- | --- | --- | --- | --- |
+| gor | 253K [1.00] | 455K (0.90) [1.75] | 927K (0.92) [3.62] | 1,469K (0.73) [7.18] |
+| tl | 110K [1.00] | 217K (0.99) [1.84] | 762K (1.73) [3.74] | 1,884K (2.14) [7.66] |
+| tls | 327K [1.00] | 471K (0.72) [1.85] | 975K (0.75) [3.76] | 1,854K (0.71) [7.76] |
+| tlm | 305K [0.92] † | 473K (0.77) [1.87] | 1,016K (0.83) [3.77] | 1,886K (0.77) [7.69] |
+| tlms | 302K [0.91] † | 523K (0.87) [1.84] | 1,027K (0.85) [3.74] | 1,850K (0.77) [7.71] |
+
+Reading the echo tables:
+
+- Every cell above is server-bound except 4000-connection `gor` at 8 loops (7.27
+  of 8 server cores) and the † baselines. At 8 loops the twine server uses
+  7.84–7.94 cores in every 1000-connection run, whichever client drives it, and
+  the client never uses more than its 8 pinned loops (`tl`..`tlms`) or 12.7 of 16
+  CPUs (`gor`). Giving the client more CPUs does not raise the HTTP rate either
+  (diagnostic runs at the end of the raw file).
+- The aggregate 8-loop rate is the same for every client and for gnet:
+  2.19–2.26M msgs/s at 1000 connections (twine), 2.13–2.24M (gnet); 1.81–1.88M
+  at 4000. It does not depend on which CPUs host the loops either: 8 loops on
+  cpus 0–7 (four cores with both siblings), on 0,2,…,14 and on 0–15 gave 2.235M,
+  2.223M, 2.234M. Per-core cost rises smoothly with loop count (`tls` client,
+  1000 conns: 3 loops 349K/core, 5: 322K, 6: 312K, 7: 296K, 8: 277K) while each
+  loop stays 100% busy. That points to a shared resource below twine (the
+  loopback path in the guest kernel, or the hypervisor) rather than to twine's
+  loops, but no experiment here separates the two.
+- Verdict: **the Phase 2 gate is not met on this host.** The only configuration
+  at or near 0.8 is 4000 connections with the `tls` client (0.7998, a miss by
+  0.0002). At 1000 connections, the Section 12 setting, saturated runs give
+  0.74 (`tls`) and 0.76 (`gor`), and 0.67–0.68 against the best 1-loop baseline
+  (417K). Taking a fixed 1-loop baseline of 417K (the best any client achieved),
+  the 8-loop ceiling of 2.26M gives at most 0.68. The earlier unpinned
+  in-process result (0.69–0.70) and the earlier pinned Go-client result (0.76)
+  agree with these.
+
+### Phase 5: HTTP plaintext, `GET / HTTP/1.1`, keep-alive, one request in flight (10 s)
+
+Server-bound at c=256 for twine (7.84–7.93 of 8 cores) and for net/http
+(6.4–6.9 of 8 cores: it is partly latency-bound, with its goroutines waiting on
+wake-ups, and with 16 cores it uses 8.9–10.6). Rows are one run each except the
+repeats noted.
+
+| server | conns | client | req/s | req/s per server core | server cores used | p50 | p99 | client cores | ratio vs twine |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine 8 loops, cpus 0,2,…,14 | 256 | gor | 1.464M | 211K | 6.95 | 139 µs | 655 µs | 9.4 | - |
+| net/http GOMAXPROCS=8, same cpus | 256 | gor | 586K | 91K | 6.41 | 262 µs | 2.23 ms | 5.4 | twine 2.50× |
+| net/http GOMAXPROCS=16, cpus 0–15 | 256 | gor | 507K | 57K | 8.89 | 262 µs | 2.75 ms | 4.9 | twine 2.89× |
+| twine 8 loops | 256 | tl (4 runs) | **2.136–2.151M** | 273K | 7.84 | 115 µs | 0.28–0.31 ms | 7.95 | - |
+| net/http GOMAXPROCS=8 | 256 | tl (4 runs) | 637–648K | 93K | 6.94 | 172 µs | 3.0 ms | 5.0 | **twine 3.30–3.37×** |
+| net/http GOMAXPROCS=16, cpus 0–15 | 256 | tl (4 runs) | 706–708K | 67K | 10.5 | 90 µs | 3.8–3.9 ms | 4.5 | **twine 3.02–3.03×** |
+| twine | 256 | tls | 2.106M | 266K | 7.93 | 119 µs | 254 µs | 8.0 | - |
+| net/http GOMAXPROCS=8 | 256 | tls | 566K | 85K | 6.69 | 74 µs | 5.2 ms | 8.0 | twine 3.72× |
+| net/http GOMAXPROCS=16 | 256 | tls | 613K | 61K | 10.0 | 63 µs | 6.0 ms | 8.0 | twine 3.43× |
+| twine | 10000 | gor | 1.083M | 155K | 7.00 | 9.4 ms | 11.5 ms | 10.6 | - |
+| net/http GOMAXPROCS=8 | 10000 | gor | 615K | 78K | 7.89 | 15.7 ms | 23.1 ms | 7.0 | twine 1.76× |
+| net/http GOMAXPROCS=16 | 10000 | gor | 884K | 57K | 15.55 | 10.5 ms | 17.8 ms | 9.3 | twine 1.23× |
+| twine | 10000 | tl | 1.287M | 163K | 7.92 | 7.6 ms | 14.2 ms | 8.0 | - |
+| net/http GOMAXPROCS=8 | 10000 | tl | 605K | 77K | 7.84 | 15.7 ms | 25.2 ms | 6.0 | twine 2.13× |
+| net/http GOMAXPROCS=16 | 10000 | tl | 952K | 61K | 15.57 | 10.5 ms | 15.7 ms | 7.5 | twine 1.35× |
+
+(`tls` rows at c=10000 are within 3% of the `tl` rows; see the raw file.) Latency is
+the closed-loop saturated latency, not "p99 at 80% load".
+
+Is twine's 2.14M req/s client-limited? Raising the client from 8 to 12 and 16 loops
+left it at 2.08M and 2.05M with the server still at 7.85–7.95 cores, so no.
+
+Verdict: **the Phase 5 gate (≥ 5× net/http at c=256) is not met on this host.** The
+ratio is 3.0–3.4× in the repeated runs (3.7× in one run in which net/http was
+slow) against net/http on the same 8 cores or on 16 cores. twine HTTP at 2.14M
+req/s is within 5% of what the same 8 pinned cores deliver as a bare 64 B echo
+(2.2M msgs/s), so HTTP parsing and response building are not what limits it: the
+per-message syscall cost (`epoll_wait` + `read` + `write` on loopback under
+WSL2) is. 5× would need 3.2M req/s from 8 cores (400K per core, about the 1-loop
+echo ceiling) or a net/http that is 1.5× slower than it was measured here.
+
+### Secondary note: the old client-bound numbers
+
+Kept for continuity, not used for any verdict. In-process (`go test`, client in
+the server process): echo linearity 0.99 / 0.88 / 0.70 at 2 / 4 / 8 loops
+(median-of-5: 0.69), HTTP twine/net-http 0.94–1.16×. Earlier separate-process
+runs with the Go goroutine client, both servers on cpus 0–15: echo linearity 0.97
+/ 0.99 / 0.76 and HTTP 3.14× (1.53M vs 486K). The pinned runs above agree on echo
+(0.76 at 8 loops with `gor`) and are in the same range on HTTP (2.50–2.89× with
+`gor` against 3.14×: net/http measured 507–586K here against 486K then). The in-process figures say little because the client takes most of the CPU.
+
+## 1M-connection soak (Phase 6, Section 2 memory target)
+
+Raw samples every 10 s: [`bench/results/idle1m.txt`](bench/results/idle1m.txt).
+`bench/idle1m/server` (twine echo, 8 loops pinned to 0,2,…,14, 40 ports from
+20000, `RLIMIT_NOFILE` raised to the 1,048,576 hard limit, `Backlog(65535)`)
+and `bench/idle1m` (client: 64 goroutines, raw blocking sockets (3 s connect timeout) bound
+to 127.0.0.2–127.0.0.51 round-robin with `IP_BIND_ADDRESS_NO_PORT`, paced to
+40,000 connects/s, retries on ECONNREFUSED/ETIMEDOUT/EAGAIN/EADDRNOTAVAIL, aborts
+if MemAvailable < 4 GB). Driver: `bench/idle1m/soak.sh -netns`.
+
+| | |
+| --- | --- |
+| Connections held | **1,000,000** (all established, no retries; 2000 sampled connections echoed a byte after the hold: 2000/2000) |
+| Time to establish | **25.0 s** at the 40,000/s pacing limit (the server kept up; the limit is mine, not the server's) |
+| Hold | 10 minutes |
+| Server RSS | 18.1 MB idle, **580 MB at 1M**, **peak 582.0 MB**, 582.0 MB at the end |
+| Stability | RSS at hold minute 2: 581.4 MB; at the end: 582.0 MB; drift **+0.55 MB (+0.095%)**; Go heap in use 552 MB, 14 GCs in total |
+| Per connection | **564 B RSS** (peak − idle baseline)/1M; heap in use 552 B/conn |
+| Host memory | MemAvailable 30.3 GB → 23.6 GB (minimum), so 6.7 GB for both ends of 1M loopback connections (2M sockets, about 3 KB per socket) including the server's 0.58 GB and the client; the 4 GB abort threshold was never close |
+| Server kernel memory | not separable here; if the two ends cost the same it is about 3 GB, so RSS plus kernel ≈ 3.6 GB, under the 4 GB target even when counted. TCP buffer memory in `/proc/net/sockstat` stayed at 794 pages (idle sockets hold no buffers) |
+| fd budget | server: 1,000,000 conns + 320 listener fds (8 reuseport listeners × 40 ports) + epoll/eventfd, below 1,048,576; the client needs the same 1,000,000+ |
+
+Verdict: **met**: 1M idle connections on one twine process, RSS 0.58 GB against the ≤ 4 GB
+target, flat over 10 minutes. (The earlier 0.69–0.75 GB estimate extrapolated from
+10K/50K was 20–30% high: per-connection RSS falls from ~700 B at 50K to 564 B at 1M.)
+
+What blocked the first attempt: in the host's root network namespace the soak
+stalled at **261,600 connections**: `nf_conntrack_count` reached `nf_conntrack_max`
+(262,144) and progress stopped: client `connect()` calls timed out (1,143 retries in 60 s,
+but only ~1,500 new connections), consistent with the kernel dropping packets of untracked flows. It is not an
+fd, memory or twine limit (server RSS was 164 MB, 28.5 GB free), and `nf_conntrack_max`
+cannot be raised without root. The reported run therefore executes server and client
+inside a private user+network namespace (`unshare -Urn`, unprivileged), which has
+no conntrack rules and where `somaxconn` could be raised to 65535. This means
+the kernel TCP path is the same but without conntrack's per-connection state;
+a host whose loopback or NIC traffic is tracked by conntrack needs a larger
+table (about one entry per connection, so over 1M) for 1M.
+
+This host is 32 vCPUs and the server used 8 of them; the design target is a 16-core
+host. Memory is independent of core count, so the memory verdict transfers; the
+connection-establishment rate does not.
+
+## Full harness results (`bench/`, `-count=1`; in-process, client-bound: secondary)
 
 A later `-count=5` run (block 9 of the raw file) agrees within a few percent
 except for in-process HTTP at c=256, where net/http's median (1.28M req/s)
@@ -101,7 +299,7 @@ EchoStream, EchoIdle and HTTPPlaintext. Goroutine-per-conn and net/http use all
 EchoStream is bounded by the client and loopback copying, and all three
 servers land within 2% of each other.
 
-### Echo scaling (in-process, 1000 conns, 64 B)
+### Echo scaling (in-process, 1000 conns, 64 B; client-bound, secondary)
 
 | loops | twine msgs/s | linearity | loop-busy | cpu-util | gnet msgs/s | gnet linearity |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -110,7 +308,7 @@ servers land within 2% of each other.
 | 4 | 1.16M | 0.88 | 1.00 | 0.41 | 1.25M | 0.93 |
 | 8 | 1.85M | **0.70** | 0.96 | 0.62 | 1.79M | **0.66** |
 
-### Echo and HTTP scaling, separate pinned processes (`bench/echoclient`, `bench/httpclient`, 5 s)
+### Echo and HTTP scaling, separate pinned processes with the Go goroutine client (earlier run, 5 s; secondary)
 
 Server on even CPUs 0,2,…,14 (one hyperthread per core), client on CPUs 16–31:
 
@@ -183,6 +381,20 @@ HTTP, server on CPUs 0–15, client on 16–31:
    source (thread g0 stacks or stack growth on the loop goroutines are
    suspects) was not identified.
 
+6. **Server per-message cost depends on whether the peer thread is asleep
+   (environment, relevant to `SpinIterations`).** A loopback `write(2)` wakes the
+   receiver inside the syscall. One pinned twine loop serving 1000 connections
+   does 152K msgs/s against an 8-loop twine client with `SpinIterations(0)`,
+   204K with the default spin, 367K with `SpinIterations(5000)`, and 412K
+   against a single busy client loop. The server loops show 100% CPU in every
+   case. So 1-loop baselines taken against different clients differ by 2.7×, and
+   a scaling ratio needs both ends measured with the same client. Not a core bug.
+7. **No core bug found while building the pinned runs.** `PinLoops` works as
+   documented (loops stay on their CPUs; 8 loops on cpus 0–7, 0,2,…,14 and 0–15 give the
+   same total). The 8-loop aggregate ceiling (about 2.2M 64 B msgs/s, 2.14M HTTP
+   req/s) is shared with gnet and is independent of CPU placement and of the
+   client; per-core cost rises from 2.4 µs/msg at 1 loop to 3.6 µs at 8.
+
 ## Running
 
 ```sh
@@ -191,6 +403,19 @@ cd bench && go test -run '^$' -bench EchoScaling -count 5 .
 cd bench && go test -run '^$' -bench EchoIdle . -idle-conns=100000   # flags: -idle-conns -idle-settle -echo-loops -scaling-spin
 cd bench && go run ./echo_twine -loops 8 &   # then: cd bench && go run ./echoclient -conns 1000 -size 64 -duration 10s
 cd bench && go run ./http_twine -loops 8 &   # then: cd bench && go run ./httpclient -conns 256 -duration 10s
+```
+
+Pinned, server-bound runs and the soak (not part of `make bench`; each takes minutes):
+
+```sh
+cd bench
+go run ./scaling -mode echo -servers twine,gnet -loops 1,2,4,8 -conns 1000,4000 \
+    -clients gor,tl,tls,tlm,tlms -duration 10s -out results/pinned.txt
+go run ./scaling -mode http -servers twine@8,nethttp@8,nethttp@16@0-15 -conns 256,10000 \
+    -clients gor,tl,tls -duration 10s -out results/pinned.txt
+idle1m/soak.sh -n 1000000 -hold 10m -netns > results/idle1m.txt   # -netns: see the soak section
+# by hand: taskset -c 0,2 ./echo_twine -loops 2 -pin 0,2 &  taskset -c 16-31 ./twineload -proto echo \
+#   -conns 1000 -loops 8 -pin 16,18,20,22,24,26,28,30 -server-pid $!
 ```
 
 `bench/echo_goroutine`, `bench/echo_gnet` and `bench/http_nethttp` take the same

@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/robert-malhotra/twine/bench"
@@ -21,6 +22,7 @@ func main() {
 	conns := flag.Int("conns", 256, "concurrent keep-alive connections")
 	path := flag.String("path", "/plaintext", "request path")
 	duration := flag.Duration("duration", 10*time.Second, "test duration")
+	serverPID := flag.Int("server-pid", 0, "server process id: report its CPU use over the measured window")
 	flag.Parse()
 
 	cs, err := bench.DialAll(*addr, *conns)
@@ -32,11 +34,20 @@ func main() {
 	if _, err := bench.HTTPLoad(cs, req, 1, time.Time{}, false); err != nil {
 		log.Fatal(err)
 	}
+	srv0, _ := bench.ProcCPU(*serverPID)
+	cli0, _ := bench.ProcCPU(os.Getpid())
 	res, err := bench.HTTPLoad(cs, req, 0, time.Now().Add(*duration), true)
 	if err != nil {
 		log.Fatal(err)
 	}
+	srv1, _ := bench.ProcCPU(*serverPID)
+	cli1, _ := bench.ProcCPU(os.Getpid())
 	h := res.Latency
+	defer func() {
+		fmt.Printf("RESULT rate=%.0f p50_us=%.0f p99_us=%.0f server_cores=%.2f client_cores=%.2f\n",
+			res.MsgsPerSec(), float64(h.Percentile(0.50))/1e3, float64(h.Percentile(0.99))/1e3,
+			(srv1-srv0).Seconds()/res.Elapsed.Seconds(), (cli1-cli0).Seconds()/res.Elapsed.Seconds())
+	}()
 	fmt.Printf("conns=%d duration=%v\n", *conns, res.Elapsed.Round(time.Millisecond))
 	fmt.Printf("requests=%d  req/s=%.0f\n", res.Msgs, res.MsgsPerSec())
 	fmt.Printf("latency p50=%v p90=%v p99=%v p99.9=%v max=%v\n",

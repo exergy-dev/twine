@@ -1,0 +1,166 @@
+=== ATTEMPT 1: root network namespace (no -netns). Aborted by hand at t=70s ===
+# conntrack: nf_conntrack_count reached 262144 == nf_conntrack_max at ~260K opened; new SYNs dropped
+# server pid=641029 loops=8 ports=20000..20039 nofile=1048576 pin="0,2,4,6,8,10,12,14" GOMAXPROCS=8
+server t=  10s conns=260085 rss_mb=162.9 heap_inuse_mb=152.1 heap_sys_mb=154.2 stack_inuse_mb=1.0 num_gc=7
+server t=  20s conns=260089 rss_mb=163.0 heap_inuse_mb=152.2 heap_sys_mb=154.2 stack_inuse_mb=1.0 num_gc=7
+server t=  30s conns=260092 rss_mb=163.0 heap_inuse_mb=152.2 heap_sys_mb=154.2 stack_inuse_mb=1.0 num_gc=7
+server t=  40s conns=260101 rss_mb=163.0 heap_inuse_mb=152.2 heap_sys_mb=154.2 stack_inuse_mb=1.0 num_gc=7
+server t=  50s conns=260115 rss_mb=163.0 heap_inuse_mb=152.2 heap_sys_mb=154.2 stack_inuse_mb=1.0 num_gc=7
+server t=  60s conns=260129 rss_mb=163.0 heap_inuse_mb=152.2 heap_sys_mb=154.2 stack_inuse_mb=1.0 num_gc=7
+server t=  70s conns=261600 rss_mb=164.0 heap_inuse_mb=153.0 heap_sys_mb=158.4 stack_inuse_mb=1.0 num_gc=7
+# idle1m start 2026-11-06T19:15:00-05:00 target=1000000 ports=20000..20039 srcips=50 workers=64 rate=40000/s nofile=1048576 hold=10m0s
+# baseline server_rss_mb=18.0 mem_available_gb=30.3 sockstat: inuse 329 orphan 0 tw 768 alloc 329 mem 1050
+dial t=   10s opened=260086 retries=63 server_rss_mb=162.9 server_hwm_mb=162.9 mem_avail_gb=28.41 mem_free_gb=28.41 sockstat: inuse 520564 orphan 0 tw 768 alloc 520564 mem 1050
+dial t=   20s opened=260090 retries=255 server_rss_mb=163.0 server_hwm_mb=163.0 mem_avail_gb=28.42 mem_free_gb=28.42 sockstat: inuse 520572 orphan 0 tw 512 alloc 520572 mem 1050
+dial t=   30s opened=260092 retries=447 server_rss_mb=163.0 server_hwm_mb=163.0 mem_avail_gb=28.48 mem_free_gb=28.48 sockstat: inuse 520520 orphan 0 tw 0 alloc 520520 mem 1050
+dial t=   40s opened=260103 retries=581 server_rss_mb=163.0 server_hwm_mb=163.0 mem_avail_gb=28.52 mem_free_gb=28.52 sockstat: inuse 520595 orphan 0 tw 0 alloc 520595 mem 1050
+dial t=   50s opened=260115 retries=721 server_rss_mb=163.0 server_hwm_mb=163.0 mem_avail_gb=28.54 mem_free_gb=28.54 sockstat: inuse 520621 orphan 0 tw 1 alloc 520621 mem 1050
+dial t=   60s opened=260130 retries=875 server_rss_mb=163.0 server_hwm_mb=163.0 mem_avail_gb=28.54 mem_free_gb=28.54 sockstat: inuse 520647 orphan 0 tw 1 alloc 520647 mem 1050
+dial t=   70s opened=261600 retries=1058 server_rss_mb=164.0 server_hwm_mb=164.0 mem_avail_gb=28.53 mem_free_gb=28.53 sockstat: inuse 523557 orphan 0 tw 1 alloc 523557 mem 1050
+# SUMMARY target=1000000 opened=261600 time_to_open=0.0s (261600000000000 conn/s) retries=1143 dial_errors: operation now in progress=1143 operation already in progress=1
+# SUMMARY stop_reason="interrupted" liveness_echo=2013/2013 min_mem_avail_gb=28.41
+# SUMMARY server_rss_baseline_mb=18.0 peak_rss_mb=164.0 rss_at_hold_min2_mb=0.0 rss_end_mb=164.0
+# SUMMARY rss_bytes_per_conn=558 (end-baseline)/opened, peak 558
+
+=== ATTEMPT 2: private user+net namespace (idle1m/soak.sh -netns), n=1000000 hold=10m ===
+# netns: somaxconn=65535 tcp_max_syn_backlog=65535 conntrack_max=262144
+# host: 6.18.33.2-microsoft-standard-WSL2 mem_avail_kb=30301136 somaxconn=65535 nf_conntrack_max=262144
+# server pid=642069 loops=8 ports=20000..20039 nofile=1048576 pin="0,2,4,6,8,10,12,14" GOMAXPROCS=8
+# idle1m start 2026-11-06T19:17:25-05:00 target=1000000 ports=20000..20039 srcips=50 workers=64 rate=40000/s nofile=1048576 hold=10m0s
+# baseline server_rss_mb=18.1 mem_available_gb=30.3 sockstat: inuse 320 orphan 0 tw 0 alloc 329 mem 794
+server t=  10s conns=361779 rss_mb=239.0 heap_inuse_mb=237.2 heap_sys_mb=242.2 stack_inuse_mb=1.0 num_gc=7
+dial t=   10s opened=400059 retries=0 server_rss_mb=255.2 server_hwm_mb=255.2 mem_avail_gb=27.52 mem_free_gb=27.52 sockstat: inuse 800444 orphan 0 tw 0 alloc 800452 mem 794
+server t=  20s conns=761781 rss_mb=444.5 heap_inuse_mb=441.7 heap_sys_mb=447.7 stack_inuse_mb=1.0 num_gc=9
+dial t=   20s opened=800028 retries=0 server_rss_mb=465.5 server_hwm_mb=465.5 mem_avail_gb=24.92 mem_free_gb=24.92 sockstat: inuse 1600391 orphan 0 tw 0 alloc 1600401 mem 794
+dialdone t=   25s opened=1000000 retries=0 server_rss_mb=580.3 server_hwm_mb=580.3 mem_avail_gb=23.60 mem_free_gb=23.60 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+# dialing finished at 25.0s with 1000000/1000000 connections; reason=""
+# holding 10m0s
+server t=  30s conns=1000000 rss_mb=580.3 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   30s opened=1000000 retries=0 server_rss_mb=580.3 server_hwm_mb=580.3 mem_avail_gb=23.60 mem_free_gb=23.60 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t=  40s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   40s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.60 mem_free_gb=23.60 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t=  50s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   50s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.64 mem_free_gb=23.64 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t=  60s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   60s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.70 mem_free_gb=23.70 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t=  70s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   70s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t=  80s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   80s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t=  90s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=   90s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t= 100s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=  100s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 110s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.3 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=  110s opened=1000000 retries=0 server_rss_mb=580.4 server_hwm_mb=580.4 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t= 120s conns=1000000 rss_mb=580.4 heap_inuse_mb=562.4 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=  120s opened=1000000 retries=0 server_rss_mb=580.5 server_hwm_mb=580.5 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t= 130s conns=1000000 rss_mb=580.5 heap_inuse_mb=562.4 heap_sys_mb=565.2 stack_inuse_mb=1.0 num_gc=9
+hold t=  130s opened=1000000 retries=0 server_rss_mb=580.5 server_hwm_mb=580.5 mem_avail_gb=23.74 mem_free_gb=23.74 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 140s conns=1000000 rss_mb=581.4 heap_inuse_mb=551.8 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  140s opened=1000000 retries=0 server_rss_mb=581.4 server_hwm_mb=581.4 mem_avail_gb=23.74 mem_free_gb=23.74 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 150s conns=1000000 rss_mb=581.4 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  150s opened=1000000 retries=0 server_rss_mb=581.4 server_hwm_mb=581.4 mem_avail_gb=23.73 mem_free_gb=23.73 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 160s conns=1000000 rss_mb=581.4 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  160s opened=1000000 retries=0 server_rss_mb=581.4 server_hwm_mb=581.4 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 170s conns=1000000 rss_mb=581.4 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  170s opened=1000000 retries=0 server_rss_mb=581.4 server_hwm_mb=581.4 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 180s conns=1000000 rss_mb=581.4 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  180s opened=1000000 retries=0 server_rss_mb=581.4 server_hwm_mb=581.4 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 190s conns=1000000 rss_mb=581.4 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  190s opened=1000000 retries=0 server_rss_mb=581.4 server_hwm_mb=581.4 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t= 200s conns=1000000 rss_mb=581.5 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  200s opened=1000000 retries=0 server_rss_mb=581.5 server_hwm_mb=581.5 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 210s conns=1000000 rss_mb=581.5 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  210s opened=1000000 retries=0 server_rss_mb=581.5 server_hwm_mb=581.5 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 220s conns=1000000 rss_mb=581.5 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  220s opened=1000000 retries=0 server_rss_mb=581.5 server_hwm_mb=581.5 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 230s conns=1000000 rss_mb=581.5 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  230s opened=1000000 retries=0 server_rss_mb=581.5 server_hwm_mb=581.5 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 240s conns=1000000 rss_mb=581.5 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  240s opened=1000000 retries=0 server_rss_mb=581.5 server_hwm_mb=581.5 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 250s conns=1000000 rss_mb=581.5 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=10
+hold t=  250s opened=1000000 retries=0 server_rss_mb=581.5 server_hwm_mb=581.5 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 260s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.8 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  260s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 270s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  270s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 280s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  280s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000328 mem 794
+server t= 290s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  290s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 300s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  300s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 310s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  310s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 320s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  320s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 330s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  330s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 340s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  340s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 350s conns=1000000 rss_mb=581.9 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  350s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 360s conns=1000000 rss_mb=581.9 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  360s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 370s conns=1000000 rss_mb=581.9 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=11
+hold t=  370s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 380s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.8 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  380s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 390s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  390s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 400s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  400s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 410s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  410s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 420s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  420s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 430s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  430s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 440s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  440s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 450s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  450s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 460s conns=1000000 rss_mb=581.9 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  460s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 470s conns=1000000 rss_mb=581.9 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  470s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 480s conns=1000000 rss_mb=581.9 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  480s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 490s conns=1000000 rss_mb=581.9 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=12
+hold t=  490s opened=1000000 retries=0 server_rss_mb=581.9 server_hwm_mb=581.9 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 500s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.8 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  500s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 510s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  510s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 520s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  520s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 530s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  530s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000330 mem 794
+server t= 540s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  540s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 550s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  550s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 560s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  560s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 570s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  570s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 580s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  580s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000329 mem 794
+server t= 590s conns=1000000 rss_mb=582.0 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  590s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 600s conns=1000000 rss_mb=582.0 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  600s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 610s conns=1000000 rss_mb=582.0 heap_inuse_mb=552.0 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=13
+hold t=  610s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 620s conns=1000000 rss_mb=582.0 heap_inuse_mb=552.0 heap_sys_mb=569.2 stack_inuse_mb=1.0 num_gc=13
+hold t=  620s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 794
+server t= 630s conns=1000000 rss_mb=582.0 heap_inuse_mb=551.9 heap_sys_mb=569.4 stack_inuse_mb=1.0 num_gc=14
+hold t=  630s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 1050
+final t=  630s opened=1000000 retries=0 server_rss_mb=582.0 server_hwm_mb=582.0 mem_avail_gb=23.75 mem_free_gb=23.75 sockstat: inuse 2000320 orphan 0 tw 0 alloc 2000327 mem 1050
+# SUMMARY target=1000000 opened=1000000 time_to_open=25.0s (39999 conn/s) retries=0 dial_errors:
+# SUMMARY stop_reason="" liveness_echo=2000/2000 min_mem_avail_gb=23.60
+# SUMMARY server_rss_baseline_mb=18.1 peak_rss_mb=582.0 rss_at_hold_min2_mb=581.4 rss_end_mb=582.0
+# SUMMARY rss_bytes_per_conn=564 (end-baseline)/opened, peak 564
+# SUMMARY drift_min2_to_end_mb=+0.55 (0.095%)
+server t= 640s conns=182199 rss_mb=616.7 heap_inuse_mb=588.9 heap_sys_mb=602.9 stack_inuse_mb=1.0 num_gc=14

@@ -6,3 +6,5 @@
 /bench/results/*.txt
 !/bench/results/.keep
 !/bench/results/baseline.txt
+!/bench/results/pinned.txt
+!/bench/results/idle1m.txt

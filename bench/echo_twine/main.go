@@ -8,15 +8,26 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/robert-malhotra/twine"
 	"github.com/robert-malhotra/twine/bench"
 )
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9000", "listen address")
 	loops := flag.Int("loops", 0, "event loops (0 = GOMAXPROCS)")
+	pin := flag.String("pin", "", "CPU list for twine.PinLoops, e.g. 0,2,4,6 (loop i -> cpus[i%len]); empty = no pinning")
 	flag.Parse()
 
-	s, err := bench.StartTwine(*addr, *loops)
+	var opts []twine.Option
+	if *pin != "" {
+		cpus, err := bench.ParseCPUs(*pin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		opts = append(opts, twine.PinLoops(cpus...))
+	}
+
+	s, err := bench.StartTwine(*addr, *loops, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}

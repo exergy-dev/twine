@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/robert-malhotra/twine/bench"
@@ -20,6 +21,7 @@ func main() {
 	conns := flag.Int("conns", 1000, "concurrent connections")
 	size := flag.Int("size", 64, "message size in bytes")
 	duration := flag.Duration("duration", 10*time.Second, "test duration")
+	serverPID := flag.Int("server-pid", 0, "server process id: report its CPU use over the measured window")
 	flag.Parse()
 
 	if *size < 1 {
@@ -34,11 +36,20 @@ func main() {
 	if _, err := bench.PingPong(cs, *size, 1, time.Time{}, false); err != nil {
 		log.Fatal(err)
 	}
+	srv0, _ := bench.ProcCPU(*serverPID)
+	cli0, _ := bench.ProcCPU(os.Getpid())
 	res, err := bench.PingPong(cs, *size, 0, time.Now().Add(*duration), true)
 	if err != nil {
 		log.Fatal(err)
 	}
+	srv1, _ := bench.ProcCPU(*serverPID)
+	cli1, _ := bench.ProcCPU(os.Getpid())
 	h := res.Latency
+	defer func() {
+		fmt.Printf("RESULT rate=%.0f p50_us=%.0f p99_us=%.0f server_cores=%.2f client_cores=%.2f\n",
+			res.MsgsPerSec(), float64(h.Percentile(0.50))/1e3, float64(h.Percentile(0.99))/1e3,
+			(srv1-srv0).Seconds()/res.Elapsed.Seconds(), (cli1-cli0).Seconds()/res.Elapsed.Seconds())
+	}()
 	fmt.Printf("conns=%d size=%dB duration=%v\n", *conns, *size, res.Elapsed.Round(time.Millisecond))
 	fmt.Printf("msgs=%d  msgs/s=%.0f  MB/s=%.1f (each direction)\n",
 		res.Msgs, res.MsgsPerSec(), res.MsgsPerSec()*float64(*size)/1e6)
