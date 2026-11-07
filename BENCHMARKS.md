@@ -78,10 +78,10 @@ as the design table states.
 | Phase | Gate | Measured | Result |
 | --- | --- | --- | --- |
 | 1 | `echo_small` runs and prints msgs/s; read path 0 allocs | `BenchmarkEchoSmall/twine` 1.87M msgs/s; read path 0 allocs | Pass |
-| 2 | `echo_small` scales ≥ 0.8× linearly from 1 to 8 loops | Pinned, server-bound (server on cpus 0,2,…,14, client on 16–31, server CPU 7.8–7.9 cores at 8 loops): **0.74 (tls) to 0.76 (goroutine client) at 1000 conns**, 0.67–0.68 with a client whose 1-loop baseline is best (2.22M vs 8 × 417K); at 4000 conns 0.75 (goroutine client), **0.7998 (tls)**; 2 loops 0.92–1.03, 4 loops 0.86–0.99 | **Not met on this host.** The closest case is 0.7998 at 4000 connections with `twineload` at `SpinIterations(5000)` (283K → 1.811M msgs/s), 0.0002 under the line; no saturated configuration at 1000 connections passes (best 0.76). gnet control, same runs: 0.70–0.74 (1000), 0.71–0.77 (4000). The 8-loop total saturates near 2.2M msgs/s for twine and gnet alike |
+| 2 | `echo_small` scales ≥ 0.8× linearly from 1 to 8 loops | Pinned, server-bound (server on cpus 0,2,…,14, client on 16–31, server CPU 7.8–7.9 cores at 8 loops): **0.74 (tls) to 0.76 (goroutine client) at 1000 conns**, 0.67–0.68 with a client whose 1-loop baseline is best (2.22M vs 8 × 417K); at 4000 conns 0.75 (goroutine client), **0.7998 (tls)**; 2 loops 0.92–1.03, 4 loops 0.86–0.99 | **Not met on this host.** The closest case is 0.7998 at 4000 connections with `twineload` at `SpinIterations(5000)` (283K → 1.811M msgs/s), 0.0002 under the line; no saturated configuration at 1000 connections passes (best 0.76). **Repeated medians (5 alternating runs per cell): 0.75–0.76 at 1000 conns (not met), 0.81–0.82 at 4000 (met, from a weak 1-loop baseline), 0.60–0.68 at 8000 (not met)**; gnet 0.74 / 0.70–0.77 / 0.58–0.64. gnet control, same runs: 0.70–0.74 (1000), 0.71–0.77 (4000). The 8-loop total saturates near 2.2M msgs/s for twine and gnet alike |
 | 3 | `timers_1m` ≤ 50 ns insert+cancel, 0 allocs | 34.7 ns, **1 alloc/op** (80 B) | **ns pass, 0-alloc fail** on the current tree (Timers are no longer pooled; 9.9 ns / 0 allocs before that change) |
 | 3 | `callfromthread` wakeups/op ≤ 0.1 under 16 producers | **0.017 wakeups/op** (window=2048), 0.018 (flood); 164 ns/op | Pass |
-| 5 | `http_plaintext` ≥ 5× net/http req/s at c=256 | Pinned, server-bound, c=256: twine (8 loops, cpus 0,2,…,14) **2.14M req/s** vs net/http GOMAXPROCS=8 on the same cpus **647K** = **3.30×** (four runs: 3.30, 3.31, 3.37, 3.36); vs net/http GOMAXPROCS=16 on cpus 0–15 (708K) = **3.02×**. With the goroutine-per-connection client: 1.46M vs 586K (2.50×) and vs 507K (2.89×). Best single ratio 3.72× (2.106M vs 566K, one noisy net/http run). c=10000: 1.29M vs 605K = 2.1× (vs GOMAXPROCS=16: 952K, 1.35×) | **Not met on this host** (best 3.7×, typical 3.0–3.3×). The twine server is the saturated side (7.84 of 8 cores), and twine HTTP (2.14M) is already at the host's echo ceiling (2.2M msgs/s at 8 loops), so more server efficiency cannot buy much; the old unpinned in-process (0.94–1.16×) and pinned Go-client (3.14×) numbers are the secondary note below |
+| 5 | `http_plaintext` ≥ 5× net/http req/s at c=256 | Pinned, server-bound, c=256: twine (8 loops, cpus 0,2,…,14) **2.14M req/s** vs net/http GOMAXPROCS=8 on the same cpus **647K** = **3.30×** (four runs: 3.30, 3.31, 3.37, 3.36); vs net/http GOMAXPROCS=16 on cpus 0–15 (708K) = **3.02×**. With the goroutine-per-connection client: 1.46M vs 586K (2.50×) and vs 507K (2.89×). Best single ratio 3.72× (2.106M vs 566K, one noisy net/http run). c=10000: 1.29M vs 605K = 2.1× (vs GOMAXPROCS=16: 952K, 1.35×) | **Not met on this host** (best 3.7×, typical 3.0–3.3×). The twine server is the saturated side (7.84 of 8 cores), and twine HTTP (2.14M) is already at the host's echo ceiling (2.2M msgs/s at 8 loops), so more server efficiency cannot buy much; **Repeated (3 alternating runs, equal cores): 2.70× at N=1, 2.71× N=2, 3.51× N=4, 3.41× N=8, 2.12× at c=10000 (one run): not met at any N**; the old unpinned in-process (0.94–1.16×) and pinned Go-client (3.14×) numbers are the secondary note below |
 
 ## Pinned, server-bound results (Phase 2 and Phase 5 gates)
 
@@ -185,6 +185,32 @@ Reading the echo tables:
   in-process result (0.69–0.70) and the earlier pinned Go-client result (0.76)
   agree with these.
 
+### Phase 2 repeated: 5 alternating 1-loop / 8-loop runs per cell (medians)
+
+Raw: section "FOLLOW-UP A" of `results/pinned.txt`. Server on cpus 0,2,…,14, client on 16–31,
+10 s per run, 1-loop and 8-loop runs alternating, 5 repetitions. Linearity = median 8-loop rate /
+(8 × median 1-loop rate). The per-run column gives the range of r8_i / (8 × r1_i) over the repetitions.
+`tls` = 8-loop twineload with `SpinIterations(5000)`; `gor` = goroutine client. Verdict per cell:
+met if the median linearity is ≥ 0.80.
+
+| conns | client | twine 1 loop | twine 8 loops (server cores) | **twine linearity** (per run) | gnet linearity (per run) | verdict (twine) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1000 | tls | 371K (370–374K) | 2.229M (2.227–2.235M), 7.94 | **0.752** (0.74–0.76) | 0.739 (0.73–0.74) | not met |
+| 1000 | gor | 362K (360–363K) | 2.203M (2.190–2.216M), 7.84 | **0.761** (0.76–0.77) | 0.736 (0.73–0.74) | not met |
+| 4000 | tls | 286K (281–289K) | 1.875M (1.856–1.882M), 7.93 | **0.821** (0.81–0.83) | 0.695 (0.69–0.71) | met |
+| 4000 | gor | 245K (243–247K) | 1.595M (1.536–1.650M), 7.53 | **0.813** (0.78–0.84) | 0.766 (0.76–0.80) | met (marginal; 2 of 5 runs below 0.80) |
+| 8000 | tls | 264K (263–265K) | 1.428M (1.420–1.439M), 7.93 | **0.676** (0.67–0.68) | 0.640 (0.63–0.65) | not met |
+| 8000 | gor | 237K (236–238K) | 1.133M (1.129–1.141M), 6.71 | **0.599** (0.59–0.60) | 0.575 (0.57–0.58) | not met |
+
+Notes: gnet 1-loop at 8000 connections with `tls` completed only 3 of 5 runs (the client's
+connect burst timed out against the single gnet loop twice: "twine: connect timeout", 51–52 of 8000
+connections), so that gnet cell uses n=3; every other cell has n=5. The 1000-connection medians match the
+single runs above (0.74/0.76). The 4000-connection pass is real in the sense that all five twine
+runs are ≥ 0.81 with `tls`, but it comes from a weak 1-loop baseline, not a strong 8-loop run: twine at
+1 loop does 286K here against gnet's 335K, while the 8-loop totals are equal (1.875M vs 1.863M), which is why
+gnet's linearity in the same cell is 0.695. The gate as written in Section 13 does not fix the connection count; at
+the Section 12 setting (1000) it is not met, it is met at 4000 and not met at 8000.
+
 ### Phase 5: HTTP plaintext, `GET / HTTP/1.1`, keep-alive, one request in flight (10 s)
 
 Server-bound at c=256 for twine (7.84–7.93 of 8 cores) and for net/http
@@ -225,6 +251,44 @@ per-message syscall cost (`epoll_wait` + `read` + `write` on loopback under
 WSL2) is. 5× would need 3.2M req/s from 8 cores (400K per core, about the 1-loop
 echo ceiling) or a net/http that is 1.5× slower than it was measured here.
 
+### Phase 5 repeated: N pinned loops vs GOMAXPROCS=N, c=256 (medians of 3, alternating)
+
+Raw: section "FOLLOW-UP B" of `results/pinned.txt`. twine with N loops pinned to the first N of
+cpus 0,2,…,14; net/http with GOMAXPROCS=N under `taskset` on the same N cpus; twineload client (`tl`, 8 loops on
+16,18,…,30); 10 s per run; twine and net/http alternating, 3 repetitions. Server cores = utime+stime from /proc.
+
+| N | twine req/s (min–max) | net/http req/s (min–max) | **ratio of medians** | server cores twine / net/http | p50 / p99 twine | p50 / p99 net/http | verdict (≥ 5×) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 210K (206–210K) | 78K (78–78K) | **2.70×** | 1.00 / 1.00 | 1245 / 1507 µs | 3277 / 6554 µs | not met |
+| 2 | 415K (411–419K) | 153K (152–154K) | **2.71×** | 2.00 / 1.85 | 623 / 819 µs | 1573 / 5243 µs | not met |
+| 4 | 1.180M (1.178–1.185M) | 337K (331–339K) | **3.51×** | 4.00 / 3.74 | 213 / 328 µs | 590 / 3408 µs | not met |
+| 8 | 2.165M (2.158–2.170M) | 634K (572–644K) | **3.41×** | 7.87 / 6.83 | 115 / 279 µs | 172 / 3146 µs | not met |
+| 8, c=10000 (one run) | 1.292M | 608K | **2.12×** | 7.91 / 7.87 | 7.6 / 14.7 ms | 15.7 / 25.2 ms | not met |
+
+Twine is at its core limit at every N (cores used = N); net/http is at 85–100% of N cores. The ratio is
+2.7× when one core serves both and 3.4–3.5× from 4 cores up, never near 5×. At N=1 twine does 210K req/s on one core (the 1-loop echo does 370–417K).
+
+### Where the time goes at 8 loops (evidence for the loopback-path explanation)
+
+Raw: section "FOLLOW-UP C". Twine echo, 8 loops on cpus 0,2,…,14, `tls` client on 16–31, 1000 connections, deltas over an 8.1 s slice
+of the measured window (2.23M msgs/s during the slice):
+
+| | per second |
+| --- | --- |
+| NET_RX softirqs on the 8 server cpus | 2,231,925 (one per message) |
+| NET_RX softirqs on the 16 client cpus | 2,231,996 (one per message) |
+| NET_RX softirqs on the idle sibling cpus (1,3,…,15) | 18 |
+| server threads, time on cpu (`/proc/<pid>/task/*/schedstat`) | 7.93 cores (each loop thread 98–99% running) |
+| server threads, run-queue wait | 0.167 cores in total (4–12 ms per loop-second) |
+| server scheduler timeslices | 18,376/s in total (about 2,300 per loop-second, against ~280K messages per loop-second) |
+
+Reading: on loopback the receive half of every packet runs as a NET_RX softirq on the CPU of the sender, so each server `write(2)`
+also pays for the TCP receive path of the client's socket (and each client write pays the same for the server's socket): the server CPUs
+take one NET_RX per message in addition to their own `read`, `write` and `epoll_wait`. The loop threads are not waiting for a CPU (2%
+run-queue wait) and almost never sleep (about 1 context switch per 120 messages), so the loss of per-core throughput from 1 to 8 loops (2.4 → 3.6 µs per
+message) is not scheduling contention on the server cpus. It is consistent with that kernel path getting slower when 8 cores and 8 client cores run it at once
+(shared socket/lock/cache state, or the hypervisor), but these counters do not isolate which; no `perf` was available.
+
 ### Secondary note: the old client-bound numbers
 
 Kept for continuity, not used for any verdict. In-process (`go test`, client in
@@ -234,6 +298,16 @@ runs with the Go goroutine client, both servers on cpus 0–15: echo linearity 0
 / 0.99 / 0.76 and HTTP 3.14× (1.53M vs 486K). The pinned runs above agree on echo
 (0.76 at 8 loops with `gor`) and are in the same range on HTTP (2.50–2.89× with
 `gor` against 3.14×: net/http measured 507–586K here against 486K then). The in-process figures say little because the client takes most of the CPU.
+
+#### Same spinning client for both servers at one core (follow-up D)
+
+With the `tls` client (8 twine loops, spin 5000) driving both servers on cpu 0,
+twine serves 374K req/s (3 runs: 373–375K) and net/http with `GOMAXPROCS=1`
+161K (160–162K): **2.32×**. Both servers run at 1.00 cores. Twine's one-loop
+HTTP rate equals its one-loop echo ceiling (371K msgs/s), so the HTTP parser and
+response path add nothing measurable; the ratio is set by the kernel loopback
+path, which also serves net/http. Raw lines: `bench/results/pinned.txt`,
+section "FOLLOW-UP D".
 
 ## 1M-connection soak (Phase 6, Section 2 memory target)
 

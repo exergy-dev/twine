@@ -36,7 +36,7 @@ in design.md Section 14.
 | `Loops(n)` with SO_REUSEPORT per loop; `NextLoop`; `LockOSThread` | done; with `ReusePort(false)` one listener hands connections round-robin |
 | Producer/Consumer, Pause/ResumeReading, RegisterProducer | done (pull producers poked from the flush step) |
 | Partial-write and backpressure tests | done (100 MiB byte-exact through tiny socket buffers; pause/resume exactly once per crossing) |
-| **Accept:** write hit/buffered 0 allocs; `echo_small` ≥ 0.8× linear 1→8 loops; 100 MiB partial-write test | 0 allocs: pass. Scaling, re-measured server-bound with loops pinned to distinct physical cores (`PinLoops`) and a separate pinned event-loop load generator: **0.74–0.76 at 1000 connections, 0.7998 at 4000** (server at 7.8–7.9 of 8 cores, so not client-limited); gnet measures 0.70–0.77 the same way; 2 and 4 loops scale at 0.86–1.03. Per-message cost rises from 2.4 µs at 1 loop to 3.6 µs at 8 on this WSL2 VM's loopback path, which is the shared ceiling. **Not met on this host**; needs the 16-core bare-metal target to settle. 100 MiB: pass. |
+| **Accept:** write hit/buffered 0 allocs; `echo_small` ≥ 0.8× linear 1→8 loops; 100 MiB partial-write test | 0 allocs: pass. Scaling, measured server-bound (loops pinned to distinct physical cores with `PinLoops`, separate pinned event-loop load generator, 5 alternating runs per cell, medians): **1000 connections 0.75–0.76 (not met); 4000 connections 0.82 (met; gor client 0.81, marginal); 8000 connections 0.60–0.68 (not met)**. gnet measured the same way: 0.74 / 0.70–0.77 / 0.58–0.64. 2 and 4 loops scale at 0.86–1.03. Softirq counters show every server `write` on loopback also runs the client socket's NET_RX receive path on the server CPU (one NET_RX per message on the server cores), and per-message cost rises from 2.4 µs at 1 loop to 3.6 µs at 8; this VM loopback ceiling binds both frameworks. **Met at 4000 connections, not met at the Section 12 setting of 1000**; needs the 16-core bare-metal target with a real NIC to settle. 100 MiB: pass. |
 
 ## Phase 3: Timers, cross-thread, Future — done
 
@@ -69,7 +69,7 @@ in design.md Section 14.
 | `http.Adapt` with cost documented | done (≈20 allocs/request with 3 headers) |
 | `tls`: memory-BIO conn, handshake off-loop, `tls.Listen`/`tls.Connect` | done (substitution): handshakes run on a dedicated goroutine per connection instead of the bounded `DeferToThread` pool, because silent peers would otherwise pin every worker for the handshake timeout (Section 14). Tested against `crypto/tls` clients/servers and `openssl s_client` (TLS 1.2 and 1.3). |
 | `bench/http_twine`, `bench/http_nethttp`, `examples/http_hello` | done |
-| **Accept:** parse+respond 0 allocs; `http_plaintext` ≥ 5× net/http at c=256; TLS echo vs `openssl s_client` | 0 allocs: pass. HTTP, server-bound on the same 8 pinned cores: **2.14M req/s vs net/http 637–648K = 3.3×** (3.0× against net/http with 16 cores); twine p99 0.3 ms vs 3.0 ms. Twine's HTTP rate is within 5% of its own echo ceiling, so the parser is not the limit; the gate is **not met on this host**. openssl: pass. |
+| **Accept:** parse+respond 0 allocs; `http_plaintext` ≥ 5× net/http at c=256; TLS echo vs `openssl s_client` | 0 allocs: pass. HTTP, server-bound, twine N loops vs net/http GOMAXPROCS=N on the same pinned cores, c=256, medians of 3 alternating runs: **N=1 2.3× (374K vs 161K), N=2 2.7×, N=4 3.5×, N=8 3.4× (2.17M vs 634K)**; c=10000 at N=8 2.1×. Twine p99 0.28 ms vs 3.1 ms at N=8. Twine's HTTP throughput equals its own echo ceiling at every N (374K at 1 loop, 2.17M at 8), so the parser and response path are not the limit; net/http at 161K req/s per core is at the top of the design's "100–200K" baseline range. The gate is **not met on this host**: 5× would need 3.2M req/s from 8 cores, above the loopback echo ceiling of 2.23M. openssl: pass. |
 
 ## Phase 6: Platform extras and release — done (two performance gates not met on this host)
 
@@ -91,9 +91,12 @@ in design.md Section 14.
 
 ## Gates not met on this host
 
-Two Section 13 gates are performance thresholds that this environment cannot
-reach, and the comparison framework (gnet) cannot either: Phase 2 scaling
-(0.76 vs 0.8) and Phase 5 HTTP throughput (3.3× vs 5× net/http). Both are
-bounded by the WSL2 VM's loopback path, where the per-message syscall cost
-grows from 2.4 µs to 3.6 µs as more loops run. They need the design's
-16-core bare-metal host with wrk to be settled either way.
+Two Section 13 gates are performance thresholds this environment cannot
+reach, and the comparison framework (gnet) cannot either: Phase 2 scaling at
+1000 connections (0.76 vs 0.8; met at 4000 connections with 0.82) and Phase 5
+HTTP throughput (3.4× vs 5× net/http). Both are bounded by the WSL2 VM's
+loopback path: softirq counters show the server CPUs run the client's TCP
+receive for every message, the per-message cost grows from 2.4 µs to 3.6 µs
+as more loops run, and twine's HTTP rate already equals its echo ceiling. They
+need the design's 16-core bare-metal host with a real NIC and wrk to be
+settled either way; nothing in twine was found to be the limit.

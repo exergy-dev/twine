@@ -275,3 +275,418 @@ nethttp loops=16 cpus=0-15 conns=256 client=tl             rate=   706383 p50=  
 client loops=8  (cpus 16,18,..,30): RESULT rate=2131830 p50_us=119 p99_us=279 server_cores=7.85 client_cores=7.96
 client loops=12 (cpus 16-27):       RESULT rate=2079844 p50_us=111 p99_us=344 server_cores=7.85 client_cores=10.58
 client loops=16 (cpus 16-31):       RESULT rate=2045902 p50_us=119 p99_us=360 server_cores=7.95 client_cores=12.36
+=== FOLLOW-UP A: Phase 2 repeats (5x alternating 1-loop/8-loop, clients gor and tls, conns 1000/4000/8000, twine and gnet) ===
+# --- rep 1 ---
+# scaling run 2026-11-06T19:36:39-05:00 mode=echo duration=10s host=rkm-pc loadavg=0.17 0.58 2.65 3/785 650531
+twine loops=1 cpus=0 conns=1000 client=gor                 rate=   360460 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 4.59
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2216246 p50=    410us p99=   1114us server_cores= 7.84 client_cores=12.74
+twine loops=1 cpus=0 conns=1000 client=tls                 rate=   369893 p50=   2753us p99=   3277us server_cores= 1.00 client_cores= 3.66
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2235299 p50=    459us p99=    819us server_cores= 7.93 client_cores= 8.03
+twine loops=1 cpus=0 conns=4000 client=gor                 rate=   245255 p50=  16253us p99=  18874us server_cores= 1.00 client_cores= 4.24
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1588680 p50=   2621us p99=   4456us server_cores= 7.53 client_cores=11.80
+twine loops=1 cpus=0 conns=4000 client=tls                 rate=   287839 p50=  14156us p99=  16253us server_cores= 1.00 client_cores= 5.90
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1856347 p50=   2097us p99=   4194us server_cores= 7.93 client_cores= 8.03
+twine loops=1 cpus=0 conns=8000 client=gor                 rate=   236648 p50=  35652us p99=  37749us server_cores= 1.00 client_cores= 4.22
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1133104 p50=   7078us p99=   8389us server_cores= 6.71 client_cores=10.24
+twine loops=1 cpus=0 conns=8000 client=tls                 rate=   264829 p50=  30409us p99=  33554us server_cores= 1.00 client_cores= 6.52
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1428244 p50=   5505us p99=  10486us server_cores= 7.92 client_cores= 8.03
+gnet loops=1 cpus=0 conns=1000 client=gor                  rate=   362830 p50=   2753us p99=   4719us server_cores= 1.00 client_cores= 4.56
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2130914 p50=    410us p99=   1376us server_cores= 7.59 client_cores=12.41
+gnet loops=1 cpus=0 conns=1000 client=tls                  rate=   372128 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 7.59
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2203778 p50=    442us p99=   1245us server_cores= 7.75 client_cores= 8.03
+gnet loops=1 cpus=0 conns=4000 client=gor                  rate=   257785 p50=  15729us p99=  17826us server_cores= 1.00 client_cores= 4.19
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1557051 p50=   2490us p99=   7340us server_cores= 7.19 client_cores=11.52
+gnet loops=1 cpus=0 conns=4000 client=tls                  rate=   332587 p50=   7340us p99=  12059us server_cores= 1.00 client_cores= 8.00
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1880870 p50=   2032us p99=   5767us server_cores= 7.71 client_cores= 8.03
+gnet loops=1 cpus=0 conns=8000 client=gor                  rate=   245046 p50=  32506us p99=  35652us server_cores= 1.00 client_cores= 4.14
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1131783 p50=   7078us p99=   9437us server_cores= 6.72 client_cores=10.25
+gnet loops=1 cpus=0 conns=8000 client=tls                  rate=   281063 p50=  13107us p99=  18874us server_cores= 1.00 client_cores= 8.01
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1429750 p50=   5243us p99=  13631us server_cores= 7.62 client_cores= 8.03
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine | 1000 | gor | 1 | 360460 | 360460 | 1.00 | 1.00 | 2753 | 3539 | 4.59 |
+| twine | 1000 | gor | 8 | 2216246 | 277031 | 7.84 | 0.77 | 410 | 1114 | 12.74 |
+| twine | 1000 | tls | 1 | 369893 | 369893 | 1.00 | 1.00 | 2753 | 3277 | 3.66 |
+| twine | 1000 | tls | 8 | 2235299 | 279412 | 7.93 | 0.76 | 459 | 819 | 8.03 |
+| twine | 4000 | gor | 1 | 245255 | 245255 | 1.00 | 1.00 | 16253 | 18874 | 4.24 |
+| twine | 4000 | gor | 8 | 1588680 | 198585 | 7.53 | 0.81 | 2621 | 4456 | 11.80 |
+| twine | 4000 | tls | 1 | 287839 | 287839 | 1.00 | 1.00 | 14156 | 16253 | 5.90 |
+| twine | 4000 | tls | 8 | 1856347 | 232043 | 7.93 | 0.81 | 2097 | 4194 | 8.03 |
+| twine | 8000 | gor | 1 | 236648 | 236648 | 1.00 | 1.00 | 35652 | 37749 | 4.22 |
+| twine | 8000 | gor | 8 | 1133104 | 141638 | 6.71 | 0.60 | 7078 | 8389 | 10.24 |
+| twine | 8000 | tls | 1 | 264829 | 264829 | 1.00 | 1.00 | 30409 | 33554 | 6.52 |
+| twine | 8000 | tls | 8 | 1428244 | 178530 | 7.92 | 0.67 | 5505 | 10486 | 8.03 |
+| gnet | 1000 | gor | 1 | 362830 | 362830 | 1.00 | 1.00 | 2753 | 4719 | 4.56 |
+| gnet | 1000 | gor | 8 | 2130914 | 266364 | 7.59 | 0.73 | 410 | 1376 | 12.41 |
+| gnet | 1000 | tls | 1 | 372128 | 372128 | 1.00 | 1.00 | 2753 | 3539 | 7.59 |
+| gnet | 1000 | tls | 8 | 2203778 | 275472 | 7.75 | 0.74 | 442 | 1245 | 8.03 |
+| gnet | 4000 | gor | 1 | 257785 | 257785 | 1.00 | 1.00 | 15729 | 17826 | 4.19 |
+| gnet | 4000 | gor | 8 | 1557051 | 194631 | 7.19 | 0.76 | 2490 | 7340 | 11.52 |
+| gnet | 4000 | tls | 1 | 332587 | 332587 | 1.00 | 1.00 | 7340 | 12059 | 8.00 |
+| gnet | 4000 | tls | 8 | 1880870 | 235109 | 7.71 | 0.71 | 2032 | 5767 | 8.03 |
+| gnet | 8000 | gor | 1 | 245046 | 245046 | 1.00 | 1.00 | 32506 | 35652 | 4.14 |
+| gnet | 8000 | gor | 8 | 1131783 | 141473 | 6.72 | 0.58 | 7078 | 9437 | 10.25 |
+| gnet | 8000 | tls | 1 | 281063 | 281063 | 1.00 | 1.00 | 13107 | 18874 | 8.01 |
+| gnet | 8000 | tls | 8 | 1429750 | 178719 | 7.62 | 0.64 | 5243 | 13631 | 8.03 |
+# --- rep 2 ---
+# scaling run 2026-11-06T19:41:49-05:00 mode=echo duration=10s host=rkm-pc loadavg=11.95 8.39 5.53 1/757 652205
+twine loops=1 cpus=0 conns=1000 client=gor                 rate=   362137 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 4.61
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2203424 p50=    410us p99=   1114us server_cores= 7.83 client_cores=12.75
+twine loops=1 cpus=0 conns=1000 client=tls                 rate=   370507 p50=   2753us p99=   3146us server_cores= 1.00 client_cores= 3.84
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2227796 p50=    459us p99=    819us server_cores= 7.94 client_cores= 8.03
+twine loops=1 cpus=0 conns=4000 client=gor                 rate=   244869 p50=  16777us p99=  18874us server_cores= 1.00 client_cores= 4.25
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1536256 p50=   2621us p99=   4456us server_cores= 7.45 client_cores=11.64
+twine loops=1 cpus=0 conns=4000 client=tls                 rate=   285561 p50=  14156us p99=  16253us server_cores= 1.00 client_cores= 5.30
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1873054 p50=   2097us p99=   4063us server_cores= 7.93 client_cores= 8.03
+twine loops=1 cpus=0 conns=8000 client=gor                 rate=   237252 p50=  35652us p99=  37749us server_cores= 1.00 client_cores= 4.23
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1128834 p50=   7078us p99=   8389us server_cores= 6.69 client_cores=10.25
+twine loops=1 cpus=0 conns=8000 client=tls                 rate=   264704 p50=  30409us p99=  33554us server_cores= 1.00 client_cores= 6.99
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1419626 p50=   5505us p99=  10486us server_cores= 7.94 client_cores= 8.03
+gnet loops=1 cpus=0 conns=1000 client=gor                  rate=   363223 p50=   2753us p99=   4456us server_cores= 1.00 client_cores= 4.58
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2118016 p50=    410us p99=   1442us server_cores= 7.57 client_cores=12.37
+gnet loops=1 cpus=0 conns=1000 client=tls                  rate=   372986 p50=   2753us p99=   3408us server_cores= 1.00 client_cores= 7.76
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2191562 p50=    426us p99=   1311us server_cores= 7.67 client_cores= 8.03
+gnet loops=1 cpus=0 conns=4000 client=gor                  rate=   256027 p50=  15729us p99=  17826us server_cores= 1.00 client_cores= 4.18
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1637805 p50=   2228us p99=   7602us server_cores= 7.27 client_cores=11.80
+gnet loops=1 cpus=0 conns=4000 client=tls                  rate=   337146 p50=   6816us p99=  11010us server_cores= 1.00 client_cores= 7.97
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1862770 p50=   2032us p99=   6554us server_cores= 7.62 client_cores= 8.03
+gnet loops=1 cpus=0 conns=8000 client=gor                  rate=   247432 p50=  32506us p99=  35652us server_cores= 1.00 client_cores= 4.15
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1129360 p50=   7078us p99=   8913us server_cores= 6.68 client_cores=10.22
+gnet loops=1 cpus=0 conns=8000 client=tls                  rate=   277470 p50=  14156us p99=  19923us server_cores= 1.00 client_cores= 7.58
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1432251 p50=   5243us p99=  13107us server_cores= 7.68 client_cores= 8.03
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine | 1000 | gor | 1 | 362137 | 362137 | 1.00 | 1.00 | 2753 | 3539 | 4.61 |
+| twine | 1000 | gor | 8 | 2203424 | 275428 | 7.83 | 0.76 | 410 | 1114 | 12.75 |
+| twine | 1000 | tls | 1 | 370507 | 370507 | 1.00 | 1.00 | 2753 | 3146 | 3.84 |
+| twine | 1000 | tls | 8 | 2227796 | 278474 | 7.94 | 0.75 | 459 | 819 | 8.03 |
+| twine | 4000 | gor | 1 | 244869 | 244869 | 1.00 | 1.00 | 16777 | 18874 | 4.25 |
+| twine | 4000 | gor | 8 | 1536256 | 192032 | 7.45 | 0.78 | 2621 | 4456 | 11.64 |
+| twine | 4000 | tls | 1 | 285561 | 285561 | 1.00 | 1.00 | 14156 | 16253 | 5.30 |
+| twine | 4000 | tls | 8 | 1873054 | 234132 | 7.93 | 0.82 | 2097 | 4063 | 8.03 |
+| twine | 8000 | gor | 1 | 237252 | 237252 | 1.00 | 1.00 | 35652 | 37749 | 4.23 |
+| twine | 8000 | gor | 8 | 1128834 | 141104 | 6.69 | 0.59 | 7078 | 8389 | 10.25 |
+| twine | 8000 | tls | 1 | 264704 | 264704 | 1.00 | 1.00 | 30409 | 33554 | 6.99 |
+| twine | 8000 | tls | 8 | 1419626 | 177453 | 7.94 | 0.67 | 5505 | 10486 | 8.03 |
+| gnet | 1000 | gor | 1 | 363223 | 363223 | 1.00 | 1.00 | 2753 | 4456 | 4.58 |
+| gnet | 1000 | gor | 8 | 2118016 | 264752 | 7.57 | 0.73 | 410 | 1442 | 12.37 |
+| gnet | 1000 | tls | 1 | 372986 | 372986 | 1.00 | 1.00 | 2753 | 3408 | 7.76 |
+| gnet | 1000 | tls | 8 | 2191562 | 273945 | 7.67 | 0.73 | 426 | 1311 | 8.03 |
+| gnet | 4000 | gor | 1 | 256027 | 256027 | 1.00 | 1.00 | 15729 | 17826 | 4.18 |
+| gnet | 4000 | gor | 8 | 1637805 | 204726 | 7.27 | 0.80 | 2228 | 7602 | 11.80 |
+| gnet | 4000 | tls | 1 | 337146 | 337146 | 1.00 | 1.00 | 6816 | 11010 | 7.97 |
+| gnet | 4000 | tls | 8 | 1862770 | 232846 | 7.62 | 0.69 | 2032 | 6554 | 8.03 |
+| gnet | 8000 | gor | 1 | 247432 | 247432 | 1.00 | 1.00 | 32506 | 35652 | 4.15 |
+| gnet | 8000 | gor | 8 | 1129360 | 141170 | 6.68 | 0.57 | 7078 | 8913 | 10.22 |
+| gnet | 8000 | tls | 1 | 277470 | 277470 | 1.00 | 1.00 | 14156 | 19923 | 7.58 |
+| gnet | 8000 | tls | 8 | 1432251 | 179031 | 7.68 | 0.65 | 5243 | 13107 | 8.03 |
+# --- rep 3 ---
+# scaling run 2026-11-06T19:46:57-05:00 mode=echo duration=10s host=rkm-pc loadavg=11.98 11.30 7.66 2/766 653871
+twine loops=1 cpus=0 conns=1000 client=gor                 rate=   362783 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 4.60
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2196993 p50=    410us p99=   1114us server_cores= 7.84 client_cores=12.75
+twine loops=1 cpus=0 conns=1000 client=tls                 rate=   374356 p50=   2753us p99=   3015us server_cores= 1.00 client_cores= 3.89
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2230734 p50=    459us p99=    852us server_cores= 7.95 client_cores= 8.03
+twine loops=1 cpus=0 conns=4000 client=gor                 rate=   246530 p50=  16253us p99=  17826us server_cores= 1.00 client_cores= 4.25
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1649823 p50=   2359us p99=   4456us server_cores= 7.64 client_cores=12.14
+twine loops=1 cpus=0 conns=4000 client=tls                 rate=   281441 p50=  14156us p99=  16777us server_cores= 1.00 client_cores= 4.95
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1875413 p50=   2097us p99=   4194us server_cores= 7.93 client_cores= 8.03
+twine loops=1 cpus=0 conns=8000 client=gor                 rate=   235978 p50=  35652us p99=  37749us server_cores= 1.00 client_cores= 4.21
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1141481 p50=   7078us p99=   8389us server_cores= 6.76 client_cores=10.31
+twine loops=1 cpus=0 conns=8000 client=tls                 rate=   262561 p50=  30409us p99=  33554us server_cores= 1.00 client_cores= 6.23
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1434132 p50=   5505us p99=  10486us server_cores= 7.94 client_cores= 8.03
+gnet loops=1 cpus=0 conns=1000 client=gor                  rate=   362649 p50=   2753us p99=   4456us server_cores= 1.00 client_cores= 4.56
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2136988 p50=    410us p99=   1376us server_cores= 7.60 client_cores=12.47
+gnet loops=1 cpus=0 conns=1000 client=tls                  rate=   373087 p50=   2753us p99=   3670us server_cores= 1.00 client_cores= 7.69
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2203179 p50=    442us p99=   1245us server_cores= 7.75 client_cores= 8.03
+gnet loops=1 cpus=0 conns=4000 client=gor                  rate=   259061 p50=  15729us p99=  17826us server_cores= 1.00 client_cores= 4.19
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1587717 p50=   2359us p99=   7340us server_cores= 7.21 client_cores=11.64
+gnet loops=1 cpus=0 conns=4000 client=tls                  rate=   336582 p50=   6816us p99=  11534us server_cores= 1.00 client_cores= 8.00
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1850793 p50=   2032us p99=   6816us server_cores= 7.57 client_cores= 8.03
+gnet loops=1 cpus=0 conns=8000 client=gor                  rate=   244518 p50=  33554us p99=  35652us server_cores= 1.00 client_cores= 4.13
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1129726 p50=   7078us p99=   9437us server_cores= 6.67 client_cores=10.24
+FAIL gnet loops=1 cpus=0 conns=8000 client=tls: exit status 1
+connect error: twine: connect timeout
+2026/11/06 19:51:39 52 connections failed
+
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1421038 p50=   5505us p99=  13631us server_cores= 7.60 client_cores= 8.03
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine | 1000 | gor | 1 | 362783 | 362783 | 1.00 | 1.00 | 2753 | 3539 | 4.60 |
+| twine | 1000 | gor | 8 | 2196993 | 274624 | 7.84 | 0.76 | 410 | 1114 | 12.75 |
+| twine | 1000 | tls | 1 | 374356 | 374356 | 1.00 | 1.00 | 2753 | 3015 | 3.89 |
+| twine | 1000 | tls | 8 | 2230734 | 278842 | 7.95 | 0.74 | 459 | 852 | 8.03 |
+| twine | 4000 | gor | 1 | 246530 | 246530 | 1.00 | 1.00 | 16253 | 17826 | 4.25 |
+| twine | 4000 | gor | 8 | 1649823 | 206228 | 7.64 | 0.84 | 2359 | 4456 | 12.14 |
+| twine | 4000 | tls | 1 | 281441 | 281441 | 1.00 | 1.00 | 14156 | 16777 | 4.95 |
+| twine | 4000 | tls | 8 | 1875413 | 234427 | 7.93 | 0.83 | 2097 | 4194 | 8.03 |
+| twine | 8000 | gor | 1 | 235978 | 235978 | 1.00 | 1.00 | 35652 | 37749 | 4.21 |
+| twine | 8000 | gor | 8 | 1141481 | 142685 | 6.76 | 0.60 | 7078 | 8389 | 10.31 |
+| twine | 8000 | tls | 1 | 262561 | 262561 | 1.00 | 1.00 | 30409 | 33554 | 6.23 |
+| twine | 8000 | tls | 8 | 1434132 | 179266 | 7.94 | 0.68 | 5505 | 10486 | 8.03 |
+| gnet | 1000 | gor | 1 | 362649 | 362649 | 1.00 | 1.00 | 2753 | 4456 | 4.56 |
+| gnet | 1000 | gor | 8 | 2136988 | 267124 | 7.60 | 0.74 | 410 | 1376 | 12.47 |
+| gnet | 1000 | tls | 1 | 373087 | 373087 | 1.00 | 1.00 | 2753 | 3670 | 7.69 |
+| gnet | 1000 | tls | 8 | 2203179 | 275397 | 7.75 | 0.74 | 442 | 1245 | 8.03 |
+| gnet | 4000 | gor | 1 | 259061 | 259061 | 1.00 | 1.00 | 15729 | 17826 | 4.19 |
+| gnet | 4000 | gor | 8 | 1587717 | 198465 | 7.21 | 0.77 | 2359 | 7340 | 11.64 |
+| gnet | 4000 | tls | 1 | 336582 | 336582 | 1.00 | 1.00 | 6816 | 11534 | 8.00 |
+| gnet | 4000 | tls | 8 | 1850793 | 231349 | 7.57 | 0.69 | 2032 | 6816 | 8.03 |
+| gnet | 8000 | gor | 1 | 244518 | 244518 | 1.00 | 1.00 | 33554 | 35652 | 4.13 |
+| gnet | 8000 | gor | 8 | 1129726 | 141216 | 6.67 | 0.58 | 7078 | 9437 | 10.24 |
+| gnet | 8000 | tls | 8 | 1421038 | 177630 | 7.60 | - | 5505 | 13631 | 8.03 |
+# --- rep 4 ---
+# scaling run 2026-11-06T19:51:54-05:00 mode=echo duration=10s host=rkm-pc loadavg=11.70 11.72 8.86 1/761 655513
+twine loops=1 cpus=0 conns=1000 client=gor                 rate=   362606 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 4.62
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2213664 p50=    410us p99=   1114us server_cores= 7.84 client_cores=12.85
+twine loops=1 cpus=0 conns=1000 client=tls                 rate=   373048 p50=   2753us p99=   3015us server_cores= 1.00 client_cores= 4.15
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2228668 p50=    459us p99=    852us server_cores= 7.94 client_cores= 8.03
+twine loops=1 cpus=0 conns=4000 client=gor                 rate=   242923 p50=  16777us p99=  18874us server_cores= 1.00 client_cores= 4.22
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1595233 p50=   2490us p99=   4456us server_cores= 7.53 client_cores=11.85
+twine loops=1 cpus=0 conns=4000 client=tls                 rate=   288699 p50=  14156us p99=  16253us server_cores= 1.00 client_cores= 6.21
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1878923 p50=   2097us p99=   4063us server_cores= 7.93 client_cores= 8.03
+twine loops=1 cpus=0 conns=8000 client=gor                 rate=   237836 p50=  35652us p99=  35652us server_cores= 1.00 client_cores= 4.22
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1130107 p50=   7078us p99=   8389us server_cores= 6.71 client_cores=10.21
+twine loops=1 cpus=0 conns=8000 client=tls                 rate=   264038 p50=  30409us p99=  33554us server_cores= 1.00 client_cores= 6.89
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1420662 p50=   5505us p99=  10486us server_cores= 7.92 client_cores= 8.03
+gnet loops=1 cpus=0 conns=1000 client=gor                  rate=   363821 p50=   2753us p99=   4456us server_cores= 1.00 client_cores= 4.56
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2139736 p50=    410us p99=   1376us server_cores= 7.59 client_cores=12.45
+gnet loops=1 cpus=0 conns=1000 client=tls                  rate=   372451 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 7.74
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2209395 p50=    442us p99=   1180us server_cores= 7.77 client_cores= 8.03
+gnet loops=1 cpus=0 conns=4000 client=gor                  rate=   259059 p50=  15729us p99=  17826us server_cores= 1.00 client_cores= 4.19
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1567725 p50=   2490us p99=   7340us server_cores= 7.21 client_cores=11.56
+gnet loops=1 cpus=0 conns=4000 client=tls                  rate=   334721 p50=   7340us p99=  12059us server_cores= 1.00 client_cores= 8.00
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1865405 p50=   2032us p99=   5767us server_cores= 7.73 client_cores= 8.03
+gnet loops=1 cpus=0 conns=8000 client=gor                  rate=   245317 p50=  33554us p99=  35652us server_cores= 1.00 client_cores= 4.15
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1128823 p50=   7078us p99=   8913us server_cores= 6.71 client_cores=10.23
+gnet loops=1 cpus=0 conns=8000 client=tls                  rate=   279836 p50=  13107us p99=  18874us server_cores= 1.00 client_cores= 8.01
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1434436 p50=   5505us p99=  13107us server_cores= 7.71 client_cores= 8.03
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine | 1000 | gor | 1 | 362606 | 362606 | 1.00 | 1.00 | 2753 | 3539 | 4.62 |
+| twine | 1000 | gor | 8 | 2213664 | 276708 | 7.84 | 0.76 | 410 | 1114 | 12.85 |
+| twine | 1000 | tls | 1 | 373048 | 373048 | 1.00 | 1.00 | 2753 | 3015 | 4.15 |
+| twine | 1000 | tls | 8 | 2228668 | 278584 | 7.94 | 0.75 | 459 | 852 | 8.03 |
+| twine | 4000 | gor | 1 | 242923 | 242923 | 1.00 | 1.00 | 16777 | 18874 | 4.22 |
+| twine | 4000 | gor | 8 | 1595233 | 199404 | 7.53 | 0.82 | 2490 | 4456 | 11.85 |
+| twine | 4000 | tls | 1 | 288699 | 288699 | 1.00 | 1.00 | 14156 | 16253 | 6.21 |
+| twine | 4000 | tls | 8 | 1878923 | 234865 | 7.93 | 0.81 | 2097 | 4063 | 8.03 |
+| twine | 8000 | gor | 1 | 237836 | 237836 | 1.00 | 1.00 | 35652 | 35652 | 4.22 |
+| twine | 8000 | gor | 8 | 1130107 | 141263 | 6.71 | 0.59 | 7078 | 8389 | 10.21 |
+| twine | 8000 | tls | 1 | 264038 | 264038 | 1.00 | 1.00 | 30409 | 33554 | 6.89 |
+| twine | 8000 | tls | 8 | 1420662 | 177583 | 7.92 | 0.67 | 5505 | 10486 | 8.03 |
+| gnet | 1000 | gor | 1 | 363821 | 363821 | 1.00 | 1.00 | 2753 | 4456 | 4.56 |
+| gnet | 1000 | gor | 8 | 2139736 | 267467 | 7.59 | 0.74 | 410 | 1376 | 12.45 |
+| gnet | 1000 | tls | 1 | 372451 | 372451 | 1.00 | 1.00 | 2753 | 3539 | 7.74 |
+| gnet | 1000 | tls | 8 | 2209395 | 276174 | 7.77 | 0.74 | 442 | 1180 | 8.03 |
+| gnet | 4000 | gor | 1 | 259059 | 259059 | 1.00 | 1.00 | 15729 | 17826 | 4.19 |
+| gnet | 4000 | gor | 8 | 1567725 | 195966 | 7.21 | 0.76 | 2490 | 7340 | 11.56 |
+| gnet | 4000 | tls | 1 | 334721 | 334721 | 1.00 | 1.00 | 7340 | 12059 | 8.00 |
+| gnet | 4000 | tls | 8 | 1865405 | 233176 | 7.73 | 0.70 | 2032 | 5767 | 8.03 |
+| gnet | 8000 | gor | 1 | 245317 | 245317 | 1.00 | 1.00 | 33554 | 35652 | 4.15 |
+| gnet | 8000 | gor | 8 | 1128823 | 141103 | 6.71 | 0.58 | 7078 | 8913 | 10.23 |
+| gnet | 8000 | tls | 1 | 279836 | 279836 | 1.00 | 1.00 | 13107 | 18874 | 8.01 |
+| gnet | 8000 | tls | 8 | 1434436 | 179304 | 7.71 | 0.64 | 5505 | 13107 | 8.03 |
+# --- rep 5 ---
+# scaling run 2026-11-06T19:57:03-05:00 mode=echo duration=10s host=rkm-pc loadavg=11.93 12.33 9.97 2/757 657145
+twine loops=1 cpus=0 conns=1000 client=gor                 rate=   359866 p50=   2753us p99=   3670us server_cores= 1.00 client_cores= 4.60
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2190246 p50=    410us p99=   1114us server_cores= 7.83 client_cores=12.73
+twine loops=1 cpus=0 conns=1000 client=tls                 rate=   370604 p50=   2753us p99=   3015us server_cores= 1.00 client_cores= 3.74
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2226859 p50=    459us p99=    819us server_cores= 7.94 client_cores= 8.03
+twine loops=1 cpus=0 conns=4000 client=gor                 rate=   245421 p50=  16253us p99=  18874us server_cores= 1.00 client_cores= 4.24
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1645304 p50=   2359us p99=   4456us server_cores= 7.65 client_cores=12.08
+twine loops=1 cpus=0 conns=4000 client=tls                 rate=   285398 p50=  14156us p99=  16253us server_cores= 1.00 client_cores= 5.14
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1881520 p50=   2097us p99=   4194us server_cores= 7.94 client_cores= 8.03
+twine loops=1 cpus=0 conns=8000 client=gor                 rate=   235603 p50=  35652us p99=  37749us server_cores= 1.00 client_cores= 4.18
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1136063 p50=   7078us p99=   8389us server_cores= 6.74 client_cores=10.25
+twine loops=1 cpus=0 conns=8000 client=tls                 rate=   263095 p50=  30409us p99=  33554us server_cores= 1.00 client_cores= 6.74
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1438720 p50=   5505us p99=  10486us server_cores= 7.93 client_cores= 8.03
+gnet loops=1 cpus=0 conns=1000 client=gor                  rate=   362935 p50=   2753us p99=   4456us server_cores= 1.00 client_cores= 4.56
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=gor rate=  2144194 p50=    393us p99=   1376us server_cores= 7.59 client_cores=12.51
+gnet loops=1 cpus=0 conns=1000 client=tls                  rate=   367532 p50=   2753us p99=   3539us server_cores= 1.00 client_cores= 7.10
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=1000 client=tls rate=  2187593 p50=    426us p99=   1311us server_cores= 7.66 client_cores= 8.03
+gnet loops=1 cpus=0 conns=4000 client=gor                  rate=   259307 p50=  15729us p99=  17826us server_cores= 1.00 client_cores= 4.19
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=gor rate=  1625964 p50=   2228us p99=   7602us server_cores= 7.21 client_cores=11.74
+gnet loops=1 cpus=0 conns=4000 client=tls                  rate=   334807 p50=   7340us p99=  12059us server_cores= 1.00 client_cores= 8.00
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=4000 client=tls rate=  1845803 p50=   2032us p99=   6029us server_cores= 7.69 client_cores= 8.03
+gnet loops=1 cpus=0 conns=8000 client=gor                  rate=   248016 p50=  32506us p99=  35652us server_cores= 1.00 client_cores= 4.16
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=gor rate=  1124239 p50=   7078us p99=   8913us server_cores= 6.65 client_cores=10.14
+FAIL gnet loops=1 cpus=0 conns=8000 client=tls: exit status 1
+connect error: twine: connect timeout
+2026/11/06 20:01:48 51 connections failed
+
+gnet loops=8 cpus=0,2,4,6,8,10,12,14 conns=8000 client=tls rate=  1433200 p50=   5505us p99=  13107us server_cores= 7.70 client_cores= 8.04
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine | 1000 | gor | 1 | 359866 | 359866 | 1.00 | 1.00 | 2753 | 3670 | 4.60 |
+| twine | 1000 | gor | 8 | 2190246 | 273781 | 7.83 | 0.76 | 410 | 1114 | 12.73 |
+| twine | 1000 | tls | 1 | 370604 | 370604 | 1.00 | 1.00 | 2753 | 3015 | 3.74 |
+| twine | 1000 | tls | 8 | 2226859 | 278357 | 7.94 | 0.75 | 459 | 819 | 8.03 |
+| twine | 4000 | gor | 1 | 245421 | 245421 | 1.00 | 1.00 | 16253 | 18874 | 4.24 |
+| twine | 4000 | gor | 8 | 1645304 | 205663 | 7.65 | 0.84 | 2359 | 4456 | 12.08 |
+| twine | 4000 | tls | 1 | 285398 | 285398 | 1.00 | 1.00 | 14156 | 16253 | 5.14 |
+| twine | 4000 | tls | 8 | 1881520 | 235190 | 7.94 | 0.82 | 2097 | 4194 | 8.03 |
+| twine | 8000 | gor | 1 | 235603 | 235603 | 1.00 | 1.00 | 35652 | 37749 | 4.18 |
+| twine | 8000 | gor | 8 | 1136063 | 142008 | 6.74 | 0.60 | 7078 | 8389 | 10.25 |
+| twine | 8000 | tls | 1 | 263095 | 263095 | 1.00 | 1.00 | 30409 | 33554 | 6.74 |
+| twine | 8000 | tls | 8 | 1438720 | 179840 | 7.93 | 0.68 | 5505 | 10486 | 8.03 |
+| gnet | 1000 | gor | 1 | 362935 | 362935 | 1.00 | 1.00 | 2753 | 4456 | 4.56 |
+| gnet | 1000 | gor | 8 | 2144194 | 268024 | 7.59 | 0.74 | 393 | 1376 | 12.51 |
+| gnet | 1000 | tls | 1 | 367532 | 367532 | 1.00 | 1.00 | 2753 | 3539 | 7.10 |
+| gnet | 1000 | tls | 8 | 2187593 | 273449 | 7.66 | 0.74 | 426 | 1311 | 8.03 |
+| gnet | 4000 | gor | 1 | 259307 | 259307 | 1.00 | 1.00 | 15729 | 17826 | 4.19 |
+| gnet | 4000 | gor | 8 | 1625964 | 203246 | 7.21 | 0.78 | 2228 | 7602 | 11.74 |
+| gnet | 4000 | tls | 1 | 334807 | 334807 | 1.00 | 1.00 | 7340 | 12059 | 8.00 |
+| gnet | 4000 | tls | 8 | 1845803 | 230725 | 7.69 | 0.69 | 2032 | 6029 | 8.03 |
+| gnet | 8000 | gor | 1 | 248016 | 248016 | 1.00 | 1.00 | 32506 | 35652 | 4.16 |
+| gnet | 8000 | gor | 8 | 1124239 | 140530 | 6.65 | 0.57 | 7078 | 8913 | 10.14 |
+| gnet | 8000 | tls | 8 | 1433200 | 179150 | 7.70 | - | 5505 | 13107 | 8.04 |
+=== FOLLOW-UP B: Phase 5 HTTP c=256, N loops (twine) vs GOMAXPROCS=N (net/http) on first N of cpus 0,2,..,14; 3 alternating reps; client tl ===
+# --- rep 1 N=1 ---
+# scaling run 2026-11-06T20:02:05-05:00 mode=http duration=10s host=rkm-pc loadavg=11.40 11.85 10.43 1/757 658798
+twine loops=1 cpus=0 conns=256 client=tl                   rate=   205674 p50=   1245us p99=   1507us server_cores= 1.00 client_cores= 1.22
+nethttp loops=1 cpus=0 conns=256 client=tl                 rate=    77893 p50=   3277us p99=   6554us server_cores= 1.00 client_cores= 0.85
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=1, cpus 0) | 256 | tl | 1 | 205674 | 205674 | 1.00 | 1.00 | 1245 | 1507 | 1.22 |
+| nethttp (GOMAXPROCS/loops=1, cpus 0) | 256 | tl | 1 | 77893 | 77893 | 1.00 | 1.00 | 3277 | 6554 | 0.85 |
+# --- rep 1 N=2 ---
+# scaling run 2026-11-06T20:02:30-05:00 mode=http duration=10s host=rkm-pc loadavg=8.70 11.19 10.25 1/753 658928
+twine loops=2 cpus=0,2 conns=256 client=tl                 rate=   410508 p50=    623us p99=    819us server_cores= 2.00 client_cores= 2.38
+nethttp loops=2 cpus=0,2 conns=256 client=tl               rate=   152212 p50=   1573us p99=   5243us server_cores= 1.85 client_cores= 1.41
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=2, cpus 0,2) | 256 | tl | 2 | 410508 | 205254 | 2.00 | - | 623 | 819 | 2.38 |
+| nethttp (GOMAXPROCS/loops=2, cpus 0,2) | 256 | tl | 2 | 152212 | 76106 | 1.85 | - | 1573 | 5243 | 1.41 |
+# --- rep 1 N=4 ---
+# scaling run 2026-11-06T20:02:56-05:00 mode=http duration=10s host=rkm-pc loadavg=7.32 10.67 10.10 1/760 659060
+twine loops=4 cpus=0,2,4,6 conns=256 client=tl             rate=  1184739 p50=    213us p99=    311us server_cores= 4.00 client_cores= 6.37
+nethttp loops=4 cpus=0,2,4,6 conns=256 client=tl           rate=   336581 p50=    590us p99=   3408us server_cores= 3.74 client_cores= 3.08
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=4, cpus 0,2,4,6) | 256 | tl | 4 | 1184739 | 296185 | 4.00 | - | 213 | 311 | 6.37 |
+| nethttp (GOMAXPROCS/loops=4, cpus 0,2,4,6) | 256 | tl | 4 | 336581 | 84145 | 3.74 | - | 590 | 3408 | 3.08 |
+# --- rep 1 N=8 ---
+# scaling run 2026-11-06T20:03:21-05:00 mode=http duration=10s host=rkm-pc loadavg=8.62 10.71 10.13 1/746 659181
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=256 client=tl  rate=  2164539 p50=    119us p99=    279us server_cores= 7.87 client_cores= 7.96
+nethttp loops=8 cpus=0,2,4,6,8,10,12,14 conns=256 client=tl rate=   644487 p50=    172us p99=   2884us server_cores= 6.93 client_cores= 4.96
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 256 | tl | 8 | 2164539 | 270567 | 7.87 | - | 119 | 279 | 7.96 |
+| nethttp (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 256 | tl | 8 | 644487 | 80561 | 6.93 | - | 172 | 2884 | 4.96 |
+# --- rep 2 N=1 ---
+# scaling run 2026-11-06T20:03:47-05:00 mode=http duration=10s host=rkm-pc loadavg=8.49 10.55 10.09 1/754 659322
+twine loops=1 cpus=0 conns=256 client=tl                   rate=   209881 p50=   1245us p99=   1507us server_cores= 1.00 client_cores= 1.22
+nethttp loops=1 cpus=0 conns=256 client=tl                 rate=    77679 p50=   3408us p99=   6554us server_cores= 1.00 client_cores= 0.85
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=1, cpus 0) | 256 | tl | 1 | 209881 | 209881 | 1.00 | 1.00 | 1245 | 1507 | 1.22 |
+| nethttp (GOMAXPROCS/loops=1, cpus 0) | 256 | tl | 1 | 77679 | 77679 | 1.00 | 1.00 | 3408 | 6554 | 0.85 |
+# --- rep 2 N=2 ---
+# scaling run 2026-11-06T20:04:13-05:00 mode=http duration=10s host=rkm-pc loadavg=6.88 10.01 9.93 1/762 659442
+twine loops=2 cpus=0,2 conns=256 client=tl                 rate=   415415 p50=    623us p99=    786us server_cores= 2.00 client_cores= 2.41
+nethttp loops=2 cpus=0,2 conns=256 client=tl               rate=   153017 p50=   1638us p99=   5505us server_cores= 1.84 client_cores= 1.41
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=2, cpus 0,2) | 256 | tl | 2 | 415415 | 207708 | 2.00 | - | 623 | 786 | 2.41 |
+| nethttp (GOMAXPROCS/loops=2, cpus 0,2) | 256 | tl | 2 | 153017 | 76508 | 1.84 | - | 1638 | 5505 | 1.41 |
+# --- rep 2 N=4 ---
+# scaling run 2026-11-06T20:04:38-05:00 mode=http duration=10s host=rkm-pc loadavg=6.73 9.73 9.84 1/753 659557
+twine loops=4 cpus=0,2,4,6 conns=256 client=tl             rate=  1177717 p50=    221us p99=    328us server_cores= 4.00 client_cores= 6.42
+nethttp loops=4 cpus=0,2,4,6 conns=256 client=tl           rate=   338824 p50=    590us p99=   3408us server_cores= 3.75 client_cores= 3.08
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=4, cpus 0,2,4,6) | 256 | tl | 4 | 1177717 | 294429 | 4.00 | - | 221 | 328 | 6.42 |
+| nethttp (GOMAXPROCS/loops=4, cpus 0,2,4,6) | 256 | tl | 4 | 338824 | 84706 | 3.75 | - | 590 | 3408 | 3.08 |
+# --- rep 2 N=8 ---
+# scaling run 2026-11-06T20:05:04-05:00 mode=http duration=10s host=rkm-pc loadavg=8.06 9.81 9.86 1/760 659688
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=256 client=tl  rate=  2169800 p50=    115us p99=    279us server_cores= 7.87 client_cores= 7.96
+nethttp loops=8 cpus=0,2,4,6,8,10,12,14 conns=256 client=tl rate=   572165 p50=    172us p99=   3670us server_cores= 6.75 client_cores= 4.94
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 256 | tl | 8 | 2169800 | 271225 | 7.87 | - | 115 | 279 | 7.96 |
+| nethttp (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 256 | tl | 8 | 572165 | 71521 | 6.75 | - | 172 | 3670 | 4.94 |
+# --- rep 3 N=1 ---
+# scaling run 2026-11-06T20:05:30-05:00 mode=http duration=10s host=rkm-pc loadavg=9.91 10.14 9.97 1/754 659832
+twine loops=1 cpus=0 conns=256 client=tl                   rate=   210020 p50=   1245us p99=   1442us server_cores= 1.00 client_cores= 1.22
+nethttp loops=1 cpus=0 conns=256 client=tl                 rate=    77862 p50=   3277us p99=   6554us server_cores= 1.00 client_cores= 0.84
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=1, cpus 0) | 256 | tl | 1 | 210020 | 210020 | 1.00 | 1.00 | 1245 | 1442 | 1.22 |
+| nethttp (GOMAXPROCS/loops=1, cpus 0) | 256 | tl | 1 | 77862 | 77862 | 1.00 | 1.00 | 3277 | 6554 | 0.84 |
+# --- rep 3 N=2 ---
+# scaling run 2026-11-06T20:05:55-05:00 mode=http duration=10s host=rkm-pc loadavg=7.45 9.55 9.78 1/753 659949
+twine loops=2 cpus=0,2 conns=256 client=tl                 rate=   418535 p50=    623us p99=    852us server_cores= 2.00 client_cores= 2.42
+nethttp loops=2 cpus=0,2 conns=256 client=tl               rate=   153628 p50=   1573us p99=   5243us server_cores= 1.85 client_cores= 1.42
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=2, cpus 0,2) | 256 | tl | 2 | 418535 | 209268 | 2.00 | - | 623 | 852 | 2.42 |
+| nethttp (GOMAXPROCS/loops=2, cpus 0,2) | 256 | tl | 2 | 153628 | 76814 | 1.85 | - | 1573 | 5243 | 1.42 |
+# --- rep 3 N=4 ---
+# scaling run 2026-11-06T20:06:21-05:00 mode=http duration=10s host=rkm-pc loadavg=7.05 9.29 9.69 2/746 660063
+twine loops=4 cpus=0,2,4,6 conns=256 client=tl             rate=  1179831 p50=    213us p99=    344us server_cores= 3.99 client_cores= 6.40
+nethttp loops=4 cpus=0,2,4,6 conns=256 client=tl           rate=   330663 p50=    590us p99=   3539us server_cores= 3.69 client_cores= 3.01
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=4, cpus 0,2,4,6) | 256 | tl | 4 | 1179831 | 294958 | 3.99 | - | 213 | 344 | 6.40 |
+| nethttp (GOMAXPROCS/loops=4, cpus 0,2,4,6) | 256 | tl | 4 | 330663 | 82666 | 3.69 | - | 590 | 3539 | 3.01 |
+# --- rep 3 N=8 ---
+# scaling run 2026-11-06T20:06:46-05:00 mode=http duration=10s host=rkm-pc loadavg=8.21 9.40 9.71 1/753 660189
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=256 client=tl  rate=  2157885 p50=    111us p99=    279us server_cores= 7.85 client_cores= 7.96
+nethttp loops=8 cpus=0,2,4,6,8,10,12,14 conns=256 client=tl rate=   634026 p50=    172us p99=   3146us server_cores= 6.83 client_cores= 4.93
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 256 | tl | 8 | 2157885 | 269736 | 7.85 | - | 111 | 279 | 7.96 |
+| nethttp (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 256 | tl | 8 | 634026 | 79253 | 6.83 | - | 172 | 3146 | 4.93 |
+=== FOLLOW-UP B2: Phase 5 HTTP c=10000, N=8, once ===
+# scaling run 2026-11-06T20:07:12-05:00 mode=http duration=10s host=rkm-pc loadavg=8.97 9.50 9.74 1/759 660335
+twine loops=8 cpus=0,2,4,6,8,10,12,14 conns=10000 client=tl rate=  1292030 p50=   7602us p99=  14680us server_cores= 7.91 client_cores= 8.00
+nethttp loops=8 cpus=0,2,4,6,8,10,12,14 conns=10000 client=tl rate=   608331 p50=  15729us p99=  25166us server_cores= 7.87 client_cores= 5.97
+
+| server | conns | client | loops | rate/s | per server core | server cores used | linearity vs 1 loop | p50 us | p99 us | client cores used |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| twine (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 10000 | tl | 8 | 1292030 | 161504 | 7.91 | - | 7602 | 14680 | 8.00 |
+| nethttp (GOMAXPROCS/loops=8, cpus 0,2,4,6,8,10,12,14) | 10000 | tl | 8 | 608331 | 76041 | 7.87 | - | 15729 | 25166 | 5.97 |
+=== FOLLOW-UP C: where the time goes, twine echo 8 loops (cpus 0,2,..,14), tls client (cpus 16-31), 1000 conns; deltas over an 8 s slice of the window ===
+slice=8.09s
+softirq NET_RX/s: server cpus(0,2,..,14)=2231925  idle siblings(1,3,..,15)=18  client cpus(16-31)=2231996  all=4463939
+softirq NET_TX/s: server cpus(0,2,..,14)=0  idle siblings(1,3,..,15)=0  client cpus(16-31)=0  all=0
+softirq TIMER/s: server cpus(0,2,..,14)=214  idle siblings(1,3,..,15)=38  client cpus(16-31)=229  all=480
+softirq SCHED/s: server cpus(0,2,..,14)=776  idle siblings(1,3,..,15)=176  client cpus(16-31)=445  all=1396
+server threads (tid comm): run_ms/s wait_ms/s timeslices/s, last_cpu-agnostic; busy threads only
+  660497 echo_twine run=981ms/s wait=8.3ms/s slices=1596/s
+  660501 echo_twine run=988ms/s wait=5.2ms/s slices=1066/s
+  660502 echo_twine run=986ms/s wait=5.0ms/s slices=1047/s
+  660504 echo_twine run=987ms/s wait=4.2ms/s slices=834/s
+  660505 echo_twine run=981ms/s wait=6.8ms/s slices=1325/s
+  660506 echo_twine run=989ms/s wait=4.1ms/s slices=786/s
+  660507 echo_twine run=986ms/s wait=6.3ms/s slices=1138/s
+  660508 echo_twine run=979ms/s wait=12.1ms/s slices=2203/s
+server total: run=7.93 cores, runqueue wait=0.167 cores, timeslices=18376/s
+RESULT rate=2226173 p50_us=459 p99_us=852 server_cores=7.93 client_cores=8.03
+
+=== FOLLOW-UP D (orchestrator): Phase 5 at N=1 with the SAME spinning client for both servers ===
+# server on cpu 0 (twine: -loops 1; net/http: GOMAXPROCS=1), twineload -proto http -conns 256 -loops 8 -spin 5000 -pin 16..30, 8 s, 3 alternating runs
+twine1   RESULT rate=374062 p50_us=688 p99_us=1180 server_cores=1.00 client_cores=8.01
+nethttp1 RESULT rate=161658 p50_us=1573 p99_us=3408 server_cores=1.00 client_cores=7.89
+twine1   RESULT rate=375420 p50_us=688 p99_us=983 server_cores=1.00 client_cores=8.01
+nethttp1 RESULT rate=160457 p50_us=1573 p99_us=3408 server_cores=1.00 client_cores=7.84
+twine1   RESULT rate=372862 p50_us=688 p99_us=1180 server_cores=1.00 client_cores=8.01
+nethttp1 RESULT rate=161418 p50_us=1573 p99_us=3408 server_cores=1.00 client_cores=7.89
+# ratio of medians 374K / 161K = 2.32x; twine HTTP at 1 loop equals its 1-loop echo ceiling (371K msgs/s)
