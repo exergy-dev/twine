@@ -14,12 +14,18 @@
 //
 // Kafka is disabled when -brokers is empty.
 //
+// With -aes every frame body is nonce(12) || AES-256-GCM ciphertext || tag(16)
+// and is decrypted on the loop before the TUN write and the sink; the TUN and
+// Kafka receive the plaintext. Frames that fail to decrypt are counted in
+// decrypt_err and skipped.
+//
 //	sudo ip tuntap add dev tun0 mode tun user $USER && sudo ip link set tun0 up
 //	go run . -tun tun0 -addr :9000 -brokers localhost:9092 -topic tun-packets
 package main
 
 import (
 	"context"
+	"crypto/cipher"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,7 +49,7 @@ import (
 const maxPacket = 65535
 
 type stats struct {
-	frames, bytes, tunErr, kafkaOK, kafkaErr, pauses atomic.Uint64
+	frames, bytes, tunErr, kafkaOK, kafkaErr, pauses, decryptErr atomic.Uint64
 }
 
 func main() {
@@ -59,7 +65,20 @@ func main() {
 	watchdog := flag.Duration("watchdog", 10*time.Millisecond, "slow-callback watchdog threshold (0: off)")
 	statsEvery := flag.Duration("stats", time.Second, "stats print interval (0: off)")
 	spin := flag.Int("spin", -1, "loop busy-poll iterations before blocking (-1: library default)")
+	useAES := flag.Bool("aes", false, "decrypt every frame with AES-256-GCM (nonce || ciphertext || tag)")
+	keyHex := flag.String("key", tunpkt.DefaultKeyHex(), "AES-256 key, 64 hex characters")
 	flag.Parse()
+
+	var gcm cipher.AEAD
+	if *useAES {
+		key, err := tunpkt.ParseKey(*keyHex)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if gcm, err = tunpkt.NewAEAD(key); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -155,8 +174,14 @@ func main() {
 	}
 	eng := twine.New(opts...)
 	ln, err := eng.ListenTCP(*addr, twine.FactoryFunc(func(peer net.Addr) twine.Protocol {
-		c := &client{st: &st, sink: sink, direct: direct, tunFD: tunFD, needSink: needSink, drains: &drainWG, stopped: &stopped}
+		c := &client{st: &st, sink: sink, direct: direct, tunFD: tunFD, needSink: needSink, gcm: gcm, drains: &drainWG, stopped: &stopped}
 		c.lp.MaxFrame = maxPacket
+		if gcm != nil {
+			c.lp.MaxFrame = maxPacket + tunpkt.AESOverhead
+			if !needSink {
+				c.scratch = make([]byte, 0, maxPacket)
+			}
+		}
 		c.lp.FrameReceived = c.frame
 		c.lp.OnConnectionLost = func(err error) {
 			if err != nil && !errors.Is(err, twine.ErrClosed) && !errors.Is(err, twine.ErrShutdown) {
@@ -168,7 +193,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("tunsink: tcp%s -> tun=%q kafka=%q mode=%s loops=%d", ln.Addr(), *iface, *brokers, *mode, *loops)
+	log.Printf("tunsink: tcp%s -> tun=%q kafka=%q mode=%s loops=%d aes=%v", ln.Addr(), *iface, *brokers, *mode, *loops, *useAES)
 
 	if *statsEvery > 0 {
 		go printStats(ctx, &st, *statsEvery)
@@ -189,8 +214,8 @@ func main() {
 		}
 		cancel()
 	}
-	log.Printf("total frames=%d bytes=%d tun_err=%d kafka_ok=%d kafka_err=%d pauses=%d",
-		st.frames.Load(), st.bytes.Load(), st.tunErr.Load(), st.kafkaOK.Load(), st.kafkaErr.Load(), st.pauses.Load())
+	log.Printf("total frames=%d bytes=%d tun_err=%d kafka_ok=%d kafka_err=%d pauses=%d decrypt_err=%d",
+		st.frames.Load(), st.bytes.Load(), st.tunErr.Load(), st.kafkaOK.Load(), st.kafkaErr.Load(), st.pauses.Load(), st.decryptErr.Load())
 }
 
 // client is one TCP connection. All fields except pending are touched only
@@ -202,6 +227,10 @@ type client struct {
 	direct   bool
 	tunFD    int
 	needSink bool
+	// gcm is non-nil with -aes. scratch is the decrypt buffer (cap maxPacket)
+	// used in direct mode with Kafka off, where nothing leaves the loop.
+	gcm     cipher.AEAD
+	scratch []byte
 
 	// Overflow state. paused is loop-thread only. pending is shared with the
 	// drainer goroutine under mu.
@@ -224,6 +253,21 @@ func (c *client) startDrain() {
 func (c *client) frame(f []byte) {
 	c.st.frames.Add(1)
 	c.st.bytes.Add(uint64(len(f)))
+	var pkt []byte // owned copy for the sink, set when decrypted into one
+	if c.gcm != nil {
+		// Decrypt into the buffer the frame would be copied to anyway: a fresh
+		// slice when it goes to the sink, else the reusable scratch buffer.
+		dst := c.scratch
+		if c.needSink && len(f) >= tunpkt.AESOverhead {
+			dst = make([]byte, 0, len(f)-tunpkt.AESOverhead)
+		}
+		p, ok := tunpkt.Open(c.gcm, dst, f)
+		if !ok {
+			c.st.decryptErr.Add(1)
+			return
+		}
+		f, pkt = p, p
+	}
 	if c.direct && c.tunFD >= 0 {
 		// Non-blocking TUN fd: the kernel drops rather than blocks.
 		if _, err := unix.Write(c.tunFD, f); err != nil {
@@ -233,7 +277,9 @@ func (c *client) frame(f []byte) {
 	if !c.needSink {
 		return
 	}
-	pkt := append([]byte(nil), f...) // f is only valid during the call
+	if c.gcm == nil {
+		pkt = append([]byte(nil), f...) // f is only valid during the call
+	}
 	if !c.paused {
 		select {
 		case c.sink <- pkt:
@@ -309,9 +355,9 @@ func printStats(ctx context.Context, st *stats, every time.Duration) {
 		case now := <-tick.C:
 			f, b, k := st.frames.Load(), st.bytes.Load(), st.kafkaOK.Load()
 			dt := now.Sub(last).Seconds()
-			fmt.Fprintf(os.Stderr, "stats frames/s=%.0f MB/s=%.1f kafka/s=%.0f pauses=%d tun_err=%d kafka_err=%d\n",
+			fmt.Fprintf(os.Stderr, "stats frames/s=%.0f MB/s=%.1f kafka/s=%.0f pauses=%d tun_err=%d kafka_err=%d decrypt_err=%d\n",
 				float64(f-lastF)/dt, float64(b-lastB)/dt/1e6, float64(k-lastK)/dt,
-				st.pauses.Load(), st.tunErr.Load(), st.kafkaErr.Load())
+				st.pauses.Load(), st.tunErr.Load(), st.kafkaErr.Load(), st.decryptErr.Load())
 			lastF, lastB, lastK, last = f, b, k, now
 		}
 	}

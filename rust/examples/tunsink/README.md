@@ -34,6 +34,8 @@ Go `flag` syntax: `-x v`, `-x=v`, `--x v`; booleans are bare or `-x=true|false`
 | `-brokers` | empty | comma-separated Kafka brokers (empty: Kafka off) |
 | `-topic` | `tun-packets` | Kafka topic |
 | `-kafka-drop` | off | drop (count `kafka_err`) when the producer queue is full instead of blocking |
+| `-aes` | off | frame body is `nonce(12) \|\| AES-256-GCM ciphertext \|\| tag(16)`; decrypt on the loop (ring), count `decrypt_err` and skip on failure |
+| `-key` | `000102…1f` | AES-256 key, 64 hex characters |
 | `-loops` | `1` | event loops |
 | `-pin` | empty | comma-separated CPUs for the loops |
 | `-mode` | `channel` | `channel` or `direct` (below) |
@@ -105,8 +107,26 @@ Different:
   is stalled, the client writes 240 KB and closes, the engine is stopped and
   joined (the linger reads the rest into `pending`), then the consumer is
   released and the drainer joined: all frames arrive in order.
+- AES (`-aes`): `aes_frames_reach_the_sink_as_plaintext` (5,000 sealed frames
+  arrive decrypted and in order), `aes_bad_frames_count_decrypt_err_and_keep_the_connection`
+  (wrong-key and short frames count `decrypt_err`, nothing reaches the sink,
+  the connection stays open and a good frame after them arrives), and
+  `aes_direct_mode_writes_plaintext_to_the_tun` (the scratch-buffer path with a
+  Unix datagram socket standing in for the TUN fd); `aes.rs` has unit tests for
+  round trip, wrong key, short body and key parsing. `src/bin/aesbench.rs`
+  measures the standalone per-frame decrypt cost (69–70 ns for 512 bytes on
+  the i9-14900KF; Go's `crypto/aes` GCM: 86–88 ns).
 
-## Verified (2026-11-07)
+## Verified (2026-11-07; AES cells 2026-11-08)
+
+AES-256-GCM (`-aes`, ring 0.17.14): in the 2026-11-08 `bench.sh quick` run every
+AES cell passed `check` with `decrypt_err=0`, and the wrong-key negative cell
+(`LOADGEN_KEY=ff…`) counted every one of its 20.8M frames as a decrypt error
+with `tun_rx=0`. Decryption costs 17% at one core in `direct` mode without
+Kafka (2.31 → 1.91 M frames/s), the same relative cost as the Go server
+(1.91 → 1.57), and 3–13% elsewhere; results table in
+`examples/tunsink/README.md`.
+
 
 `unshare -rn`, server under `taskset -c 2` with `-loops 1 -pin 2 -sinks 1
 -stats 1s -watchdog 0 -spin 0`, loadgen under `taskset -c 16-31` with

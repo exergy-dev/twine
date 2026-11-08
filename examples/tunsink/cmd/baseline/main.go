@@ -1,11 +1,13 @@
 // Command baseline is the goroutine-per-connection net.Conn equivalent of
 // tunsink, used as the comparison point in the benchmark. Same framing, same
-// sink goroutine, same Kafka settings.
+// sink goroutine, same Kafka settings, same -aes decryption (into the sink
+// copy, or a per-connection scratch buffer when nothing goes to the sink).
 package main
 
 import (
 	"bufio"
 	"context"
+	"crypto/cipher"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -36,7 +38,22 @@ func main() {
 	mode := flag.String("mode", "channel", "channel: sink goroutine writes TUN; direct: connection goroutine writes TUN")
 	sinks := flag.Int("sinks", 1, "sink goroutines")
 	statsEvery := flag.Duration("stats", time.Second, "stats interval")
+	useAES := flag.Bool("aes", false, "decrypt every frame with AES-256-GCM (nonce || ciphertext || tag)")
+	keyHex := flag.String("key", tunpkt.DefaultKeyHex(), "AES-256 key, 64 hex characters")
 	flag.Parse()
+
+	var gcm cipher.AEAD
+	maxFrame := maxPacket
+	if *useAES {
+		key, err := tunpkt.ParseKey(*keyHex)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if gcm, err = tunpkt.NewAEAD(key); err != nil {
+			log.Fatal(err)
+		}
+		maxFrame = maxPacket + tunpkt.AESOverhead
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -67,7 +84,7 @@ func main() {
 	}
 	direct := *mode == "direct"
 
-	var frames, bytes, kafkaOK, kafkaErr, tunErr atomic.Uint64
+	var frames, bytes, kafkaOK, kafkaErr, tunErr, decryptErr atomic.Uint64
 	sink := make(chan []byte, 4096)
 	var errOnce sync.Once
 	promise := func(_ *kgo.Record, err error) {
@@ -102,7 +119,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("baseline: tcp%s -> tun=%q kafka=%q mode=%s", ln.Addr(), *iface, *brokers, *mode)
+	log.Printf("baseline: tcp%s -> tun=%q kafka=%q mode=%s aes=%v", ln.Addr(), *iface, *brokers, *mode, *useAES)
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -119,8 +136,8 @@ func main() {
 			case now := <-tick.C:
 				f, b, k := frames.Load(), bytes.Load(), kafkaOK.Load()
 				dt := now.Sub(last).Seconds()
-				fmt.Fprintf(os.Stderr, "stats frames/s=%.0f MB/s=%.1f kafka/s=%.0f pauses=0 tun_err=%d kafka_err=%d\n",
-					float64(f-lf)/dt, float64(b-lb)/dt/1e6, float64(k-lk)/dt, tunErr.Load(), kafkaErr.Load())
+				fmt.Fprintf(os.Stderr, "stats frames/s=%.0f MB/s=%.1f kafka/s=%.0f pauses=0 tun_err=%d kafka_err=%d decrypt_err=%d\n",
+					float64(f-lf)/dt, float64(b-lb)/dt/1e6, float64(k-lk)/dt, tunErr.Load(), kafkaErr.Load(), decryptErr.Load())
 				lf, lb, lk, last = f, b, k, now
 			}
 		}
@@ -138,13 +155,17 @@ func main() {
 			defer c.Close()
 			r := bufio.NewReaderSize(c, 64<<10)
 			var hdr [4]byte
-			buf := make([]byte, maxPacket)
+			buf := make([]byte, maxFrame)
+			var scratch []byte // decrypt buffer when nothing goes to the sink
+			if gcm != nil && !needSink {
+				scratch = make([]byte, 0, maxPacket)
+			}
 			for {
 				if _, err := io.ReadFull(r, hdr[:]); err != nil {
 					return
 				}
 				n := int(binary.BigEndian.Uint32(hdr[:]))
-				if n > maxPacket {
+				if n > maxFrame {
 					return
 				}
 				f := buf[:n]
@@ -153,13 +174,29 @@ func main() {
 				}
 				frames.Add(1)
 				bytes.Add(uint64(n))
+				var pkt []byte // owned copy for the sink, set when decrypted into one
+				if gcm != nil {
+					dst := scratch
+					if needSink && n >= tunpkt.AESOverhead {
+						dst = make([]byte, 0, n-tunpkt.AESOverhead)
+					}
+					p, ok := tunpkt.Open(gcm, dst, f)
+					if !ok {
+						decryptErr.Add(1)
+						continue
+					}
+					f, pkt = p, p
+				}
 				if direct && tunFD >= 0 {
 					if _, err := unix.Write(tunFD, f); err != nil {
 						tunErr.Add(1)
 					}
 				}
 				if needSink {
-					sink <- append([]byte(nil), f...) // blocking: TCP backpressure
+					if gcm == nil {
+						pkt = append([]byte(nil), f...)
+					}
+					sink <- pkt // blocking: TCP backpressure
 				}
 			}
 		}()
@@ -175,6 +212,6 @@ func main() {
 		}
 		cancel()
 	}
-	log.Printf("total frames=%d bytes=%d tun_err=%d kafka_ok=%d kafka_err=%d",
-		frames.Load(), bytes.Load(), tunErr.Load(), kafkaOK.Load(), kafkaErr.Load())
+	log.Printf("total frames=%d bytes=%d tun_err=%d kafka_ok=%d kafka_err=%d decrypt_err=%d",
+		frames.Load(), bytes.Load(), tunErr.Load(), kafkaOK.Load(), kafkaErr.Load(), decryptErr.Load())
 }
