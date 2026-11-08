@@ -39,6 +39,7 @@ const (
 	flagNoDelay
 	flagLinger // idle timer is acting as the half-close linger deadline
 	flagPooled // allocated by getConn; may be returned to the free list
+	flagHangup // a poll event carried a hangup: read to EOF, even after a short read
 )
 
 // conn is the per-connection state. It implements Transport directly so that

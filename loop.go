@@ -607,6 +607,11 @@ func (l *Loop) dispatch(c *conn, flags uint32) {
 	// an error (reset), which closes with the right ConnectionLost error and
 	// never discards data still queued in the socket. While reading is paused
 	// the hangup is discovered when the protocol resumes.
+	if flags&poll.Hangup != 0 {
+		// Edge-triggered polling reports the hangup once; remember it so a read
+		// re-armed after the per-event cap or after a pause still reads to EOF.
+		c.flags |= flagHangup
+	}
 	if flags&(poll.Readable|poll.Hangup) != 0 && c.flags&flagReadPaused == 0 {
 		l.handleRead(c, flags&poll.Hangup != 0)
 		if c.flags&flagClosed != 0 {
@@ -632,6 +637,7 @@ func (l *Loop) dispatch(c *conn, flags uint32) {
 // FIN behind the data must be read in the same pass because edge-triggered
 // polling will not report it again.
 func (l *Loop) handleRead(c *conn, hangup bool) {
+	hangup = hangup || c.flags&flagHangup != 0
 	buf := l.rdbuf
 	fd := int(c.fd)
 	maxReads := l.cfg.maxReadsPerEv

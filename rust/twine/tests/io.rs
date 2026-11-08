@@ -534,3 +534,62 @@ fn run_twice_is_an_error_and_wait_returns() {
     srv.stop();
     w.join().unwrap();
 }
+
+// --- hangup must survive the per-event read cap -----------------------------------
+
+#[derive(Default)]
+struct HangupState {
+    lost: AtomicUsize,
+    got: AtomicUsize,
+    stalled: AtomicUsize,
+}
+
+struct StallOnce(Arc<HangupState>);
+
+impl Protocol for StallOnce {
+    fn data_received(&mut self, _t: &mut Transport<'_>, data: &mut [u8]) {
+        // Stall the loop once so the rest of the data and the FIN are queued in
+        // the socket before the next event.
+        if self.0.stalled.fetch_add(1, SeqCst) == 0 {
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        self.0.got.fetch_add(data.len(), SeqCst);
+    }
+    fn connection_lost(&mut self, _t: &mut Transport<'_>, _reason: Option<Error>) {
+        self.0.lost.fetch_add(1, SeqCst);
+    }
+}
+
+/// A hangup is reported once by edge-triggered polling. When the event that
+/// carries it also carries more data than the per-event read cap allows, the
+/// re-armed read next iteration must keep reading to EOF instead of stopping at
+/// the final short read, which would leave the conn open until shutdown.
+#[test]
+fn hangup_survives_read_cap() {
+    let st = Arc::new(HangupState::default());
+    let s2 = st.clone();
+    let opts = Options::default()
+        .loops(1)
+        .read_buffer_size(4096)
+        .max_reads_per_event(2)
+        .watchdog(None)
+        .shutdown_timeout(Duration::from_millis(500));
+    let mut srv = Server::start_with(
+        opts,
+        ListenOptions::default(),
+        factory(move |_, _| Box::new(StallOnce(s2.clone()))),
+    );
+    let mut c = srv.connect();
+    let total = 100 * 1024 + 100; // ends on a short read
+    c.write_all(&[1u8; 4096]).unwrap();
+    std::thread::sleep(Duration::from_millis(50)); // loop is inside the stalled callback
+    c.write_all(&vec![1u8; total - 4096]).unwrap();
+    drop(c);
+    assert!(
+        wait_until(Duration::from_secs(3), || st.lost.load(SeqCst) == 1),
+        "connection_lost not delivered: got {} of {total} bytes",
+        st.got.load(SeqCst)
+    );
+    assert_eq!(st.got.load(SeqCst), total);
+    srv.stop();
+}

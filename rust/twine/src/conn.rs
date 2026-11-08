@@ -54,6 +54,9 @@ pub(crate) mod flags {
     pub const PRODUCER_OUT: u32 = 1 << 14;
     /// A listener accept retry (after EMFILE and friends) is scheduled.
     pub const ACCEPT_RETRY: u32 = 1 << 15;
+    /// A poll event carried a hangup; reads must continue to EOF even after a
+    /// short read, across the per-event cap and across a pause.
+    pub const HANGUP: u32 = 1 << 16;
 }
 
 use flags::*;
@@ -1037,6 +1040,18 @@ impl LoopThread {
     pub(crate) fn handle_read(&mut self, id: ConnId, hangup: bool) {
         let max_reads = self.lp.rt.opts.max_reads_per_event;
         let buf_len = self.rdbuf.len();
+        // A hangup seen once sticks to the conn: edge-triggered polling will not
+        // report it again, so a read re-armed after the per-event cap or after a
+        // pause must still read to EOF instead of stopping at a short read.
+        let hangup = match self.lp.io_mut(id) {
+            Some(io) => {
+                if hangup {
+                    io.flags |= HANGUP;
+                }
+                io.flags & HANGUP != 0
+            }
+            None => return,
+        };
         let mut i = 0;
         while i < max_reads {
             let Some(io) = self.lp.io(id) else { return };
