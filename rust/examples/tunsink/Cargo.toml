@@ -19,6 +19,7 @@ twine-proto = { path = "../../twine-proto" }
 libc = "0.2"
 log = "0.4"
 crossbeam-channel = "0.5"
+ring = "0.17"
 rdkafka = { version = "0.38", default-features = false, features = ["cmake-build", "libz-static"] }
 rdkafka-sys = { version = "=4.9.0", default-features = false }
 

@@ -6,7 +6,13 @@
 //! write the TUN and produce to Kafka; `direct` writes the TUN on the loop from
 //! the shared read buffer (no copy) and only Kafka goes through the sinks.
 //! Kafka is disabled when `-brokers` is empty.
+//!
+//! With `-aes` every frame body is `nonce(12) || ciphertext || tag(16)`
+//! (AES-256-GCM) and is decrypted on the loop before the TUN write and the
+//! sink; the TUN and Kafka receive the plaintext. Frames that fail to decrypt
+//! are counted in `decrypt_err` and skipped.
 
+mod aes;
 mod args;
 mod kafka;
 mod tun;
@@ -20,6 +26,7 @@ use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender, 
 use twine::{ConnId, Engine, Error, ListenOptions, LoopHandle, Transport};
 use twine_proto::lengthprefix::{FrameFormat, FrameHandler, LengthPrefixed};
 
+use aes::Aes;
 use kafka::Kafka;
 
 const MAX_PACKET: usize = 65535;
@@ -33,6 +40,7 @@ pub struct Stats {
     pub kafka_ok: AtomicU64,
     pub kafka_err: AtomicU64,
     pauses: AtomicU64,
+    decrypt_err: AtomicU64,
     /// Guards the single "first produce error" log line.
     pub first_err: std::sync::Once,
 }
@@ -82,17 +90,42 @@ struct Client {
     paused: Arc<AtomicBool>,
     /// Shared with the drainer under the mutex.
     pending: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// Set with `-aes`: every frame is decrypted before the TUN and the sink.
+    aes: Option<Arc<Aes>>,
+    /// Reused decrypt output when nothing needs an owned copy (direct mode,
+    /// Kafka off).
+    scratch: Vec<u8>,
 }
 
-impl FrameHandler for Client {
-    fn frame_received(&mut self, t: &mut Transport<'_>, f: &[u8]) {
-        self.st.frames.fetch_add(1, Relaxed);
-        self.st.bytes.fetch_add(f.len() as u64, Relaxed);
-        if self.direct && self.st.tun_fd >= 0 && !tun::write(self.st.tun_fd, f) {
-            self.st.tun_err.fetch_add(1, Relaxed);
+impl Client {
+    fn new(
+        st: Arc<Stats>,
+        tx: Option<Sender<Vec<u8>>>,
+        req_tx: Sender<DrainReq>,
+        direct: bool,
+        aes: Option<Arc<Aes>>,
+    ) -> Self {
+        let scratch = if aes.is_some() && tx.is_none() {
+            Vec::with_capacity(MAX_PACKET + aes::OVERHEAD)
+        } else {
+            Vec::new()
+        };
+        Client {
+            st,
+            tx,
+            req_tx,
+            direct,
+            paused: Arc::new(AtomicBool::new(false)),
+            pending: Arc::new(Mutex::new(Vec::new())),
+            aes,
+            scratch,
         }
+    }
+
+    /// Hands an owned packet to the sink, pausing the connection when the
+    /// sink is full.
+    fn enqueue(&mut self, t: &mut Transport<'_>, mut pkt: Vec<u8>) {
         let Some(tx) = &self.tx else { return };
-        let mut pkt = f.to_vec(); // f is only valid during the call
         if !self.paused.load(Relaxed) {
             match tx.try_send(pkt) {
                 Ok(()) => return,
@@ -117,6 +150,40 @@ impl FrameHandler for Client {
         // Frames still arrive from the chunk already in the read buffer while
         // paused; queue them for the drainer.
         self.pending.lock().unwrap().push(pkt);
+    }
+}
+
+impl FrameHandler for Client {
+    fn frame_received(&mut self, t: &mut Transport<'_>, f: &[u8]) {
+        self.st.frames.fetch_add(1, Relaxed);
+        self.st.bytes.fetch_add(f.len() as u64, Relaxed);
+        let Some(aes) = &self.aes else {
+            if self.direct && self.st.tun_fd >= 0 && !tun::write(self.st.tun_fd, f) {
+                self.st.tun_err.fetch_add(1, Relaxed);
+            }
+            if self.tx.is_some() {
+                self.enqueue(t, f.to_vec()); // f is only valid during the call
+            }
+            return;
+        };
+        // Decrypt into the destination: the owned packet for the sink (this
+        // replaces the plain copy) or the reusable scratch buffer.
+        let mut pkt = Vec::new();
+        let dst = if self.tx.is_some() {
+            &mut pkt
+        } else {
+            &mut self.scratch
+        };
+        if !aes.open_into(f, dst) {
+            self.st.decrypt_err.fetch_add(1, Relaxed);
+            return;
+        }
+        if self.direct && self.st.tun_fd >= 0 && !tun::write(self.st.tun_fd, dst) {
+            self.st.tun_err.fetch_add(1, Relaxed);
+        }
+        if self.tx.is_some() {
+            self.enqueue(t, pkt);
+        }
     }
 
     fn connection_lost(&mut self, _t: &mut Transport<'_>, reason: Option<Error>) {
@@ -238,6 +305,7 @@ fn main() {
         kafka_ok: AtomicU64::new(0),
         kafka_err: AtomicU64::new(0),
         pauses: AtomicU64::new(0),
+        decrypt_err: AtomicU64::new(0),
         first_err: std::sync::Once::new(),
     });
 
@@ -316,7 +384,9 @@ fn main() {
         }
     };
 
-    let fmt = FrameFormat::new().with_max_frame(MAX_PACKET);
+    let cipher = cfg.aes.then(|| Arc::new(Aes::new(&cfg.key)));
+    let fmt =
+        FrameFormat::new().with_max_frame(MAX_PACKET + if cfg.aes { aes::OVERHEAD } else { 0 });
     let addr = if cfg.addr.starts_with(':') {
         format!("0.0.0.0{}", cfg.addr)
     } else {
@@ -327,14 +397,13 @@ fn main() {
         addr.as_str(),
         twine::factory(move |_, _| {
             Box::new(LengthPrefixed::with_format(
-                Client {
-                    st: fst.clone(),
-                    tx: need_sink.then(|| ftx.clone()),
-                    req_tx: freq.clone(),
+                Client::new(
+                    fst.clone(),
+                    need_sink.then(|| ftx.clone()),
+                    freq.clone(),
                     direct,
-                    paused: Arc::new(AtomicBool::new(false)),
-                    pending: Arc::new(Mutex::new(Vec::new())),
-                },
+                    cipher.clone(),
+                ),
                 fmt,
             ))
         }),
@@ -347,12 +416,13 @@ fn main() {
         }
     };
     log::info!(
-        "tunsink: tcp{} -> tun={:?} kafka={:?} mode={} loops={}",
+        "tunsink: tcp{} -> tun={:?} kafka={:?} mode={} loops={} aes={}",
         ln.addr(),
         cfg.tun,
         cfg.brokers,
         if direct { "direct" } else { "channel" },
-        cfg.loops
+        cfg.loops,
+        cfg.aes
     );
 
     let h = eng.handle();
@@ -382,13 +452,14 @@ fn main() {
                 );
                 let dt = now.duration_since(last).as_secs_f64();
                 eprintln!(
-                    "stats frames/s={:.0} MB/s={:.1} kafka/s={:.0} pauses={} tun_err={} kafka_err={}",
+                    "stats frames/s={:.0} MB/s={:.1} kafka/s={:.0} pauses={} tun_err={} kafka_err={} decrypt_err={}",
                     (f - lf) as f64 / dt,
                     (b - lb) as f64 / dt / 1e6,
                     (k - lk) as f64 / dt,
                     st.pauses.load(Relaxed),
                     st.tun_err.load(Relaxed),
-                    st.kafka_err.load(Relaxed)
+                    st.kafka_err.load(Relaxed),
+                    st.decrypt_err.load(Relaxed)
                 );
                 (lf, lb, lk, last) = (f, b, k, now);
             }
@@ -424,13 +495,14 @@ fn main() {
         tun::close(tun_fd);
     }
     log::info!(
-        "total frames={} bytes={} tun_err={} kafka_ok={} kafka_err={} pauses={}",
+        "total frames={} bytes={} tun_err={} kafka_ok={} kafka_err={} pauses={} decrypt_err={}",
         st.frames.load(Relaxed),
         st.bytes.load(Relaxed),
         st.tun_err.load(Relaxed),
         st.kafka_ok.load(Relaxed),
         st.kafka_err.load(Relaxed),
-        st.pauses.load(Relaxed)
+        st.pauses.load(Relaxed),
+        st.decrypt_err.load(Relaxed)
     );
 }
 
@@ -477,22 +549,36 @@ mod tests {
     /// Engine + drainer wired as in `main` (channel mode, no TUN), sinking
     /// into `tx`.
     fn rig(tx: Sender<Vec<u8>>) -> Rig {
+        rig_with(Some(tx), false, -1, None)
+    }
+
+    /// Engine + drainer wired as in `main`. `tx` None is direct mode with
+    /// Kafka off (the drainer then gets a channel nothing uses).
+    fn rig_with(
+        tx: Option<Sender<Vec<u8>>>,
+        direct: bool,
+        tun_fd: i32,
+        cipher: Option<Arc<Aes>>,
+    ) -> Rig {
         let st = Arc::new(Stats {
-            tun_fd: -1,
+            tun_fd,
             frames: AtomicU64::new(0),
             bytes: AtomicU64::new(0),
             tun_err: AtomicU64::new(0),
             kafka_ok: AtomicU64::new(0),
             kafka_err: AtomicU64::new(0),
             pauses: AtomicU64::new(0),
+            decrypt_err: AtomicU64::new(0),
             first_err: std::sync::Once::new(),
         });
         let (req_tx, req_rx) = unbounded::<DrainReq>();
         let done = Arc::new(AtomicBool::new(false));
         let drainer = {
-            let (rtx, tx, done) = (req_tx.clone(), tx.clone(), done.clone());
-            std::thread::spawn(move || drainer(req_rx, rtx, tx, done))
+            let dtx = tx.clone().unwrap_or_else(|| bounded(1).0);
+            let (rtx, done) = (req_tx.clone(), done.clone());
+            std::thread::spawn(move || drainer(req_rx, rtx, dtx, done))
         };
+        let max = MAX_PACKET + if cipher.is_some() { aes::OVERHEAD } else { 0 };
         let eng = Arc::new(Engine::builder().loops(1).watchdog(None).build().unwrap());
         let paused = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::new(Mutex::new(None));
@@ -501,21 +587,20 @@ mod tests {
             .listen_tcp(
                 "127.0.0.1:0",
                 twine::factory(move |_, _| {
-                    let p = Arc::new(AtomicBool::new(false));
-                    fpaused.lock().unwrap().push(p.clone());
+                    let c = Client::new(
+                        fst.clone(),
+                        tx.clone(),
+                        req_tx.clone(),
+                        direct,
+                        cipher.clone(),
+                    );
+                    fpaused.lock().unwrap().push(c.paused.clone());
                     Box::new(LengthPrefixed::with_format(
                         Spy {
-                            inner: Client {
-                                st: fst.clone(),
-                                tx: Some(tx.clone()),
-                                req_tx: req_tx.clone(),
-                                direct: false,
-                                paused: p,
-                                pending: Arc::new(Mutex::new(Vec::new())),
-                            },
+                            inner: c,
                             seen: fseen.clone(),
                         },
-                        FrameFormat::new().with_max_frame(MAX_PACKET),
+                        FrameFormat::new().with_max_frame(max),
                     ))
                 }),
                 ListenOptions::default(),
@@ -694,5 +779,110 @@ mod tests {
             (0..N).collect::<Vec<_>>(),
             "lost, duplicated or reordered"
         );
+    }
+
+    fn key_a() -> Arc<Aes> {
+        Arc::new(Aes::new(&aes::default_key()))
+    }
+
+    fn key_b() -> Arc<Aes> {
+        Arc::new(Aes::new(&[0xff; 32]))
+    }
+
+    /// `n` frames sealed with `k` whose plaintexts are the sequence numbers
+    /// `from..from+n` (8 bytes each, so each body is 8 + OVERHEAD).
+    fn sealed_frames(k: &Aes, from: u64, n: u64) -> Vec<u8> {
+        let mut b = Vec::new();
+        for i in from..from + n {
+            let mut nonce = [0u8; 12];
+            nonce[..8].copy_from_slice(&i.to_le_bytes());
+            let body = k.seal(nonce, &i.to_be_bytes());
+            assert_eq!(body.len(), 8 + aes::OVERHEAD);
+            b.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            b.extend_from_slice(&body);
+        }
+        b
+    }
+
+    /// Channel mode with AES: the sink receives the plaintext, in order.
+    #[test]
+    fn aes_frames_reach_the_sink_as_plaintext() {
+        let (tx, rx) = unbounded::<Vec<u8>>();
+        let mut r = rig_with(Some(tx), false, -1, Some(key_a()));
+        const N: u64 = 5_000;
+        let mut c = TcpStream::connect(r.addr).unwrap();
+        c.write_all(&sealed_frames(&key_a(), 0, N)).unwrap();
+        let got: Vec<u64> = (0..N)
+            .map(|_| seq(&rx.recv_timeout(Duration::from_secs(10)).unwrap()))
+            .collect();
+        assert_eq!(got, (0..N).collect::<Vec<_>>());
+        assert_eq!(r.st.frames.load(Relaxed), N);
+        assert_eq!(r.st.bytes.load(Relaxed), N * (8 + aes::OVERHEAD as u64));
+        assert_eq!(r.st.decrypt_err.load(Relaxed), 0);
+        drop(c);
+        r.stop_engine();
+        r.join_drainer();
+    }
+
+    /// Wrong-key and short frames are counted and skipped; the connection
+    /// stays open and later good frames still arrive.
+    #[test]
+    fn aes_bad_frames_count_decrypt_err_and_keep_the_connection() {
+        let (tx, rx) = unbounded::<Vec<u8>>();
+        let mut r = rig_with(Some(tx), false, -1, Some(key_a()));
+        let mut c = TcpStream::connect(r.addr).unwrap();
+        c.write_all(&sealed_frames(&key_b(), 0, 10)).unwrap();
+        c.write_all(&frames(0, 3)).unwrap(); // 8-byte bodies: shorter than OVERHEAD
+        assert!(wait_until(Duration::from_secs(5), || r
+            .st
+            .decrypt_err
+            .load(Relaxed)
+            == 13));
+        assert!(rx.is_empty(), "a bad frame reached the sink");
+        assert_eq!(reading_paused(&r.seen), Some(false), "connection closed");
+        // Same stream: a frame sealed with the right key still gets through.
+        c.write_all(&sealed_frames(&key_a(), 42, 1)).unwrap();
+        let p = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(seq(&p), 42);
+        assert_eq!(r.st.frames.load(Relaxed), 14);
+        assert_eq!(r.st.decrypt_err.load(Relaxed), 13);
+        drop(c);
+        r.stop_engine();
+        r.join_drainer();
+    }
+
+    /// Direct mode, Kafka off: the loop decrypts into the scratch buffer and
+    /// writes the plaintext to the "TUN" (a datagram socket standing in for
+    /// it, so packet boundaries are kept).
+    #[test]
+    fn aes_direct_mode_writes_plaintext_to_the_tun() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixDatagram;
+        let (tun_w, tun_r) = UnixDatagram::pair().unwrap();
+        tun_r
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut r = rig_with(None, true, tun_w.as_raw_fd(), Some(key_a()));
+        const N: u64 = 200;
+        let reader = std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            (0..N)
+                .map(|_| {
+                    let n = tun_r.recv(&mut buf).unwrap();
+                    seq(&buf[..n])
+                })
+                .collect::<Vec<u64>>()
+        });
+        let mut c = TcpStream::connect(r.addr).unwrap();
+        let mut wire = sealed_frames(&key_b(), 0, 1); // skipped
+        wire.extend_from_slice(&sealed_frames(&key_a(), 0, N));
+        c.write_all(&wire).unwrap();
+        assert_eq!(reader.join().unwrap(), (0..N).collect::<Vec<_>>());
+        assert_eq!(r.st.decrypt_err.load(Relaxed), 1);
+        assert_eq!(r.st.tun_err.load(Relaxed), 0);
+        drop(c);
+        r.stop_engine();
+        r.join_drainer();
+        drop(tun_w);
     }
 }

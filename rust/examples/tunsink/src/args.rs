@@ -15,11 +15,13 @@ pub struct Config {
     pub watchdog: Duration,
     pub stats: Duration,
     pub spin: i64,
+    pub aes: bool,
+    pub key: [u8; 32],
 }
 
 const USAGE: &str = "usage: tunsink-rs [-tun tun0] [-addr :9000] [-brokers host:port,..] \
 [-topic tun-packets] [-kafka-drop] [-loops 1] [-pin 2,4] [-mode channel|direct] \
-[-sinks 1] [-watchdog 10ms] [-stats 1s] [-spin N]";
+[-sinks 1] [-watchdog 10ms] [-stats 1s] [-spin N] [-aes] [-key HEX]";
 
 fn die(msg: &str) -> ! {
     eprintln!("{msg}\n{USAGE}");
@@ -80,7 +82,11 @@ pub fn parse() -> Config {
         watchdog: Duration::from_millis(10),
         stats: Duration::from_secs(1),
         spin: -1,
+        aes: false,
+        key: crate::aes::default_key(),
     };
+    // Like the Go server, the key is only validated when -aes is on.
+    let mut key_hex: Option<String> = None;
     let mut it = std::env::args().skip(1).peekable();
     while let Some(a) = it.next() {
         if a == "-h" || a == "--help" || a == "-help" {
@@ -94,13 +100,18 @@ pub fn parse() -> Config {
             Some((k, v)) => (k, Some(v.to_string())),
             None => (rest, None),
         };
-        if name == "kafka-drop" {
-            c.kafka_drop = match inline.as_deref() {
+        if name == "kafka-drop" || name == "aes" {
+            let v = match inline.as_deref() {
                 // strconv.ParseBool, as Go's flag package accepts.
                 None | Some("1" | "t" | "T" | "true" | "TRUE" | "True") => true,
                 Some("0" | "f" | "F" | "false" | "FALSE" | "False") => false,
-                Some(v) => die(&format!("bad -kafka-drop value {v:?}")),
+                Some(v) => die(&format!("bad -{name} value {v:?}")),
             };
+            if name == "aes" {
+                c.aes = v;
+            } else {
+                c.kafka_drop = v;
+            }
             continue;
         }
         let val = match inline {
@@ -144,6 +155,7 @@ pub fn parse() -> Config {
             "sinks" => c.sinks = num(&val).max(1),
             "watchdog" => c.watchdog = dur(&val),
             "stats" => c.stats = dur(&val),
+            "key" => key_hex = Some(val),
             "spin" => {
                 c.spin = val
                     .parse()
@@ -151,6 +163,9 @@ pub fn parse() -> Config {
             }
             _ => die(&format!("unknown flag -{name}")),
         }
+    }
+    if let (true, Some(h)) = (c.aes, key_hex) {
+        c.key = crate::aes::parse_key(&h).unwrap_or_else(|e| die(&format!("bad -key value: {e}")));
     }
     c
 }
