@@ -276,6 +276,14 @@ impl<'a> Transport<'a> {
             .is_some_and(|io| io.flags & flags::CLOSED == 0)
     }
 
+    /// True while reading is paused ([`pause_reading`](Self::pause_reading))
+    /// or after the peer's FIN was seen; false for a closed connection.
+    pub fn is_reading_paused(&self) -> bool {
+        self.lp
+            .io(self.id)
+            .is_some_and(|io| io.flags & (flags::CLOSED | flags::READ_PAUSED) == flags::READ_PAUSED)
+    }
+
     /// True once `lose_connection` was called, the peer closed, or the
     /// connection is closed.
     pub fn is_closing(&self) -> bool {

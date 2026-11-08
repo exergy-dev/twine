@@ -108,3 +108,18 @@ Size: ~35K lines of Rust (including tests); `cargo test --workspace` runs 398 te
 - HTTP ≥ 5× baseline: 1.18× the tokio baseline unpipelined, 0.89× pipelined at c=256.
   Against the design's original baseline class (`net/http` at ≤ 190K req/s per core)
   the ratio would be about 5×–14×; against Go twine it is 1.08×–1.18×.
+
+## Fixes after the Section 13 close-out
+
+- 2026-11-07, found by the `examples/tunsink` Go-vs-Rust comparison (Rust server
+  in `rust/examples/tunsink`, outside the workspace because it builds
+  librdkafka): a hangup reported in an event whose reads hit `max_reads_per_event`
+  was lost when the conn was re-queued, so the final short read returned
+  without seeing EOF and the connection stayed open until the shutdown timeout.
+  `flags::HANGUP` now sticks to the conn (`tests/io.rs::hangup_survives_read_cap`).
+  `Transport::is_reading_paused()` was added for the example's tests. Same bug
+  and fix in the Go library.
+- The comparison itself: Rust twine 1.11×–1.45× Go twine on TUN-only cells,
+  parity ±10% with Kafka on one core, 0.61× with Kafka on four cores (librdkafka's
+  single compression thread per client; not a twine difference). Details and the
+  harness in `examples/tunsink/README.md`.

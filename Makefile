@@ -25,9 +25,13 @@ vet:
 	$(GO) vet -tags twine_debug $(PKGS)
 	$(GO) vet -tags twine_uring . ./internal/...
 
-# examples/tunsink is its own module (it depends on franz-go); vet and build it.
+# examples/tunsink is its own module (it depends on franz-go); vet and build it,
+# plus the Rust twin (rust/examples/tunsink) when cmake is available.
 tunsink:
 	cd examples/tunsink && $(GO) vet ./... && $(GO) build -o /dev/null . && $(GO) build ./cmd/...
+	@if PATH="$$HOME/.local/bin:$$PATH" command -v cmake >/dev/null 2>&1; then \
+		PATH="$$HOME/.local/bin:$$PATH" cargo build --release --manifest-path rust/examples/tunsink/Cargo.toml; \
+	else echo "tunsink: cmake not found, skipping Rust crate build"; fi
 
 # Cross-compile the kqueue and BSD code paths; they cannot run on Linux CI
 # but they must build.

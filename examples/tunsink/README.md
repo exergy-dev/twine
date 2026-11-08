@@ -1,22 +1,24 @@
-# tunsink: TCP → TUN + Kafka
+# tunsink: TCP → TUN + Kafka, Go vs Rust
 
 A twine server that accepts TCP clients and writes every length-prefixed
-frame they send into a TUN device and onto a Kafka topic, with a
-goroutine-per-connection baseline and a benchmark harness that compares the
-two at equal CPU budgets.
+frame they send into a TUN device and onto a Kafka topic. This directory
+holds the Go server and a benchmark harness that compares it with the Rust
+twine server (same design, same flags, same output) on the identical pipeline,
+with a goroutine-per-connection baseline as a reference row.
 
-This is a separate Go module (it depends on
+The Go side is a separate module (it depends on
 [franz-go](https://github.com/twmb/franz-go)); build it from this directory.
 
 ```
 .
-├── main.go              twine server (the example itself)
+├── main.go              Go twine server (the example itself)
 ├── internal/tunpkt      TUN open helper and an IPv4/UDP packet builder
 ├── cmd/baseline         same server written with net.Conn + one goroutine per connection
 ├── cmd/loadgen          N connections streaming frames as fast as the server accepts
 ├── cmd/fakekafka        in-process kfake broker so the benchmark needs no Kafka install
 ├── bench.sh             the benchmark matrix (runs in an unprivileged netns)
-└── results/wsl2.txt     raw results from the host described below
+├── results/             raw benchmark output (quick-go-vs-rust.txt from the host described below)
+└── ../../rust/examples/tunsink  Rust twine server (tunsink-rs), same flags and output
 ```
 
 ## Wire format and data flow
@@ -63,105 +65,149 @@ reaches the senders. `-kafka-drop` switches to `TryProduce`, which drops
 instead. Records are produced with a background context and flushed before
 exit so shutdown does not fail what is still buffered.
 
+### The Rust server
+
+`tunsink-rs` implements the same design with three structural differences.
+Kafka goes through a librdkafka `ThreadedProducer`, and a sink that gets
+`QueueFull` retries instead of blocking in franz-go's `Produce`. The drain
+hand-off runs on the engine's worker pool instead of a goroutine per drain.
+Its sink threads and the librdkafka threads are plain OS threads. Everything
+else is the same: `direct` and `channel` modes, the 4096-frame sink channel,
+one copy per frame, and the pause/drain/resume sequence on the loop thread.
+
 ## Running it
 
 ```sh
 sudo ip tuntap add dev tun0 mode tun user $USER
 sudo ip addr add 10.0.0.1/24 dev tun0 && sudo ip link set tun0 up
+
+# Go server
 go run . -tun tun0 -addr :9000 -brokers localhost:9092 -topic tun-packets -mode direct -loops 2
+
+# Rust server (needs cmake on PATH for librdkafka)
+cargo build --release --manifest-path ../../rust/examples/tunsink/Cargo.toml
+../../rust/examples/tunsink/target/release/tunsink-rs -tun tun0 -addr :9000 -brokers localhost:9092 -topic tun-packets -mode direct -loops 2
+
 go run ./cmd/loadgen -addr 127.0.0.1:9000 -conns 64 -size 512 -duration 10s
 ```
 
-Without root, run inside an unprivileged user+network namespace
+Both servers take the same flags (`-addr -brokers -mode -loops -pin -sinks
+-stats -watchdog -topic -tun -kafka-drop -spin`) and print the same
+`total frames=... bytes=... tun_err=... kafka_ok=... kafka_err=... pauses=...`
+line on exit. `-spin N` (default -1, the library default) sets the loop's busy-poll iterations before it blocks. Without root, run inside an unprivileged user+network namespace
 (`unshare -rn`), which is what `bench.sh` does. `-brokers ""` disables Kafka.
 
 ## Benchmark
 
-`./bench.sh matrix results/wsl2.txt` builds everything, enters `unshare -rn`,
+`./bench.sh matrix results/matrix.txt` (or `./bench.sh quick results/quick.txt` for the ~3-minute Go-vs-Rust subset) builds everything, enters `unshare -rn`,
 creates `tun0`, and runs each cell: one server process pinned to a CPU set, a
 fresh `fakekafka` on its own CPUs (kfake keeps every record in memory, so it
 is restarted per cell), and `loadgen` on the remaining CPUs streaming
-512-byte packets for 8 s. Throughput is the load generator's sent frames/s;
-every frame is confirmed to have reached the TUN (interface RX counter) and
-Kafka (`kafka_ok` equals frames). `cpu_s` is the server's CPU time over the
-run.
+512-byte packets for 8 s (`DURATION` overrides). Throughput is the load
+generator's sent frames/s; every frame is confirmed to have reached the TUN
+(interface RX counter) and Kafka (`kafka_ok` equals frames). `cpu_s` is the
+server's CPU time over the run. Each cell prints `sunk/s`, the TUN RX delta divided by the load generator's
+elapsed time, and `check=ok|FAIL`, which requires sent and TUN RX to differ by
+at most `conns*128` (the loadgen counts only whole 64-frame batches, so each
+connection's last partial batch can land on either side), and with Kafka on `kafka_ok` to equal the server's frame count. The
+loadgen's `frames/s` is only the sent rate, and frames parked in kernel socket
+buffers count as sent but never reached the sinks, so `compare` uses `sunk/s`.
+Both servers run with `-spin 0` because their loops auto-select busy-poll
+iterations from different CPU counts (GOMAXPROCS for Go, taskset size for
+Rust), which would make them spin differently at 1core. A server that crashes in a cell prints
+`frames/s=-` and the matrix continues.
+
+Three server names: `go` (the Go twine server; `twine` is accepted as an
+alias), `rust` (the Rust twine server) and `baseline` (goroutine per
+connection). A single cell is `./bench.sh cell SERVER MODE KAFKA CORES CONNS SIZE`.
+
+- **Rust build.** `bench.sh` builds `tunsink-rs` with cargo (into the crate's
+  own `target/release`) before entering the namespace, which needs `cmake` on
+  PATH (the script prepends `$HOME/.local/bin`). `RUST_BIN=/path/to/tunsink-rs`
+  uses a prebuilt binary instead of building. `SKIP_RUST=1` skips the build
+  and every `rust` cell.
+- **Compare.** `./bench.sh compare results/quick-go-vs-rust.txt` prints, per
+  (mode, kafka, cores, conns, size) cell, Go and Rust `sunk/s` (`frames/s` for older files), Rust/Go as a
+  percentage, the baseline's figure, and a `chk` column naming servers whose `check` failed. Missing rows show `-`; old `twine`
+  rows count as `go`.
 
 CPU budgets (one thread per physical core, siblings left idle):
 
-| config | CPUs | twine | baseline |
+| config | CPUs | go | rust | baseline |
+| --- | --- | --- | --- | --- |
+| 1core / 2core / 4core | N | N loops pinned, N sink goroutines, GOMAXPROCS=N+1 | N loops pinned (`-pin`); sink threads and librdkafka threads float in the set | GOMAXPROCS=N |
+| 1+1 / 2+2 | 2N | N loops pinned to half, sinks and Kafka client on the rest | N loops pinned to half; sink and librdkafka threads float in the set | GOMAXPROCS=2N |
+
+The Go server runs with GOMAXPROCS=N+1 because its loops are locked OS
+threads: with GOMAXPROCS=N the sink and Kafka goroutines starve behind a
+saturated loop. The Rust server has no GOMAXPROCS equivalent.
+
+## Results
+
+Quick comparison (`./bench.sh quick results/quick-go-vs-rust.txt`, 2 min 14 s):
+Go twine vs Rust twine only, 4 s cells, one run each, 512-byte packets. Host:
+i9-14900KF, WSL2 kernel 6.18, Go 1.25.3 + franz-go 1.22.2, Rust 1.95 +
+librdkafka 2.10.0 (rdkafka 0.38), kfake broker on 3 dedicated CPUs. All 20
+cells pass `check` (every frame reached the TUN and, with Kafka on, Kafka). Raw
+rows in [results/quick-go-vs-rust.txt](results/quick-go-vs-rust.txt). Numbers
+are `sunk/s`, million frames per second written to the TUN during the load
+generator's run:
+
+| cell | Go | Rust | Rust / Go |
 | --- | --- | --- | --- |
-| 1core / 2core / 4core | N | N loops pinned, N sink goroutines, GOMAXPROCS=N+1 | GOMAXPROCS=N |
-| 1+1 / 2+2 | 2N | N loops pinned to half, sinks and Kafka client on the rest | GOMAXPROCS=2N |
-
-twine runs with GOMAXPROCS=N+1 because its loops are locked OS threads: with
-GOMAXPROCS=N the sink and Kafka goroutines starve behind a saturated loop
-(1core, channel, Kafka: 0.74M frames/s at GOMAXPROCS=1 or 32, 0.97M at 2).
-
-### Results
-
-Host: i9-14900KF (16 physical cores), WSL2 kernel 6.18, Go 1.25.3,
-franz-go 1.21.1 (default snappy compression), kfake broker on 3 dedicated
-CPUs. 512-byte packets, 8 s per cell, one run each. All 84 cells: frames
-sent = TUN RX packets = Kafka records acknowledged, zero errors. Raw output
-in [results/wsl2.txt](results/wsl2.txt).
-
-Million frames/s, twine vs baseline, `direct` mode:
-
-| budget | TUN only, 64 conns | TUN only, 1000 conns | TUN + Kafka, 64 conns | TUN + Kafka, 1000 conns |
-| --- | --- | --- | --- | --- |
-| 1 core | 1.94 vs 2.05 (−5%) | 2.24 vs 2.38 (−6%) | 0.98 vs 1.09 (−10%) | 1.24 vs 1.33 (−6%) |
-| 2 cores | 3.26 vs 3.28 (−1%) | 3.51 vs 3.63 (−3%) | 1.52 vs 1.69 (−10%) | 1.93 vs 1.94 (−1%) |
-| 4 cores | 5.67 vs 5.74 (−1%) | 5.93 vs 5.97 (−1%) | 2.13 vs 2.47 (−14%) | 2.27 vs 1.91 (+19%) |
-
-`channel` mode (TUN write also goes through the sink goroutines):
-
-| budget | TUN only, 64 | TUN only, 1000 | TUN + Kafka, 64 | TUN + Kafka, 1000 |
-| --- | --- | --- | --- | --- |
-| 1 core | 1.39 vs 1.80 (−23%) | 1.56 vs 2.08 (−25%) | 0.97 vs 1.11 (−13%) | 1.14 vs 1.30 (−12%) |
-| 2 cores | 1.94 vs 2.30 (−16%) | 2.11 vs 2.47 (−15%) | 1.28 vs 1.50 (−15%) | 1.42 vs 1.57 (−10%) |
-| 4 cores | 2.39 vs 2.75 (−13%) | 2.59 vs 2.99 (−14%) | 1.39 vs 1.47 (−5%) | 1.55 vs 1.62 (−5%) |
-
-1400-byte packets, 1 core, 64 conns, direct: TUN only 1.61 vs 1.81 M/s
-(2.3 vs 2.5 GB/s); TUN + Kafka 0.68 vs 0.75 M/s.
-
-Split budgets (`1+1`, `2+2`) are not like-for-like in direct mode: twine's
-single loop uses one CPU and leaves the other to the sinks, the baseline
-reads on both. Per CPU-second twine is ahead there (1+1 TUN only: 1.91M vs
-1.69M frames/cpu_s) but in absolute terms behind (1.92 vs 3.36 M/s).
+| direct, TUN only, 1 core, 64 conns | 1.91 | 2.29 | 1.20× |
+| channel, TUN only, 1 core, 64 conns | 1.35 | 1.95 | 1.45× |
+| direct, TUN only, 1 core, 1000 conns | 1.62 | 2.19 | 1.35× |
+| channel, TUN only, 1 core, 1000 conns | 1.19 | 1.71 | 1.43× |
+| direct, TUN only, 4 cores, 1000 conns | 5.44 | 6.06 | 1.11× |
+| direct, TUN + Kafka, 1 core, 64 conns | 0.90 | 0.93 | 1.03× |
+| channel, TUN + Kafka, 1 core, 64 conns | 0.85 | 0.94 | 1.10× |
+| direct, TUN + Kafka, 1 core, 1000 conns | 0.90 | 0.86 | 0.96× |
+| channel, TUN + Kafka, 1 core, 1000 conns | 0.79 | 0.87 | 1.11× |
+| direct, TUN + Kafka, 4 cores, 1000 conns | 1.91 | 1.17 | 0.61× |
 
 ### Reading the numbers
 
-- **This workload is sink-bound, not socket-bound.** Each frame costs one
-  TUN `write(2)` (about 0.45 µs on this host: 2.0M frames/s per core in
-  direct mode for either server) and, with Kafka, a `Produce` call plus
-  snappy compression and the broker round trip. The TCP read side, where
-  twine's advantages live, is a 64 KiB `read(2)` per 100+ frames for both
-  servers. There is nothing for the event loop to save.
-- **Direct mode: parity.** twine is within 1–6% of goroutine-per-connection
-  at every budget with TUN only, and within 1–14% with Kafka on 1–2 cores
-  (both bound by franz-go sharing the CPUs with the readers). At 4 cores
-  with 1000 connections twine is 19% ahead; at 64 connections 14% behind.
-  Those two cells are the noisiest in the matrix (Kafka client scheduling
-  across 4 CPUs) and should be read as parity.
-- **Channel mode: twine pays for the hand-off.** A blocking channel send
-  from a per-connection goroutine is the cheapest possible backpressure.
-  twine's equivalent is a copy, a non-blocking send, and when the channel is
-  full a `PauseReading`, a drainer goroutine and a `CallFromThread` to
-  resume, with up to 127 frames per read chunk still landing in the pending
-  queue after the pause. Under permanent sink saturation that path runs
-  constantly and costs 13–25%. Batching a whole read chunk into one channel
-  send, or one sink channel per loop, would close most of that gap; neither
-  changes the library.
-- **GOMAXPROCS matters for twine when loops share CPUs with goroutines.**
-  Loops are locked OS threads that never yield while data is flowing, so
-  goroutine work on the same CPUs depends on the kernel scheduler, not Go's.
-  N+1 Ps was 30% better than N or 32 at 1 core with Kafka.
-- **1000 connections beat 64 for both servers** because each wakeup finds
-  more bytes queued and read batches are larger.
+- **TUN only: Rust is ahead everywhere, 11–45%.** In `direct` mode both
+  servers are bound by one TUN `write(2)` per frame; the Rust loop spends less
+  per frame around that syscall (no GC, no goroutine scheduling, a 20% gap at
+  one core that narrows to 11% at four cores where the TUN write dominates).
+  In `channel` mode the gap widens to ~45% because the hand-off is where the
+  runtimes differ most: the Rust server hands frames to its sink thread through
+  a crossbeam bounded channel and drains paused connections with one blocking
+  drainer thread, the Go server through a Go channel with a goroutine per
+  drain; the drainer design was the decisive change (its first version, a
+  spinning worker pool, was 25% *behind* Go at 1000 connections).
+- **TUN + Kafka at one core: parity, within ±10%.** The pipeline is bound by
+  the Kafka client (batching, snappy, broker round trip) sharing the CPU with
+  the loop and the sink. franz-go and librdkafka cost about the same here.
+- **TUN + Kafka at four cores: Rust at 61%, reproducible (three runs:
+  1.33, 1.26, 1.17 M/s vs 1.90, 1.90, 1.91 M/s).** This is a Kafka client
+  difference, not a twine one: librdkafka runs one `rdk:main` thread per
+  client instance that does all batching and compression, so with four loops
+  and four sinks feeding one producer it serialises on that thread (the Rust
+  server also burns more CPU, 15.5 vs 13.4 cpu-s, polling `QueueFull`).
+  franz-go compresses in the producing goroutines. One librdkafka producer per
+  sink thread would parallelise it; left as a follow-up so both servers keep a
+  single client.
+- **`sunk/s`, not the load generator's rate, is the metric.** At 1000
+  connections the generator outruns a one-core server and parks up to ~2.5M
+  frames in socket buffers; those are sunk during shutdown and would inflate a
+  sent-based rate by 30–40%. `check` confirms nothing was lost.
 
-What this benchmark does not measure, and where twine is designed to win:
-memory per connection (twine holds no goroutine or per-connection read
-buffer, the baseline holds a goroutine, a 64 KiB `bufio.Reader` and a 64 KiB
-frame buffer each), tail latency under partial load, and fan-out to many
-clients. For a one-way firehose into syscall-bound sinks, the two designs
-are equivalent and the sink is the thing to optimise.
+Two bugs were found and fixed while building this comparison:
+
+- **twine (Go and Rust): a hangup lost across the per-event read cap.** With
+  edge-triggered polling a FIN is reported once. If the event carrying it also
+  carried more data than `max_reads_per_event` allows, the re-armed read next
+  iteration stopped at the final short read and never saw EOF, so the
+  connection stayed open until the shutdown timeout (5 s per cell). Both
+  libraries now remember the hangup on the connection
+  (`TestHangupSurvivesReadCap`, `hangup_survives_read_cap`).
+- **Go tunsink: `panic: send on closed channel`** at shutdown when a drain
+  goroutine was still pushing its backlog as `close(sink)` ran. Shutdown now
+  waits for live drains.
+
+The full matrix (`./bench.sh matrix`, go/rust/baseline, five CPU budgets,
+~25 min) has not been rerun since the baseline-only results were replaced; run
+it for the complete picture.

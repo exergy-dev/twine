@@ -1419,3 +1419,45 @@ func TestSoakIdleConnections(t *testing.T) {
 		t.Errorf("Accepts = %d, Closes = %d, want both %d", m.Accepts, m.Closes, n)
 	}
 }
+
+// A hangup is reported once by edge-triggered polling. When the event that
+// carries it also carries more data than the per-event read cap allows, the
+// re-armed read next iteration must keep reading to EOF instead of stopping at
+// the final short read, which would leave the conn open until shutdown.
+func TestHangupSurvivesReadCap(t *testing.T) {
+	e := startEngine(t, Loops(1), ReadBufferSize(4096), MaxReadsPerEvent(2), Watchdog(0))
+	var rx atomic.Int64
+	var stalled atomic.Bool
+	lostCh := make(chan error, 1)
+	lst := listen(t, e, hookFactory(func() *hookProto {
+		return &hookProto{
+			data: func(_ *hookProto, b []byte) {
+				// Stall the loop once so the rest of the data and the FIN
+				// are queued in the socket before the next event.
+				if stalled.CompareAndSwap(false, true) {
+					time.Sleep(300 * time.Millisecond)
+				}
+				rx.Add(int64(len(b)))
+			},
+			lost: func(_ *hookProto, err error) { lostCh <- err },
+		}
+	}))
+	c := dialTCP(t, lst.Addr().String())
+	const total = 100*1024 + 100 // ends on a short read
+	if _, err := c.Write(make([]byte, 4096)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // the loop is now inside the stalled callback
+	if _, err := c.Write(make([]byte, total-4096)); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	select {
+	case <-lostCh:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("ConnectionLost not delivered; received %d of %d bytes", rx.Load(), total)
+	}
+	if n := rx.Load(); n != total {
+		t.Errorf("received %d of %d bytes", n, total)
+	}
+}

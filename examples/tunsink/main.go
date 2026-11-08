@@ -58,6 +58,7 @@ func main() {
 	sinks := flag.Int("sinks", 1, "sink goroutines draining frames (TUN write in channel mode, Kafka produce)")
 	watchdog := flag.Duration("watchdog", 10*time.Millisecond, "slow-callback watchdog threshold (0: off)")
 	statsEvery := flag.Duration("stats", time.Second, "stats print interval (0: off)")
+	spin := flag.Int("spin", -1, "loop busy-poll iterations before blocking (-1: library default)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -100,7 +101,8 @@ func main() {
 	// it so blocking work (TUN write in channel mode, the Kafka client) never
 	// runs on a loop.
 	sink := make(chan []byte, 4096)
-	var sinkWG sync.WaitGroup
+	var sinkWG, drainWG sync.WaitGroup
+	var stopped atomic.Bool
 	var errOnce sync.Once
 	promise := func(_ *kgo.Record, err error) {
 		if err != nil {
@@ -148,9 +150,12 @@ func main() {
 		}
 		opts = append(opts, twine.PinLoops(cpus...))
 	}
+	if *spin >= 0 {
+		opts = append(opts, twine.SpinIterations(*spin))
+	}
 	eng := twine.New(opts...)
 	ln, err := eng.ListenTCP(*addr, twine.FactoryFunc(func(peer net.Addr) twine.Protocol {
-		c := &client{st: &st, sink: sink, direct: direct, tunFD: tunFD, needSink: needSink}
+		c := &client{st: &st, sink: sink, direct: direct, tunFD: tunFD, needSink: needSink, drains: &drainWG, stopped: &stopped}
 		c.lp.MaxFrame = maxPacket
 		c.lp.FrameReceived = c.frame
 		c.lp.OnConnectionLost = func(err error) {
@@ -171,6 +176,10 @@ func main() {
 	if err := eng.Run(ctx); err != nil {
 		log.Fatal(err)
 	}
+	// The loops are gone, so no new drains start; let the running ones push
+	// their backlog into the sink before it is closed.
+	stopped.Store(true)
+	drainWG.Wait()
 	close(sink)
 	sinkWG.Wait()
 	if kc != nil {
@@ -199,6 +208,16 @@ type client struct {
 	paused  bool
 	mu      sync.Mutex
 	pending [][]byte
+	// drains counts live drain goroutines so shutdown can wait for them before
+	// closing the sink; stopped is set once the engine has stopped.
+	drains  *sync.WaitGroup
+	stopped *atomic.Bool
+}
+
+// startDrain launches a drain goroutine (loop thread only).
+func (c *client) startDrain() {
+	c.drains.Add(1)
+	go c.drain()
 }
 
 // frame runs on the loop for every complete frame.
@@ -227,7 +246,7 @@ func (c *client) frame(f []byte) {
 		c.paused = true
 		c.st.pauses.Add(1)
 		c.lp.Transport().PauseReading()
-		go c.drain()
+		c.startDrain()
 	}
 	// Frames still arrive from the chunk already in the read buffer while
 	// paused; queue them for the drainer.
@@ -240,18 +259,8 @@ func (c *client) frame(f []byte) {
 // hands control back to the loop, which either resumes reading or, if the
 // trailing chunk added more frames, drains again.
 func (c *client) drain() {
-	for {
-		c.mu.Lock()
-		batch := c.pending
-		c.pending = nil
-		c.mu.Unlock()
-		if len(batch) == 0 {
-			break
-		}
-		for _, p := range batch {
-			c.sink <- p
-		}
-	}
+	defer c.drains.Done()
+	c.pushPending()
 	t := c.lp.Transport()
 	t.Loop().CallFromThread(func() {
 		// On the loop: no concurrent appends are possible here.
@@ -259,12 +268,33 @@ func (c *client) drain() {
 		n := len(c.pending)
 		c.mu.Unlock()
 		if n > 0 {
-			go c.drain()
+			c.startDrain()
 			return
 		}
 		c.paused = false
 		t.ResumeReading()
 	})
+	if c.stopped.Load() {
+		// The loop may have dropped the callback: nothing appends any more, so
+		// flush what the shutdown linger read after the first pass.
+		c.pushPending()
+	}
+}
+
+// pushPending blocks on the sink until pending is empty.
+func (c *client) pushPending() {
+	for {
+		c.mu.Lock()
+		batch := c.pending
+		c.pending = nil
+		c.mu.Unlock()
+		if len(batch) == 0 {
+			return
+		}
+		for _, p := range batch {
+			c.sink <- p
+		}
+	}
 }
 
 func printStats(ctx context.Context, st *stats, every time.Duration) {

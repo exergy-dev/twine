@@ -948,8 +948,15 @@ impl LoopThread {
         // still queued in the socket. While reading is paused the hangup is
         // discovered when the protocol resumes.
         let paused = slot.io.flags & flags::READ_PAUSED != 0;
+        let hangup = ev.flags & twine_poll::HANGUP != 0;
+        if hangup && paused {
+            // Remember the hangup for the read that follows resume_reading.
+            if let Some(io) = self.lp.io_mut(id) {
+                io.flags |= flags::HANGUP;
+            }
+        }
         if ev.flags & (twine_poll::READABLE | twine_poll::HANGUP) != 0 && !paused {
-            self.handle_read(id, ev.flags & twine_poll::HANGUP != 0);
+            self.handle_read(id, hangup);
         }
         if ev.flags & twine_poll::WRITABLE != 0 {
             self.lp.on_writable(id);

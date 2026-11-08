@@ -202,6 +202,7 @@ pub struct Transport<'a>
     pub fn pending_write_filtered(&mut self) -> usize
     pub fn write_blocked(&self) -> bool
     pub fn is_open(&self) -> bool
+    pub fn is_reading_paused(&self) -> bool
     pub fn is_closing(&self) -> bool
     pub fn set_nodelay(&mut self, on: bool) -> Result<()>
     pub fn fd(&self) -> Option<RawFd>
