@@ -129,5 +129,6 @@ Size: ~35K lines of Rust (including tests); `cargo test --workspace` runs 398 te
   direct TUN-only mode (2.31 → 1.91 M frames/s; ring's 70 ns/frame × 2.31 M/s),
   the Go server loses the same 17% (Go GCM 87 ns/frame), so Rust/Go stays
   1.21×; with Kafka at one core the cost is 3–11%. The 4-core Kafka cell is
-  still the librdkafka single-thread limit (0.57× without AES, 0.39× with).
+  still the librdkafka single-thread limit (0.54–0.70× Go, noisy; AES adds
+  nothing measurable there: the table's 0.71 M/s rerun as 1.09 and 1.08).
   Table and method in `examples/tunsink/README.md`.

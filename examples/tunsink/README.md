@@ -215,17 +215,19 @@ crate's `aesbench` bin, 5M iterations, two runs each):
 - **TUN + Kafka at one core: parity, within ±10%.** The pipeline is bound by
   the Kafka client (batching, snappy, broker round trip) sharing the CPU with
   the loop and the sink. franz-go and librdkafka cost about the same here.
-- **TUN + Kafka at four cores: Rust at 57–65%, reproducible (five runs:
-  1.33, 1.26, 1.17, 1.24, 1.10 M/s vs 1.90–1.92 M/s).** This is a Kafka client
+- **TUN + Kafka at four cores: Rust at 54–70%, reproducible but noisy (six
+  runs without AES: 1.33, 1.26, 1.17 M/s in the earlier session, 1.10, 1.03,
+  1.31 on the clean machine, vs 1.90–1.92 M/s for Go).** This is a Kafka client
   difference, not a twine one: librdkafka runs one `rdk:main` thread per
   client instance that does all batching and compression, so with four loops
   and four sinks feeding one producer it serialises on that thread (the Rust
   server also burns more CPU, 15.5 vs 13.4 cpu-s, polling `QueueFull`).
   franz-go compresses in the producing goroutines. One librdkafka producer per
   sink thread would parallelise it; left as a follow-up so both servers keep a
-  single client. With AES on the cell gets worse (0.71–0.93 M/s, 39–51% of
-  Go) and the Rust server uses less CPU (9.5 vs 13 cpu-s), i.e. it is waiting
-  on that one thread more, not computing more.
+  single client. The AES-on value in the table (0.71 M/s, 9.5 cpu-s) is an
+  outlier of this noisy cell, not an AES cost: two reruns gave 1.09 and 1.08
+  M/s at 13.7 cpu-s, inside the AES-off range, as expected when the bottleneck
+  is the Kafka client rather than the loops.
 - **AES-256-GCM costs what the cipher costs: ~17% at one core, TUN only.**
   In `direct` mode at one core both servers lose 17% with AES on, which is the
   standalone figure to the nanosecond: Go decrypts 512 bytes in 87 ns and sinks
