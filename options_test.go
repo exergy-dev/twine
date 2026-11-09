@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // A zero (or negative) size or count option means "default"; before, a zero
@@ -102,16 +100,7 @@ func TestSpinIterationsAuto(t *testing.T) {
 func TestDeferAccept(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	lst := listen(t, e, echoFactory(), DeferAccept(2*time.Second), BusyPoll(time.Microsecond))
-	if runtime.GOOS == "linux" {
-		fd := lst.(*listener).fds[0]
-		v, err := unix.GetsockoptInt(fd, unix.IPPROTO_TCP, unix.TCP_DEFER_ACCEPT)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v <= 0 {
-			t.Errorf("TCP_DEFER_ACCEPT = %d, want > 0", v)
-		}
-	}
+	checkDeferAccept(t, lst.(*listener).fds[0])
 	c := dialTCP(t, lst.Addr().String())
 	echoOnce(t, c, []byte("deferred"))
 }
