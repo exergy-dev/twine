@@ -168,8 +168,13 @@ func TestUDPOversizeDropped(t *testing.T) {
 			t.Fatalf("echo of %q: got %q", msg, buf[:n])
 		}
 	}
-	if sent := e.Loops()[0].Metrics().DatagramsSent; sent != 2 {
-		t.Errorf("DatagramsSent = %d, want 2 (the oversize datagram was not sent)", sent)
+	// The batch flush counts after sendmmsg returns, so the client can see
+	// the last echo before the counter moves. The oversize datagram is
+	// (wrongly) counted, if at all, before the first echo is even queued.
+	sent := func() uint64 { return e.Loops()[0].Metrics().DatagramsSent }
+	waitUntil(5*time.Second, func() bool { return sent() >= 2 })
+	if n := sent(); n != 2 {
+		t.Errorf("DatagramsSent = %d, want 2 (the oversize datagram was not sent)", n)
 	}
 	u.sink.report(t)
 }
