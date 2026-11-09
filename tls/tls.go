@@ -65,7 +65,9 @@ type factory struct {
 func (f *factory) BuildProtocol(peer net.Addr) twine.Protocol {
 	inner := f.inner.BuildProtocol(peer)
 	if inner == nil {
-		inner = nopProtocol{}
+		// Refuse the connection, as the core does for a plain listener: the
+		// loop closes the socket without a handshake.
+		return nil
 	}
 	t := &Transport{f: f, inner: inner, peer: peer}
 	return (*wrapper)(t)
@@ -81,12 +83,6 @@ func newFactory(cfg *ctls.Config, inner twine.Factory, client bool, opts []Optio
 	}
 	return f
 }
-
-type nopProtocol struct{}
-
-func (nopProtocol) ConnectionMade(twine.Transport) {}
-func (nopProtocol) DataReceived([]byte)            {}
-func (nopProtocol) ConnectionLost(error)           {}
 
 // Server wraps inner so that every connection it serves speaks TLS as the
 // server side, using cfg. cfg must be able to serve a handshake: it must set
