@@ -99,7 +99,6 @@ func (l *Loop) completeConnect(c *conn) {
 	fd := int(c.fd)
 	if d.noDelay {
 		_ = sock.SetNoDelay(fd, true)
-		c.flags |= flagNoDelay
 	}
 	c.host = sock.LocalTCP(fd)
 	c.kind = kindTCP

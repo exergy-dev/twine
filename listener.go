@@ -154,13 +154,13 @@ func (l *Loop) handleAccept(c *conn) {
 		peer := sock.SockaddrToTCP(sa)
 		host := lst.addr
 		if l.cfg.reusePort || len(l.eng.loops) == 1 {
-			l.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
+			l.attachTCP(fd, peer, host, lst.factory)
 			continue
 		}
 		// Single listener: hand the connection to the next loop.
 		target := l.eng.acceptLoop()
 		if target == l {
-			l.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
+			l.attachTCP(fd, peer, host, lst.factory)
 			continue
 		}
 		target.CallFromThread(func() {
@@ -168,7 +168,7 @@ func (l *Loop) handleAccept(c *conn) {
 				_ = unix.Close(fd)
 				return
 			}
-			target.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
+			target.attachTCP(fd, peer, host, lst.factory)
 		})
 	}
 	// Cap hit; more may be pending. Re-check next iteration.

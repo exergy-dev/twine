@@ -22,7 +22,6 @@ type Engine struct {
 	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
 	stopCh        chan struct{}
 	doneCh        chan struct{}
-	runErr        error
 }
 
 const (
@@ -123,7 +122,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	case <-e.stopCh:
 	}
 	e.shutdown()
-	return e.runErr
+	return nil
 }
 
 // Stop begins graceful shutdown: stop accepting, flush, close. It returns
