@@ -3,6 +3,7 @@
 package poll
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"strings"
@@ -271,7 +272,7 @@ func TestURingSQOverflowFlush(t *testing.T) {
 	if err := p.Add(a, 0); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3*sqEntries; i++ {
+	for i := 0; i < 3*int(sqEntries); i++ {
 		if err := p.Mod(a, uint32(i&1)*Readable); err != nil {
 			t.Fatalf("Mod %d: %v", i, err)
 		}
@@ -282,6 +283,107 @@ func TestURingSQOverflowFlush(t *testing.T) {
 	write(t, b, "x")
 	if f, _ := waitFor(t, p, a, time.Second); f != Readable {
 		t.Fatalf("flags = %#x, want Readable", f)
+	}
+}
+
+// TestURingCQOverflow shrinks the rings to 8 entries and arms many more
+// readable fds than the CQ holds, so their CQEs overflow (kept by
+// IORING_FEAT_NODROP; the kernel also ends multishot polls whose CQE did not
+// fit, and the Poller re-arms them). Every fd must still be reported, and
+// once the caller has read every fd to EAGAIN the Poller must go quiet.
+//
+// It then covers resync, the recovery for dropped CQEs (EBADR), which the
+// kernel cannot be made to produce on demand: after resync every
+// registration is re-armed, so fds with unread data are reported again
+// without a new edge, and fds without data are not.
+func TestURingCQOverflow(t *testing.T) {
+	const nfd = 64
+	var rl unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &rl); err != nil || rl.Cur < 4*nfd {
+		t.Skipf("RLIMIT_NOFILE %d too low for %d socketpairs (%v)", rl.Cur, nfd, err)
+	}
+	sq, cq := sqEntries, cqEntries
+	sqEntries, cqEntries = 8, 8
+	p := newPoller(t)
+	sqEntries, cqEntries = sq, cq
+	requireURing(t, p)
+	if n := len(p.ring.cqes); n > 16 {
+		t.Skipf("kernel sized the CQ at %d entries; cannot force overflow", n)
+	}
+	var fds, peers []int
+	for i := 0; i < nfd; i++ {
+		a, b := socketpair(t)
+		if err := p.Add(a, Readable); err != nil {
+			t.Fatal(err)
+		}
+		write(t, b, "x")
+		fds, peers = append(fds, a), append(peers, b)
+	}
+	var evs [7]Event
+	// collect waits until every fd in want has been reported Readable,
+	// reading each reported fd to EAGAIN when drain is set.
+	collect := func(phase string, want map[int32]bool, drain bool) {
+		t.Helper()
+		for tries := 0; len(want) > 0 && tries < 500; tries++ {
+			n, err := p.Wait(evs[:], 100*time.Millisecond)
+			if err != nil {
+				t.Fatalf("%s: Wait: %v", phase, err)
+			}
+			for _, ev := range evs[:n] {
+				if ev.Flags&Readable != 0 {
+					delete(want, ev.FD)
+					if drain {
+						drainFD(int(ev.FD))
+					}
+				}
+			}
+		}
+		if len(want) != 0 {
+			t.Fatalf("%s: %d fds never reported", phase, len(want))
+		}
+	}
+	// quiet waits until a Wait reports nothing and returns everything
+	// reported before that.
+	quiet := func(phase string) map[int32]bool {
+		t.Helper()
+		seen := map[int32]bool{}
+		for tries := 0; ; tries++ {
+			n, err := p.Wait(evs[:], 10*time.Millisecond)
+			if err != nil {
+				t.Fatalf("%s: Wait: %v", phase, err)
+			}
+			if n == 0 {
+				return seen
+			}
+			if tries == 100 {
+				t.Fatalf("%s: still reporting after 100 Waits: %+v", phase, evs[:n])
+			}
+			for _, ev := range evs[:n] {
+				seen[ev.FD] = true
+			}
+		}
+	}
+
+	all := map[int32]bool{}
+	for _, fd := range fds {
+		all[int32(fd)] = true
+	}
+	collect("overflow", all, true)
+	quiet("overflow")
+
+	// Fresh data on a few fds (fits in the CQ), left unread.
+	const k = 4
+	some := map[int32]bool{}
+	for i := 0; i < k; i++ {
+		write(t, peers[i], "y")
+		some[int32(fds[i])] = true
+	}
+	collect("edge", maps.Clone(some), false)
+	quiet("edge")
+	p.ring.resync()
+	got := quiet("resync")
+	if !maps.Equal(got, some) {
+		t.Fatalf("after resync reported %v, want exactly the %d fds with unread data %v", got, k, some)
 	}
 }
 

@@ -118,14 +118,16 @@ const (
 // Ring sizes. Add/Mod only write SQEs, so the SQ is flushed early if a loop
 // iteration queues more than sqEntries changes. The CQ is larger so that a
 // burst of readiness on many fds rarely overflows (overflow is still
-// correct, via IORING_FEAT_NODROP and re-arming, just slower).
-const (
-	sqEntries = 512
-	cqEntries = 4096
-	// initialFDs is the initial size of the fd table; it doubles on demand
-	// (the only allocation after New, and only in Add).
-	initialFDs = 1024
+// correct, via IORING_FEAT_NODROP and re-arming, just slower). They are
+// variables only so that tests can force an overflow with tiny rings.
+var (
+	sqEntries uint32 = 512
+	cqEntries uint32 = 4096
 )
+
+// initialFDs is the initial size of the fd table; it doubles on demand (the
+// only allocation after New, and only in Add).
+const initialFDs = 1024
 
 // user_data layout: bits 32..62 hold the generation and bits 0..31 the fd.
 // Bit 63 marks internal requests: a POLL_REMOVE carries udInternal|target so
