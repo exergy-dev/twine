@@ -213,10 +213,6 @@ func (c *conn) schedule() {
 	if c.resumePending || c.closed {
 		return
 	}
-	if c.loop == nil {
-		c.resume()
-		return
-	}
 	c.resumePending = true
 	c.loop.CallLater(0, c.resumeFn)
 }
@@ -301,10 +297,9 @@ func (c *conn) process(data []byte) int {
 	off := 0
 	served := 0
 	for !c.closed && off < len(data) && !c.prodPaused {
-		if served >= c.s.maxPipe && c.loop != nil {
-			c.resumePending = true
+		if served >= c.s.maxPipe {
 			c.t.PauseReading()
-			c.loop.CallLater(0, c.resumeFn)
+			c.schedule()
 			break
 		}
 		n, code := c.parseOne(data[off:])
@@ -468,7 +463,7 @@ func (c *conn) writeResponse() {
 		w = append(w, c.s.serverLine...)
 	}
 	if !ctx.noDate {
-		w = append(w, c.date.get()...)
+		w = append(w, c.date.line...)
 	}
 	body := ctx.out
 	if st >= 200 && st != 204 && st != 304 {
