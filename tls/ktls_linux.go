@@ -10,13 +10,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// KTLSSupported reports whether this package can install kernel TLS (kTLS)
-// offload on a connection: true on Linux. Whether a particular connection is
-// offloaded also depends on the kernel (KTLSAvailable), the negotiated
-// protocol and cipher, and the state of the connection; see the package
-// documentation. Transport.KernelOffloaded reports the outcome.
-func KTLSSupported() bool { return true }
-
 // loopbackConn returns one end of a connected loopback TCP pair and a
 // function that closes both ends.
 func loopbackConn() (fd int, closeFn func(), err error) {

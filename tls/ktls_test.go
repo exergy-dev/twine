@@ -43,7 +43,8 @@ func (p *kProto) ConnectionMade(t twine.Transport) {
 	p.t = t
 	tt := t.(*twtls.Transport)
 	st := tt.ConnectionState()
-	p.info <- kinfo{tt.KernelOffloaded(), tt.RXOffloaded(), st.CipherSuite, st.Version}
+	tx, rx := tt.KernelOffload()
+	p.info <- kinfo{tx, rx, st.CipherSuite, st.Version}
 }
 func (p *kProto) ConnectionLost(err error) {
 	if p.lost != nil {
@@ -140,9 +141,10 @@ func TestKTLSOpenSSLSuites(t *testing.T) {
 		{"TLS_CHACHA20_POLY1305_SHA256", ctls.TLS_CHACHA20_POLY1305_SHA256},
 	} {
 		t.Run(suite.name, func(t *testing.T) {
+			// ChaCha20-Poly1305 is never offloaded (AES-GCM only).
 			usable := twtls.CipherUsable(suite.id)
 			if !usable {
-				t.Logf("kernel rejects kTLS keys for %s: expecting the memory-BIO fallback", suite.name)
+				t.Logf("no kTLS for %s: expecting the memory-BIO fallback", suite.name)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -229,7 +231,8 @@ type offByeProto struct {
 }
 
 func (p *offByeProto) ConnectionMade(t twine.Transport) {
-	p.ch <- t.(*twtls.Transport).KernelOffloaded()
+	tx, _ := t.(*twtls.Transport).KernelOffload()
+	p.ch <- tx
 	p.byeProto.ConnectionMade(t)
 }
 
@@ -295,8 +298,8 @@ type kClient struct {
 }
 
 func (p *kClient) ConnectionMade(t twine.Transport) {
-	tt := t.(*twtls.Transport)
-	p.info <- kinfo{offloaded: tt.KernelOffloaded(), rx: tt.RXOffloaded()}
+	tx, rx := t.(*twtls.Transport).KernelOffload()
+	p.info <- kinfo{offloaded: tx, rx: rx}
 	p.clientProto.ConnectionMade(t)
 }
 
@@ -379,7 +382,7 @@ type keyUpdateClient struct {
 
 func (p *keyUpdateClient) ConnectionMade(t twine.Transport) {
 	p.t = t
-	tx, rx := t.(*twtls.Transport).KernelOffloaded(), t.(*twtls.Transport).RXOffloaded()
+	tx, rx := t.(*twtls.Transport).KernelOffload()
 	p.mode <- [2]bool{tx, rx}
 	t.Write([]byte("hello\n"))
 }

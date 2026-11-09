@@ -14,28 +14,27 @@ import (
 	"unsafe"
 )
 
-// kTLS record-protection kinds this package can install, in the order of the
-// kernel's cipher_type numbering (linux/tls.h).
+// kTLS record-protection kinds this package can install. Only the AES-GCM
+// suites are offloaded: they are the ones validated against a kernel.
+// TLS_CHACHA20_POLY1305_SHA256 always stays on the memory BIO.
 type ktlsKind uint8
 
 const (
 	kindAES128 ktlsKind = iota
 	kindAES256
-	kindChaCha
 	numKinds
 )
 
 // Kernel constants (linux/tls.h). Declared here, not taken from x/sys, so
 // they are platform independent and explicit.
 const (
-	tlsTX              = 1
-	tlsRX              = 2
-	tlsSetRecordType   = 1 // cmsg type for sendmsg
-	tls13Version       = 0x0304
-	cipherAESGCM128    = 51
-	cipherAESGCM256    = 52
-	cipherChaCha20Poly = 54
-	recordTypeAlert    = 21
+	tlsTX            = 1
+	tlsRX            = 2
+	tlsSetRecordType = 1 // cmsg type for sendmsg
+	tls13Version     = 0x0304
+	cipherAESGCM128  = 51
+	cipherAESGCM256  = 52
+	recordTypeAlert  = 21
 )
 
 // kindFor maps a TLS 1.3 cipher suite to its kernel cipher kind, key length
@@ -46,8 +45,6 @@ func kindFor(suite uint16) (k ktlsKind, keyLen int, h func() hash.Hash, ok bool)
 		return kindAES128, 16, sha256.New, true
 	case ctls.TLS_AES_256_GCM_SHA384:
 		return kindAES256, 32, sha512.New384, true
-	case ctls.TLS_CHACHA20_POLY1305_SHA256:
-		return kindChaCha, 32, sha256.New, true
 	}
 	return 0, 0, nil, false
 }
@@ -70,31 +67,20 @@ type ktlsKeys struct {
 	seq     [8]byte
 }
 
-// cryptoInfo serialises the keys as the kernel's tls12_crypto_info_* struct
-// for TLS 1.3 (linux/tls.h): {version, cipher_type, iv, key, salt, rec_seq}.
-// For AES-GCM the 12-byte IV splits into salt (first 4 bytes) and iv (last 8);
-// ChaCha20-Poly1305 has a 12-byte iv and no salt.
+// cryptoInfo serialises the keys as the kernel's tls12_crypto_info_aes_gcm_*
+// struct for TLS 1.3 (linux/tls.h): {version, cipher_type, iv, key, salt,
+// rec_seq}. The 12-byte IV splits into salt (first 4 bytes) and iv (last 8).
 func (k *ktlsKeys) cryptoInfo(kind ktlsKind) []byte {
-	var typ uint16
-	switch kind {
-	case kindAES128:
-		typ = cipherAESGCM128
-	case kindAES256:
+	typ := uint16(cipherAESGCM128)
+	if kind == kindAES256 {
 		typ = cipherAESGCM256
-	default:
-		typ = cipherChaCha20Poly
 	}
-	b := make([]byte, 0, 80)
+	b := make([]byte, 0, 64)
 	b = binary.NativeEndian.AppendUint16(b, tls13Version)
 	b = binary.NativeEndian.AppendUint16(b, typ)
-	if kind == kindChaCha {
-		b = append(b, k.iv...)
-		b = append(b, k.key...)
-	} else {
-		b = append(b, k.iv[4:]...)
-		b = append(b, k.key...)
-		b = append(b, k.iv[:4]...)
-	}
+	b = append(b, k.iv[4:]...)
+	b = append(b, k.key...)
+	b = append(b, k.iv[:4]...)
 	return append(b, k.seq[:]...)
 }
 
