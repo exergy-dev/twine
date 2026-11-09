@@ -250,6 +250,24 @@ func TestWatchdogSlowCallback(t *testing.T) {
 
 // An idle engine's watchdog backs off from one sample per millisecond to one
 // per watchdogIdleInterval, and returns to the short interval under load.
+// TestWatchdogSlowCallbackAfterIdle: a 5 ms callback that starts and ends
+// between two samples of a backed-off watchdog is still reported.
+func TestWatchdogSlowCallbackAfterIdle(t *testing.T) {
+	h := &captureHandler{}
+	e := startEngine(t, Loops(1), Watchdog(time.Millisecond), Logger(slog.New(h)))
+	lst := listen(t, e, FactoryFunc(func(net.Addr) Protocol { return &sleepyProto{sleep: 5 * time.Millisecond} }))
+	time.Sleep(300 * time.Millisecond) // the watchdog is at its idle interval now
+	c := dialTCP(t, lst.Addr().String())
+	echoOnce(t, c, []byte("slow"))
+	if !waitUntil(2*time.Second, func() bool { return len(h.matching("slow callback")) > 0 }) {
+		t.Fatal("no \"slow callback\" warning for a 5ms DataReceived after an idle period")
+	}
+	r := h.matching("slow callback")[0]
+	if want := fmt.Sprintf("%T", &sleepyProto{}); r.attrs["protocol"] != want {
+		t.Errorf("warning protocol attr = %q, want %q (attrs %v)", r.attrs["protocol"], want, r.attrs)
+	}
+}
+
 func TestWatchdogIdleBackoff(t *testing.T) {
 	e := startEngine(t, Loops(2), Watchdog(time.Millisecond))
 	time.Sleep(200 * time.Millisecond) // reach the idle interval
