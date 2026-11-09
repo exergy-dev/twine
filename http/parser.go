@@ -28,25 +28,32 @@ type headerPair struct {
 // offsets into data.
 type request struct {
 	data []byte // the whole request (head and raw body) while it is served
-
-	methodE      uint32
-	uriS, uriE   uint32
-	pathS, pathE uint32
-	qS, qE       uint32
-	verS         uint32
-	minor        uint8
-	hasQuery     bool
-	pathSlash    bool // absolute-form target without a path: Path() is "/"
-	absHost      bool // Host comes from an absolute-form request target
-	hasHost      bool
-	hostS, hostE uint32
-
 	hdrs [maxHeaders]headerPair
-	nh   int
+	requestHead
+}
 
+// requestHead is everything parseHead resets for a new request. The header
+// array is left alone: nh says how much of it is valid.
+//
+// The request line is "METHOD SP target SP HTTP/1.x", each separated by
+// exactly one space, so the target starts at methodE+1 and the version at
+// uriE+1.
+type requestHead struct {
+	methodE       uint32
+	uriE          uint32
+	pathS, pathE  uint32
+	qS, qE        uint32
+	hostS, hostE  uint32
+	clS, clE      uint32
+	nh            int
 	headLen       int
 	contentLength int64 // -1 when absent
-	clS, clE      uint32
+	minor         uint8
+	isHead        bool // the method is HEAD
+	hasQuery      bool
+	pathSlash     bool // absolute-form target without a path: Path() is "/"
+	absHost       bool // Host comes from an absolute-form request target
+	hasHost       bool
 	chunked       bool
 	connClose     bool
 	connKeepAlive bool
@@ -152,6 +159,7 @@ func (r *request) parseHead(b []byte, maxHdr int) (int, int) {
 		return 0, 400
 	}
 	r.methodE = uint32(i)
+	r.isHead = i == 4 && string(p[:4]) == "HEAD"
 	i++
 
 	// Request target: visible ASCII and obs-text, no controls or spaces.
@@ -165,14 +173,13 @@ func (r *request) parseHead(b []byte, maxHdr int) (int, int) {
 	if p[i] != ' ' || i == s {
 		return 0, 400
 	}
-	r.uriS, r.uriE = uint32(s), uint32(i)
+	r.uriE = uint32(i)
 	if !r.splitTarget(p, s, i) {
 		return 0, 400
 	}
 	i++
 
 	// Version: exactly "HTTP/1.0" or "HTTP/1.1" followed by CRLF.
-	r.verS = uint32(i)
 	if len(p)-i < 10 {
 		if !versionPrefix(p[i:]) {
 			return 0, 400
@@ -286,16 +293,7 @@ func versionPrefix(v []byte) bool {
 // reset clears the parsed state for a new request.
 func (r *request) reset() {
 	r.data = nil
-	r.methodE, r.uriS, r.uriE = 0, 0, 0
-	r.pathS, r.pathE, r.qS, r.qE = 0, 0, 0, 0
-	r.verS, r.minor = 0, 0
-	r.hasQuery, r.pathSlash, r.absHost, r.hasHost = false, false, false, false
-	r.hostS, r.hostE = 0, 0
-	r.nh = 0
-	r.headLen = 0
-	r.contentLength = -1
-	r.clS, r.clE = 0, 0
-	r.chunked, r.connClose, r.connKeepAlive, r.expect100 = false, false, false, false
+	r.requestHead = requestHead{contentLength: -1}
 }
 
 // splitTarget validates the request target p[s:e] and records the path and

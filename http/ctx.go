@@ -39,7 +39,7 @@ func (ctx *RequestCtx) Method() []byte { return ctx.req.slice(0, ctx.req.methodE
 func (ctx *RequestCtx) IsMethod(m string) bool { return string(ctx.Method()) == m }
 
 // RequestURI returns the raw request target as sent, e.g. "/a/b?x=1".
-func (ctx *RequestCtx) RequestURI() []byte { return ctx.req.slice(ctx.req.uriS, ctx.req.uriE) }
+func (ctx *RequestCtx) RequestURI() []byte { return ctx.req.slice(ctx.req.methodE+1, ctx.req.uriE) }
 
 // Path returns the path of the request target without the query, still
 // percent-encoded. For an absolute-form target ("http://host/p") it is the
@@ -61,7 +61,7 @@ func (ctx *RequestCtx) RawQuery() []byte {
 }
 
 // Version returns the protocol version as sent: "HTTP/1.0" or "HTTP/1.1".
-func (ctx *RequestCtx) Version() []byte { return ctx.req.slice(ctx.req.verS, ctx.req.verS+8) }
+func (ctx *RequestCtx) Version() []byte { return ctx.req.slice(ctx.req.uriE+1, ctx.req.uriE+9) }
 
 // IsHTTP11 reports whether the request is HTTP/1.1.
 func (ctx *RequestCtx) IsHTTP11() bool { return ctx.req.minor == 1 }

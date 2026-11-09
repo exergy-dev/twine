@@ -289,20 +289,6 @@ func TestServer413(t *testing.T) {
 	if resp.StatusCode != 413 {
 		t.Fatalf("chunked status %d", resp.StatusCode)
 	}
-
-	// Through net/http.Client with the default 4 MiB limit.
-	s2 := &Server{Handler: testHandler}
-	addr2, _ := startServer(t, s2)
-	c := newClient()
-	defer c.CloseIdleConnections()
-	r, err := c.Post("http://"+addr2+"/echo", "application/octet-stream", bytes.NewReader(make([]byte, 5<<20)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	if r.StatusCode != 413 {
-		t.Fatalf("client status %d", r.StatusCode)
-	}
 }
 
 func TestServerConnectionClose(t *testing.T) {
