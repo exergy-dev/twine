@@ -38,7 +38,9 @@ make bench         # benchmarks into bench/results/<sha>.txt
 make bench-compare # benchstat against BASE (default bench/results/main.txt)
 ```
 
-`make lint` skips golangci-lint or staticcheck if it is not installed; set
+The library needs Go 1.24; `make lint` and `make tunsink` need Go 1.25 or
+later because examples/tunsink does. `make lint` skips golangci-lint or
+staticcheck if it is not installed; set
 `LINT_STRICT=1` (as CI does) to make that an error. CI pins the versions in
 `.github/workflows/ci.yml`.
 
