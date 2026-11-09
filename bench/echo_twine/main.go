@@ -1,5 +1,5 @@
 // Command echo_twine is the twine echo server used by the benchmarks
-// (design Section 12). Drive it with bench/echoclient.
+// (BENCHMARKS.md). Drive it with bench/echoclient.
 package main
 
 import (

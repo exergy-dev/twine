@@ -1,6 +1,6 @@
 // Package bench holds the echo servers and the load generator shared by the
 // benchmark harness (harness_test.go) and the standalone server and client
-// binaries in the subdirectories (design Section 12).
+// binaries in the subdirectories. BENCHMARKS.md interprets the results.
 //
 // Every server implements the same byte-for-byte echo so that the twine,
 // goroutine-per-connection and gnet numbers are comparable.

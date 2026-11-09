@@ -77,7 +77,7 @@ func pingPong(b *testing.B, cs []net.Conn, size int) PingPongResult {
 	return res
 }
 
-// BenchmarkEchoSmall is design Section 12 echo_small: 1000 connections, 64 B
+// BenchmarkEchoSmall is the echo_small benchmark: 1000 connections, 64 B
 // ping-pong (one message in flight per connection), client in-process. One
 // op is one round trip on every connection.
 func BenchmarkEchoSmall(b *testing.B) {
@@ -178,7 +178,7 @@ func scaling(b *testing.B, name string, n int, start func() (Server, error), blo
 	}
 }
 
-// BenchmarkEchoStream is design Section 12 echo_stream: 100 connections each
+// BenchmarkEchoStream is the echo_stream benchmark: 100 connections each
 // streaming 1 MiB per op through the echo with a concurrent reader. SetBytes
 // and GB/s count one direction (bytes echoed back to the clients).
 func BenchmarkEchoStream(b *testing.B) {
@@ -221,7 +221,7 @@ func cpuUtil(cpu0, wall time.Duration) float64 {
 // httpBase holds the net/http req/s of the latest run, per concurrency.
 var httpBase = map[int]float64{}
 
-// BenchmarkHTTPPlaintext is design Section 12 http_plaintext with an
+// BenchmarkHTTPPlaintext is the http_plaintext benchmark with an
 // in-process, wrk-style client (keep-alive, no pipelining, one request in
 // flight per connection) at 256 and 10000 connections. One op is one request
 // on every connection. On the twine rows "x-nethttp" is req/s over the
