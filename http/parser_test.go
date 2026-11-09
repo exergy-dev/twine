@@ -52,7 +52,7 @@ func TestParserStatus(t *testing.T) {
 		{"chunk missing crlf", "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nab\r\n0\r\n\r\n", "HTTP/1.1 400", true},
 		{"chunk trailer", "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-T: 1\r\n\r\n", "HTTP/1.1 200", false},
 	}
-	s := &Server{Handler: func(ctx *RequestCtx) { ctx.Write(ctx.Body()) }}
+	s := &Server{Name: "srv", Handler: func(ctx *RequestCtx) { ctx.Write(ctx.Body()) }}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			out, closed := serveOnce(t, l, s, tc.raw)
@@ -67,6 +67,15 @@ func TestParserStatus(t *testing.T) {
 			}
 			if closed != tc.close {
 				t.Fatalf("closed = %v, want %v (%q)", closed, tc.close, out)
+			}
+			// Every response, canned errors included, is well formed and
+			// carries Date (RFC 9110 section 6.6.1) and the Server name.
+			resp, err := nethttp.ReadResponse(bufio.NewReader(strings.NewReader(out)), nil)
+			if err != nil {
+				t.Fatalf("net/http rejects %q: %v", out, err)
+			}
+			if _, err := nethttp.ParseTime(resp.Header.Get("Date")); err != nil || resp.Header.Get("Server") != "srv" {
+				t.Fatalf("Date %q (%v), Server %q", resp.Header.Get("Date"), err, resp.Header.Get("Server"))
 			}
 		})
 	}
