@@ -1,7 +1,7 @@
 package tls_test
 
 import (
-	ctls "crypto/tls"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -46,7 +46,7 @@ func TestTruncationIsNotCleanClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := ctls.Client(raw, &ctls.Config{InsecureSkipVerify: true})
+	c := tls.Client(raw, &tls.Config{InsecureSkipVerify: true})
 	if err := c.Handshake(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestNoDataAfterAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	hc := &holdConn{Conn: raw}
-	c := ctls.Client(hc, &ctls.Config{InsecureSkipVerify: true})
+	c := tls.Client(hc, &tls.Config{InsecureSkipVerify: true})
 	if err := c.Handshake(); err != nil {
 		t.Fatal(err)
 	}

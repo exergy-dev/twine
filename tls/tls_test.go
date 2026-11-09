@@ -7,7 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	ctls "crypto/tls"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -31,13 +31,13 @@ import (
 
 var (
 	certOnce sync.Once
-	testCert ctls.Certificate
+	testCert tls.Certificate
 	testPool *x509.CertPool
 )
 
 // selfSigned returns a self-signed ECDSA P-256 certificate for localhost and
 // 127.0.0.1, and a pool that trusts it.
-func selfSigned(t testing.TB) (ctls.Certificate, *x509.CertPool) {
+func selfSigned(t testing.TB) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	certOnce.Do(func() {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -64,16 +64,16 @@ func selfSigned(t testing.TB) (ctls.Certificate, *x509.CertPool) {
 		if err != nil {
 			panic(err)
 		}
-		testCert = ctls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
+		testCert = tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
 		testPool = x509.NewCertPool()
 		testPool.AddCert(leaf)
 	})
 	return testCert, testPool
 }
 
-func serverConfig(t testing.TB) *ctls.Config {
+func serverConfig(t testing.TB) *tls.Config {
 	cert, _ := selfSigned(t)
-	return &ctls.Config{Certificates: []ctls.Certificate{cert}}
+	return &tls.Config{Certificates: []tls.Certificate{cert}}
 }
 
 func startEngine(t testing.TB, opts ...twine.Option) *twine.Engine {
@@ -107,7 +107,7 @@ func echoFactory() twine.Factory {
 	return twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
 }
 
-func listen(t testing.TB, e *twine.Engine, cfg *ctls.Config, f twine.Factory, opts ...twtls.Option) string {
+func listen(t testing.TB, e *twine.Engine, cfg *tls.Config, f twine.Factory, opts ...twtls.Option) string {
 	t.Helper()
 	lst, err := twtls.Listen(e, "127.0.0.1:0", cfg, f, opts...)
 	if err != nil {
@@ -116,13 +116,13 @@ func listen(t testing.TB, e *twine.Engine, cfg *ctls.Config, f twine.Factory, op
 	return lst.Addr().String()
 }
 
-func dial(t testing.TB, addr string, cfg *ctls.Config) *ctls.Conn {
+func dial(t testing.TB, addr string, cfg *tls.Config) *tls.Conn {
 	t.Helper()
 	if cfg == nil {
-		cfg = &ctls.Config{InsecureSkipVerify: true}
+		cfg = &tls.Config{InsecureSkipVerify: true}
 	}
 	d := &net.Dialer{Timeout: 5 * time.Second}
-	c, err := ctls.DialWithDialer(d, "tcp", addr, cfg)
+	c, err := tls.DialWithDialer(d, "tcp", addr, cfg)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestEchoServerStream1MiB(t *testing.T) {
 // stateProto reports the server-side ConnectionState and echoes.
 type stateProto struct {
 	echo
-	ch chan ctls.ConnectionState
+	ch chan tls.ConnectionState
 }
 
 func (p *stateProto) ConnectionMade(t twine.Transport) {
@@ -191,16 +191,16 @@ func TestVersionsAndALPN(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ver  uint16
-	}{{"TLS12", ctls.VersionTLS12}, {"TLS13", ctls.VersionTLS13}} {
+	}{{"TLS12", tls.VersionTLS12}, {"TLS13", tls.VersionTLS13}} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := startEngine(t)
-			ch := make(chan ctls.ConnectionState, 1)
+			ch := make(chan tls.ConnectionState, 1)
 			cfg := serverConfig(t)
 			cfg.NextProtos = []string{"h2", "twine/1"}
 			addr := listen(t, e, cfg, twine.FactoryFunc(func(net.Addr) twine.Protocol {
 				return &stateProto{ch: ch}
 			}))
-			c := dial(t, addr, &ctls.Config{
+			c := dial(t, addr, &tls.Config{
 				InsecureSkipVerify: true,
 				MinVersion:         tc.ver,
 				MaxVersion:         tc.ver,
@@ -208,7 +208,7 @@ func TestVersionsAndALPN(t *testing.T) {
 				ServerName:         "sni.example",
 			})
 			defer c.Close()
-			var st ctls.ConnectionState
+			var st tls.ConnectionState
 			select {
 			case st = <-ch:
 			case <-time.After(10 * time.Second):
@@ -338,8 +338,8 @@ func TestServerHandshakeFailure(t *testing.T) {
 	// 1.2 the server is still reading when the client's alert arrives, so
 	// the alert itself reaches the server (TLS 1.3 servers write session
 	// tickets into the closed socket and usually see a reset instead).
-	c, err := ctls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr,
-		&ctls.Config{ServerName: "localhost", MaxVersion: ctls.VersionTLS12})
+	c, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr,
+		&tls.Config{ServerName: "localhost", MaxVersion: tls.VersionTLS12})
 	if err == nil {
 		c.Close()
 		t.Fatal("client handshake unexpectedly succeeded")
@@ -497,8 +497,8 @@ func TestConcurrentClients(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c, err := ctls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
-				&ctls.Config{InsecureSkipVerify: true})
+			c, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr,
+				&tls.Config{InsecureSkipVerify: true})
 			if err != nil {
 				errs <- fmt.Errorf("client %d dial: %w", i, err)
 				return
@@ -598,9 +598,9 @@ func TestInnerPanic(t *testing.T) {
 // --- client tests ------------------------------------------------------------
 
 // goEchoServer runs a crypto/tls echo server and returns its address.
-func goEchoServer(t testing.TB, cfg *ctls.Config) string {
+func goEchoServer(t testing.TB, cfg *tls.Config) string {
 	t.Helper()
-	ln, err := ctls.Listen("tcp", "127.0.0.1:0", cfg)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -626,7 +626,7 @@ type clientProto struct {
 	want    int
 	got     bytes.Buffer
 	done    chan []byte
-	state   chan ctls.ConnectionState
+	state   chan tls.ConnectionState
 	made    atomic.Int32
 	payload []byte
 }
@@ -656,22 +656,22 @@ func TestClientConnect(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ver  uint16
-	}{{"TLS12", ctls.VersionTLS12}, {"TLS13", ctls.VersionTLS13}} {
+	}{{"TLS12", tls.VersionTLS12}, {"TLS13", tls.VersionTLS13}} {
 		t.Run(tc.name, func(t *testing.T) {
-			addr := goEchoServer(t, &ctls.Config{
-				Certificates: []ctls.Certificate{cert},
+			addr := goEchoServer(t, &tls.Config{
+				Certificates: []tls.Certificate{cert},
 				NextProtos:   []string{"twine/1"},
 				MaxVersion:   tc.ver,
 			})
 			e := startEngine(t)
 			payload := bytes.Repeat([]byte("0123456789abcdef"), 20000) // 320 KB
 			p := &clientProto{want: len(payload), done: make(chan []byte, 1),
-				state: make(chan ctls.ConnectionState, 1), payload: payload}
+				state: make(chan tls.ConnectionState, 1), payload: payload}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			// ServerName defaults from addr's host (127.0.0.1, an IP SAN).
 			tr, err := twtls.Connect(e.NextLoop(), addr,
-				&ctls.Config{RootCAs: pool, NextProtos: []string{"twine/1"}},
+				&tls.Config{RootCAs: pool, NextProtos: []string{"twine/1"}},
 				twine.FactoryFunc(func(net.Addr) twine.Protocol { return p })).Await(ctx)
 			if err != nil {
 				t.Fatalf("Connect: %v", err)
@@ -697,17 +697,17 @@ func TestClientConnect(t *testing.T) {
 
 func TestClientHandshakeFailure(t *testing.T) {
 	cert, pool := selfSigned(t)
-	addr := goEchoServer(t, &ctls.Config{Certificates: []ctls.Certificate{cert}})
+	addr := goEchoServer(t, &tls.Config{Certificates: []tls.Certificate{cert}})
 	e := startEngine(t)
 	hsErr := make(chan error, 1)
 	p := &clientProto{done: make(chan []byte, 1), payload: []byte("x")}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := twtls.Connect(e.NextLoop(), addr,
-		&ctls.Config{RootCAs: pool, ServerName: "wrong.example"},
+		&tls.Config{RootCAs: pool, ServerName: "wrong.example"},
 		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }),
 		twtls.OnHandshakeError(func(err error) { hsErr <- err })).Await(ctx)
-	var verr *ctls.CertificateVerificationError
+	var verr *tls.CertificateVerificationError
 	if !errors.As(err, &verr) {
 		t.Fatalf("Connect error %v (%T), want CertificateVerificationError", err, err)
 	}
@@ -733,14 +733,14 @@ func TestClientHandshakeFailure(t *testing.T) {
 // handshake); the TLS Transport reaches the inner protocol's ConnectionMade.
 func TestClientWithConnectTCP(t *testing.T) {
 	cert, pool := selfSigned(t)
-	addr := goEchoServer(t, &ctls.Config{Certificates: []ctls.Certificate{cert}})
+	addr := goEchoServer(t, &tls.Config{Certificates: []tls.Certificate{cert}})
 	e := startEngine(t)
 	payload := []byte("over ConnectTCP")
 	p := &clientProto{want: len(payload), done: make(chan []byte, 1),
-		state: make(chan ctls.ConnectionState, 1), payload: payload}
+		state: make(chan tls.ConnectionState, 1), payload: payload}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	raw, err := e.NextLoop().ConnectTCP(addr, twtls.Client(&ctls.Config{RootCAs: pool, ServerName: "127.0.0.1"},
+	raw, err := e.NextLoop().ConnectTCP(addr, twtls.Client(&tls.Config{RootCAs: pool, ServerName: "127.0.0.1"},
 		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))).Await(ctx)
 	if err != nil {
 		t.Fatalf("ConnectTCP: %v", err)
@@ -770,7 +770,7 @@ func TestClientWithConnectTCP(t *testing.T) {
 // a Config that cannot serve a handshake, as crypto/tls.Listen does.
 func TestServerConfigWithoutCertificate(t *testing.T) {
 	e := startEngine(t)
-	for _, cfg := range []*ctls.Config{nil, {}, {NextProtos: []string{"h2"}}} {
+	for _, cfg := range []*tls.Config{nil, {}, {NextProtos: []string{"h2"}}} {
 		lst, err := twtls.Listen(e, "127.0.0.1:0", cfg, echoFactory())
 		if err == nil {
 			lst.Close()
@@ -789,10 +789,10 @@ func TestServerConfigWithoutCertificate(t *testing.T) {
 		}()
 	}
 	cert, _ := selfSigned(t)
-	for _, cfg := range []*ctls.Config{
-		{Certificates: []ctls.Certificate{cert}},
-		{GetCertificate: func(*ctls.ClientHelloInfo) (*ctls.Certificate, error) { return &cert, nil }},
-		{GetConfigForClient: func(*ctls.ClientHelloInfo) (*ctls.Config, error) { return serverConfig(t), nil }},
+	for _, cfg := range []*tls.Config{
+		{Certificates: []tls.Certificate{cert}},
+		{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert, nil }},
+		{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) { return serverConfig(t), nil }},
 	} {
 		addr := listen(t, e, cfg, echoFactory())
 		c := dial(t, addr, nil)
@@ -817,7 +817,7 @@ func TestClientDialError(t *testing.T) {
 	e := startEngine(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err = twtls.Connect(e.NextLoop(), addr, &ctls.Config{InsecureSkipVerify: true}, echoFactory()).Await(ctx)
+	_, err = twtls.Connect(e.NextLoop(), addr, &tls.Config{InsecureSkipVerify: true}, echoFactory()).Await(ctx)
 	if err == nil {
 		t.Fatal("Connect to closed port succeeded")
 	}
@@ -839,7 +839,7 @@ func TestTwineToTwine(t *testing.T) {
 			p := &clientProto{want: len(payload), done: make(chan []byte, 1), payload: payload}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			_, err := twtls.Connect(e.NextLoop(), addr, &ctls.Config{RootCAs: pool, ServerName: "localhost"},
+			_, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{RootCAs: pool, ServerName: "localhost"},
 				twine.FactoryFunc(func(net.Addr) twine.Protocol { return p })).Await(ctx)
 			if err != nil {
 				t.Errorf("Connect %d: %v", i, err)
@@ -925,7 +925,7 @@ func TestSilentPeersDoNotStallHandshakes(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 	d := &net.Dialer{Timeout: 3 * time.Second, Deadline: time.Now().Add(3 * time.Second)}
-	c, err := ctls.DialWithDialer(d, "tcp", addr, &ctls.Config{InsecureSkipVerify: true})
+	c, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatalf("handshake stalled behind silent peers: %v", err)
 	}
@@ -997,7 +997,7 @@ func TestTLSInsideTLS(t *testing.T) {
 	addr := listen(t, e, cfg, twtls.Server(cfg, echoFactory()))
 	outer := dial(t, addr, nil)
 	defer outer.Close()
-	c := ctls.Client(outer, &ctls.Config{InsecureSkipVerify: true})
+	c := tls.Client(outer, &tls.Config{InsecureSkipVerify: true})
 	if err := c.Handshake(); err != nil {
 		t.Fatalf("inner handshake: %v", err)
 	}
