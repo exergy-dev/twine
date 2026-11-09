@@ -5,8 +5,7 @@
 // circular buffer. Writes go only to the tail segment and reads only come
 // from the head segment, so only the head can hold data that wraps around
 // the end of its slab, and only when it is also the tail. A connection whose
-// pending bytes stay within one 4 KiB slab therefore never calls the
-// allocator after its first write.
+// pending bytes stay within 4 KiB therefore uses a single 4 KiB segment.
 //
 // Growth policy: when the tail segment is full (or there is none), a new
 // segment is taken whose class is the smallest that fits the bytes still to
@@ -15,8 +14,11 @@
 // geometric floor keeps a backlog built from many small writes in few
 // segments; writes larger than 256 KiB span several 256 KiB segments.
 //
-// A Ring holds no segment until its first non-empty Write. Consume keeps the
-// last segment (emptied) for reuse; Reset returns every segment.
+// An empty Ring holds no segment: none before its first non-empty Write, and
+// the Consume that brings Len to 0 returns the last segment to the allocator,
+// so an idle connection pins no slab. Taking a slab from, and returning one
+// to, the allocator's free list does not allocate, so a write/drain cycle
+// stays allocation-free. Reset drops all data and returns every segment.
 //
 // Not goroutine-safe. Built with -tags twine_debug, Write and Consume verify
 // the segment chain after every call and panic on an inconsistency.
@@ -50,11 +52,10 @@ type segment struct {
 type Ring struct {
 	_ noCopy // first: a trailing zero-size field would be padded
 
-	alloc     *slab.Allocator
-	head      *segment
-	tail      *segment
-	length    int
-	highWater int
+	alloc  *slab.Allocator
+	head   *segment
+	tail   *segment
+	length int
 
 	// spare is a free list of segment structs (linked through next) reused
 	// before allocating a new one. It survives Reset and Init.
@@ -68,15 +69,13 @@ type Ring struct {
 
 // Init binds r to an allocator. Init may be called on a Ring embedded in a
 // pooled conn struct repeatedly (after Reset). If r still holds segments
-// they are first returned to the allocator they came from. Init resets the
-// high water mark.
+// they are first returned to the allocator they came from.
 func (r *Ring) Init(a *slab.Allocator) {
 	if r.head != nil {
 		r.Reset()
 	}
 	r.alloc = a
 	r.length = 0
-	r.highWater = 0
 }
 
 // Len returns readable bytes.
@@ -89,9 +88,6 @@ func (r *Ring) Write(b []byte) {
 		return
 	}
 	r.length += len(b)
-	if r.length > r.highWater {
-		r.highWater = r.length
-	}
 	for len(b) > 0 {
 		s := r.tail
 		if s == nil || s.n == len(s.buf) {
@@ -212,9 +208,8 @@ func (r *Ring) Iovecs(dst []unix.Iovec) []unix.Iovec {
 }
 
 // Consume drops n bytes from the front (n <= Len). Segments that become empty
-// are returned to the allocator, except the last one, which is kept (reset to
-// empty) so the next Write needs no allocation. Consume panics if n < 0 or
-// n > Len.
+// are returned to the allocator, including the last one when Len reaches 0,
+// so an empty Ring holds no slab. Consume panics if n < 0 or n > Len.
 func (r *Ring) Consume(n int) {
 	if n < 0 || n > r.length {
 		panic("ring: Consume out of range")
@@ -235,18 +230,18 @@ func (r *Ring) Consume(n int) {
 			return
 		}
 		n -= c
-		s.n = 0
-		s.r = 0
-		if s.next == nil {
-			return // last segment: keep it, empty
-		}
-		r.head = s.next
+		next := s.next
 		r.releaseSeg(s)
+		r.head = next
+		if next == nil {
+			r.tail = nil // drained: Len is 0
+			return
+		}
 	}
 }
 
-// Reset drops all data and returns every segment to the allocator. The high
-// water mark is kept; segment structs stay pooled in r for reuse.
+// Reset drops all data and returns every segment to the allocator. Segment
+// structs stay pooled in r for reuse.
 func (r *Ring) Reset() {
 	for s := r.head; s != nil; {
 		next := s.next
@@ -256,12 +251,6 @@ func (r *Ring) Reset() {
 	r.head, r.tail = nil, nil
 	r.length = 0
 }
-
-// HighWater returns the maximum Len observed since Init/ResetHighWater.
-func (r *Ring) HighWater() int { return r.highWater }
-
-// ResetHighWater sets the high water mark to the current Len.
-func (r *Ring) ResetHighWater() { r.highWater = r.length }
 
 // verify checks the segment chain and returns a description of the first
 // inconsistency found, or "".
@@ -280,8 +269,8 @@ func (r *Ring) verify() string {
 		if s != r.tail && s != r.head && s.n != len(s.buf) {
 			return "ring: middle segment not full"
 		}
-		if s.n == 0 && (s != r.head || s.next != nil) {
-			return "ring: empty segment that is not the sole kept segment"
+		if s.n == 0 {
+			return "ring: empty segment in the chain"
 		}
 		if s.next == nil && s != r.tail {
 			return "ring: tail is not the last segment"
