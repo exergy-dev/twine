@@ -18,7 +18,8 @@ type Engine struct {
 	listeners     []*listener
 	shutdownHooks []func()
 	state         atomic.Int32
-	next          atomic.Uint32
+	next          atomic.Uint32 // NextLoop: outbound connections, UDP sockets
+	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
 	stopCh        chan struct{}
 	doneCh        chan struct{}
 	runErr        error
@@ -54,6 +55,16 @@ func (e *Engine) Loops() []*Loop { return e.loops }
 // NextLoop picks a loop round-robin, for outbound connections.
 func (e *Engine) NextLoop() *Loop {
 	n := e.next.Add(1) - 1
+	return e.loops[int(n%uint32(len(e.loops)))]
+}
+
+// acceptLoop picks the loop for a connection accepted by a single
+// (non-SO_REUSEPORT) listener, round-robin. It has its own counter so that
+// accepts and NextLoop do not interleave on one sequence: with a shared
+// counter, a process that dials itself advanced it twice per connection and
+// sent every Dial to the even loops and every accept to the odd ones.
+func (e *Engine) acceptLoop() *Loop {
+	n := e.acceptNext.Add(1) - 1
 	return e.loops[int(n%uint32(len(e.loops)))]
 }
 

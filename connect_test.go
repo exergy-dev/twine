@@ -3,6 +3,7 @@ package twine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -288,10 +289,30 @@ func TestConnectAfterStop(t *testing.T) {
 	}
 }
 
+// Engine.Dial spreads outbound connections round-robin over the loops. The
+// ReusePort(false) case (the default off Linux) also checks that a single
+// listener's accept hand-off neither shares nor skews that sequence: the
+// accepted side of these same connections must be spread evenly too.
 func TestEngineDialRoundRobin(t *testing.T) {
+	for _, reuse := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ReusePort=%v", reuse), func(t *testing.T) {
+			testEngineDialRoundRobin(t, reuse)
+		})
+	}
+}
+
+func testEngineDialRoundRobin(t *testing.T, reusePort bool) {
 	const loops = 4
-	e := startEngine(t, Loops(loops))
-	lst := listen(t, e, echoFactory())
+	e := startEngine(t, Loops(loops), ReusePort(reusePort))
+	var mu sync.Mutex
+	accepted := map[int]int{}
+	lst := listen(t, e, hookFactory(func() *hookProto {
+		return &hookProto{made: func(_ *hookProto, tr Transport) {
+			mu.Lock()
+			accepted[tr.Loop().ID()]++
+			mu.Unlock()
+		}}
+	}))
 	var ids []int
 	var trs []Transport
 	for i := 0; i < 2*loops; i++ {
@@ -319,6 +340,30 @@ func TestEngineDialRoundRobin(t *testing.T) {
 			t.Errorf("loop %d got %d of %d dials", id, count[id], 2*loops)
 		}
 	}
+	total := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, c := range accepted {
+			n += c
+		}
+		return n
+	}
+	if !waitUntil(5*time.Second, func() bool { return total() == 2*loops }) {
+		t.Fatalf("server accepted %d of %d connections", total(), 2*loops)
+	}
+	mu.Lock()
+	t.Logf("accepted per loop: %v", accepted)
+	if !reusePort {
+		// The kernel picks the loop under SO_REUSEPORT; the single-listener
+		// hand-off is round-robin and must be exact.
+		for id := 0; id < loops; id++ {
+			if accepted[id] != 2 {
+				t.Errorf("loop %d accepted %d of %d connections", id, accepted[id], 2*loops)
+			}
+		}
+	}
+	mu.Unlock()
 	for _, tr := range trs {
 		tr := tr
 		onLoop(t, tr.Loop(), tr.Abort)
