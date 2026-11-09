@@ -22,7 +22,7 @@ type Poller struct {
 	rcpt   [2]unix.Kevent_t
 	// kevs is the kernel event buffer, embedded so Wait never allocates and
 	// never re-zeroes a large stack array.
-	kevs [maxEvents]unix.Kevent_t
+	kevs [MaxEvents]unix.Kevent_t
 }
 
 // New creates the kqueue instance and the wakeup channel used by Wake.
@@ -139,8 +139,8 @@ func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
 	if max == 0 {
 		return 0, errNoEvents
 	}
-	if max > maxEvents {
-		max = maxEvents
+	if max > MaxEvents {
+		max = MaxEvents
 	}
 	var ts *unix.Timespec
 	var deadline time.Time

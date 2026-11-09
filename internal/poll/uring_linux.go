@@ -331,8 +331,8 @@ func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
 	if p.closed {
 		return 0, unix.EBADF
 	}
-	if max > maxEvents {
-		max = maxEvents
+	if max > MaxEvents {
+		max = MaxEvents
 	}
 	if p.ring == nil {
 		return p.ep.wait(evs[:max], timeout, &p.w)
@@ -933,7 +933,7 @@ func (r *uring) drain(evs []Event, w *waker) (n int, woke bool, err error) {
 // epollFallback is an epoll instance with an embedded event buffer.
 type epollFallback struct {
 	epfd int
-	kevs [maxEvents]unix.EpollEvent
+	kevs [MaxEvents]unix.EpollEvent
 }
 
 // newEpollFallback creates the epoll instance and registers the wake fd.

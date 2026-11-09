@@ -56,9 +56,11 @@ const (
 	Error
 )
 
-// maxEvents caps the number of kernel events translated per Wait call. The
-// kernel event buffer is embedded in the Poller so Wait never allocates.
-const maxEvents = 256
+// MaxEvents caps the number of events one Wait call returns: Wait fills at
+// most min(len(evs), MaxEvents) entries, so a caller's event array needs no
+// more than MaxEvents. The kernel event buffer of that size is embedded in
+// the Poller so Wait never allocates.
+const MaxEvents = 256
 
 // Event is one ready notification. Wait fills a caller-provided slice.
 type Event struct {
