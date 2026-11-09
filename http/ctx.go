@@ -41,9 +41,11 @@ func (ctx *RequestCtx) IsMethod(m string) bool { return string(ctx.Method()) == 
 // RequestURI returns the raw request target as sent, e.g. "/a/b?x=1".
 func (ctx *RequestCtx) RequestURI() []byte { return ctx.req.slice(ctx.req.methodE+1, ctx.req.uriE) }
 
-// Path returns the path of the request target without the query, still
-// percent-encoded. For an absolute-form target ("http://host/p") it is the
-// path part ("/" when empty); for "*" it is "*".
+// Path returns the path of the request target without the query, exactly
+// as sent: still percent-encoded and with any dot segments ("/a/../b")
+// left in place. For an absolute-form target ("http://host/p") it is the
+// path part ("/" when empty); for "*" it is "*". See the package doc on
+// routing.
 func (ctx *RequestCtx) Path() []byte {
 	if ctx.req.pathSlash {
 		return slash
@@ -133,9 +135,10 @@ func (ctx *RequestCtx) RemoteAddr() net.Addr { return ctx.c.t.GetPeer() }
 // LocalAddr returns the local address of the connection.
 func (ctx *RequestCtx) LocalAddr() net.Addr { return ctx.c.t.GetHost() }
 
-// Loop returns the loop that owns the connection, for CallLater or
-// DeferToThread. Responses are still written when the Handler returns;
-// there is no asynchronous response API.
+// Loop returns the loop that owns the connection, for fire-and-forget work
+// with CallLater or DeferToThread. The response is still the state of the
+// RequestCtx when the Handler returns; there is no asynchronous response
+// API.
 func (ctx *RequestCtx) Loop() *twine.Loop { return ctx.c.loop }
 
 // --- response --------------------------------------------------------------
