@@ -484,6 +484,57 @@ func TestServerCloseWhilePaused(t *testing.T) {
 	}
 }
 
+// TestServerMaxResponseBytes lowers the engine's WriteBufferLimit and the
+// server's MaxResponseBytes below it: a body over the limit must become a
+// complete 500 instead of a connection aborted mid-body.
+func TestServerMaxResponseBytes(t *testing.T) {
+	e := startEngine(t, twine.Loops(1), twine.Watchdog(0), twine.WriteBufferLimit(1<<20))
+	s := &Server{MaxResponseBytes: 512 << 10, Logger: discardLogger(), Handler: func(ctx *RequestCtx) {
+		n, _ := strconv.Atoi(string(ctx.RawQuery()))
+		ctx.Write(bytes.Repeat([]byte{'z'}, n))
+	}}
+	lst, err := s.Listen(e, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc, br := dial(t, lst.Addr().String())
+	// Neither request is read until both are answered, so the response
+	// must fit in the write buffer.
+	fmt.Fprintf(nc, "GET /?%d HTTP/1.1\r\nHost: x\r\n\r\nHEAD /?%d HTTP/1.1\r\nHost: x\r\n\r\nGET /?%d HTTP/1.1\r\nHost: x\r\n\r\n",
+		400<<10, 600<<10, 8<<20)
+	time.Sleep(100 * time.Millisecond)
+	for _, want := range []struct {
+		method string
+		status int
+		n      int64
+	}{{"GET", 200, 400 << 10}, {"HEAD", 200, 0}, {"GET", 500, int64(len("Internal Server Error\n"))}} {
+		resp, err := nethttp.ReadResponse(br, &nethttp.Request{Method: want.method})
+		if err != nil {
+			t.Fatalf("%+v: %v", want, err)
+		}
+		n, err := io.Copy(io.Discard, resp.Body)
+		if err != nil || resp.StatusCode != want.status || n != want.n {
+			t.Fatalf("%+v: status %d, %d body bytes, %v", want, resp.StatusCode, n, err)
+		}
+		if want.status == 500 && !resp.Close {
+			t.Fatal("500 for an oversized body must close")
+		}
+	}
+	expectClosed(t, br, 5*time.Second)
+}
+
+// TestMaxResponseBytesDefault checks the default limit through the fake
+// transport (no write buffer involved).
+func TestMaxResponseBytesDefault(t *testing.T) {
+	s := &Server{Logger: discardLogger(), Handler: func(ctx *RequestCtx) {
+		ctx.Write(make([]byte, DefaultMaxResponseBytes+1))
+	}}
+	out, closed := serveOnce(t, testLoop(t), s, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	if !strings.HasPrefix(out, "HTTP/1.1 500 ") || !closed || len(out) > 1024 {
+		t.Fatalf("closed=%v %d bytes: %q", closed, len(out), firstLine(out))
+	}
+}
+
 // TestIdleTimeoutSetting checks the value handed to the transport's idle
 // timer: zero means the default, negative disables it.
 func TestIdleTimeoutSetting(t *testing.T) {

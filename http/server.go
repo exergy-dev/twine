@@ -24,6 +24,9 @@ const (
 	// DefaultMaxPipelinedRequests bounds the requests served from one read
 	// before the connection yields to the loop.
 	DefaultMaxPipelinedRequests = 16
+	// DefaultMaxResponseBytes bounds a response body. It equals the
+	// engine's default twine.WriteBufferLimit.
+	DefaultMaxResponseBytes = 16 << 20
 )
 
 // Default timeouts.
@@ -73,6 +76,18 @@ type Server struct {
 	// reading is paused and serving continues on the next loop iteration.
 	MaxPipelinedRequests int
 
+	// MaxResponseBytes bounds the response body a Handler may produce
+	// (default DefaultMaxResponseBytes). The whole response is queued on
+	// the connection at once, and the engine aborts a connection whose
+	// pending output passes its WriteBufferLimit (16 MiB by default), which
+	// would cut the body off after Content-Length was sent. A larger body
+	// is therefore replaced by a 500 response, the connection is closed
+	// after it, and the event is logged. When you lower
+	// twine.WriteBufferLimit, set this below it, leaving room for headers
+	// and pipelined responses. HEAD responses, which carry no body, are
+	// exempt.
+	MaxResponseBytes int
+
 	// IdleTimeout closes a connection that has had no I/O for this long
 	// (default DefaultIdleTimeout when zero; negative disables it). It is
 	// the engine's per-connection idle timer, so it bounds idle keep-alive
@@ -89,7 +104,8 @@ type Server struct {
 	// that arrive in one read never touch it.
 	ReadTimeout time.Duration
 
-	// Logger receives Handler panics. Defaults to slog.Default().
+	// Logger receives Handler panics and responses over MaxResponseBytes.
+	// Defaults to slog.Default().
 	Logger *slog.Logger
 
 	once        sync.Once
@@ -97,6 +113,7 @@ type Server struct {
 	maxBody     int
 	maxPipe     int
 	maxRaw      int
+	maxResp     int
 	idleTimeout time.Duration
 	readTimeout time.Duration
 	serverLine  []byte
@@ -125,6 +142,10 @@ func (s *Server) init() {
 		// Content-Length request needs no raw cap: its length is checked
 		// against maxBody as soon as the head is parsed.
 		s.maxRaw = s.maxHdr + 2*s.maxBody + 64<<10
+		s.maxResp = s.MaxResponseBytes
+		if s.maxResp <= 0 {
+			s.maxResp = DefaultMaxResponseBytes
+		}
 		s.idleTimeout = orDefault(s.IdleTimeout, DefaultIdleTimeout)
 		s.readTimeout = orDefault(s.ReadTimeout, DefaultReadTimeout)
 		if s.Name != "" {
@@ -503,6 +524,9 @@ func (c *conn) serve(req []byte) {
 	} else {
 		c.callHandler()
 	}
+	if len(ctx.out) > c.s.maxResp && !r.isHead {
+		c.tooLarge()
+	}
 	c.writeResponse()
 
 	r.data = nil
@@ -534,6 +558,18 @@ func (c *conn) recoverHandler() {
 	}
 	c.s.logger.Error("twine/http: panic in Handler", "panic", v, "stack", string(debug.Stack()))
 	ctx := &c.ctx
+	ctx.resetResponse()
+	ctx.Error("Internal Server Error\n", nethttp.StatusInternalServerError)
+	ctx.close = true
+}
+
+// tooLarge replaces a response whose body passes MaxResponseBytes with 500
+// followed by a close: sending it would overflow the engine's write
+// buffer and abort the connection mid-body.
+func (c *conn) tooLarge() {
+	ctx := &c.ctx
+	c.s.logger.Error("twine/http: response body exceeds MaxResponseBytes; sent 500",
+		"bytes", len(ctx.out), "max", c.s.maxResp, "path", string(ctx.Path()))
 	ctx.resetResponse()
 	ctx.Error("Internal Server Error\n", nethttp.StatusInternalServerError)
 	ctx.close = true
