@@ -667,6 +667,85 @@ func TestClientHandshakeFailure(t *testing.T) {
 	}
 }
 
+// TestClientWithConnectTCP: Client used with Loop.ConnectTCP directly. The
+// dial Future carries the raw socket transport (it resolves before the
+// handshake); the TLS Transport reaches the inner protocol's ConnectionMade.
+func TestClientWithConnectTCP(t *testing.T) {
+	cert, pool := selfSigned(t)
+	addr := goEchoServer(t, &ctls.Config{Certificates: []ctls.Certificate{cert}})
+	e := startEngine(t)
+	payload := []byte("over ConnectTCP")
+	p := &clientProto{want: len(payload), done: make(chan []byte, 1),
+		state: make(chan ctls.ConnectionState, 1), payload: payload}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	raw, err := e.NextLoop().ConnectTCP(addr, twtls.Client(&ctls.Config{RootCAs: pool, ServerName: "127.0.0.1"},
+		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))).Await(ctx)
+	if err != nil {
+		t.Fatalf("ConnectTCP: %v", err)
+	}
+	if _, ok := raw.(*twtls.Transport); ok {
+		t.Fatal("ConnectTCP resolved with the TLS Transport; the Client doc says it is the raw socket")
+	}
+	select {
+	case st := <-p.state: // clientProto asserts *twtls.Transport
+		if !st.HandshakeComplete {
+			t.Fatal("inner ConnectionMade before the handshake completed")
+		}
+	case <-ctx.Done():
+		t.Fatal("no inner ConnectionMade")
+	}
+	select {
+	case got := <-p.done:
+		if !bytes.Equal(got, payload) {
+			t.Fatalf("echo %q", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for echo")
+	}
+}
+
+// TestServerConfigWithoutCertificate: Listen rejects, and Server panics on,
+// a Config that cannot serve a handshake, as crypto/tls.Listen does.
+func TestServerConfigWithoutCertificate(t *testing.T) {
+	e := startEngine(t)
+	for _, cfg := range []*ctls.Config{nil, {}, {NextProtos: []string{"h2"}}} {
+		lst, err := twtls.Listen(e, "127.0.0.1:0", cfg, echoFactory())
+		if err == nil {
+			lst.Close()
+			t.Fatalf("Listen(%v) succeeded without a certificate", cfg)
+		}
+		if !strings.Contains(err.Error(), "neither Certificates, GetCertificate, nor GetConfigForClient") {
+			t.Fatalf("Listen error %q", err)
+		}
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("Server(%v) did not panic", cfg)
+				}
+			}()
+			twtls.Server(cfg, echoFactory())
+		}()
+	}
+	cert, _ := selfSigned(t)
+	for _, cfg := range []*ctls.Config{
+		{Certificates: []ctls.Certificate{cert}},
+		{GetCertificate: func(*ctls.ClientHelloInfo) (*ctls.Certificate, error) { return &cert, nil }},
+		{GetConfigForClient: func(*ctls.ClientHelloInfo) (*ctls.Config, error) { return serverConfig(t), nil }},
+	} {
+		addr := listen(t, e, cfg, echoFactory())
+		c := dial(t, addr, nil)
+		if _, err := c.Write([]byte("ok")); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, 2)
+		if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "ok" {
+			t.Fatalf("echo %q %v", buf, err)
+		}
+		c.Close()
+	}
+}
+
 func TestClientDialError(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
