@@ -51,7 +51,7 @@ func (w *waker) wake() error {
 
 // consume reports whether kev is the wakeup pipe and, if so, drains it.
 func (w *waker) consume(kev *unix.Kevent_t) bool {
-	if kev.Filter != unix.EVFILT_READ || kev.Ident != uint64(w.r) {
+	if kev.Filter != unix.EVFILT_READ || int(kev.Ident) != w.r {
 		return false
 	}
 	for {
