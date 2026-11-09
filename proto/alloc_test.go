@@ -99,6 +99,8 @@ func TestAMPAllocs(t *testing.T) {
 	req := twistedBox("_ask", "1", "_command", "Sum", "a", "13", "b", "29")
 	serve := testing.AllocsPerRun(1000, func() { ft.reset(); s.DataReceived(req) })
 
+	// Measured with Go 1.25.3; if a Go release moves them, re-measure with
+	// BenchmarkAMPCall/BenchmarkAMPServe before changing the bounds.
 	const maxCall, maxServe = 7, 13
 	if call > maxCall || serve > maxServe {
 		t.Fatalf("AMP allocations: call+answer %v (max %d), serve %v (max %d)", call, maxCall, serve, maxServe)
