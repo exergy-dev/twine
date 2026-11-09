@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command scaling is the server-bound scaling runner (BENCHMARKS.md, "pinned
 // methodology"). For every combination of server, server loop count,
 // connection count and client configuration it
@@ -15,11 +17,12 @@
 // Build the binaries first (the runner does it into -bin if they are missing):
 //
 //	go run ./scaling -mode echo -servers twine,gnet -loops 1,2,4,8 -conns 1000,4000
-//	go run ./scaling -mode http -servers twine@8,nethttp@8,nethttp@16@0-15 -conns 256,10000 -clients gor,tl,tls
+//	go run ./scaling -mode http -servers twine@8,nethttp@8,nethttp@16@0-15 -conns 256,10000 -clients gor,tl,spin
 //
 // Client configurations: gor = bench/echoclient or bench/httpclient
 // (goroutine per connection); tl = bench/twineload, 8 loops on 16,18,..,30;
-// tls = tl with SpinIterations(5000) (client threads stay awake); tlm / tlms
+// spin = tl with SpinIterations(5000) (client threads stay awake; results
+// recorded before the rename print client=tls); tlm / tlms
 // = twineload with as many loops as the server has (default spin / spin 5000).
 package main
 
@@ -61,7 +64,7 @@ func main() {
 	servers := flag.String("servers", "twine", "comma list of kind[@loops[@cpus]]: twine, gnet, nethttp; loops/cpus given = a fixed configuration, otherwise swept over -loops on the first N even CPUs")
 	loopsFlag := flag.String("loops", "1,2,4,8", "server loop counts to sweep")
 	connsFlag := flag.String("conns", "1000", "connection counts")
-	clients := flag.String("clients", "gor,tl,tls,tlm,tlms", "client configurations (see package doc)")
+	clients := flag.String("clients", "gor,tl,spin,tlm,tlms", "client configurations (see package doc)")
 	dur := flag.Duration("duration", 10*time.Second, "measured window per run")
 	cliCPUs := flag.String("client-cpus", "16-31", "taskset CPU list for the load generator")
 	cliPin := flag.String("client-pin", "16,18,20,22,24,26,28,30", "PinLoops list for twineload")
@@ -76,7 +79,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer os.RemoveAll(d)
+		defer func() { _ = os.RemoveAll(d) }()
 		bd = d
 	}
 	for _, p := range []string{"twineload", "echo_twine", "echo_gnet", "echoclient", "http_twine", "http_nethttp", "httpclient"} {
@@ -87,23 +90,23 @@ func main() {
 		c.Env = append(os.Environ(), "GOTOOLCHAIN=local")
 		c.Stderr = os.Stderr
 		if err := c.Run(); err != nil {
-			log.Fatalf("build %s: %v (run from the bench/ directory)", p, err)
+			log.Fatalf("build %s: %v (run from the bench/ directory)", p, err) //nolint:gocritic // leaves the temp dir behind on a build failure
 		}
 	}
 
-	var outF io.Writer = io.Discard
+	var outF = io.Discard
 	if *out != "" {
 		f, err := os.OpenFile(*out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		outF = f
 	}
 	logf := func(format string, a ...any) {
 		s := fmt.Sprintf(format, a...)
 		fmt.Print(s)
-		io.WriteString(outF, s)
+		_, _ = io.WriteString(outF, s)
 	}
 	logf("# scaling run %s mode=%s duration=%v host=%s\n", time.Now().Format(time.RFC3339), *mode, *dur, hostInfo())
 
@@ -193,7 +196,7 @@ func run(j job, mode, bd string, port int, dur time.Duration, cliCPUs, cliPin st
 	defer func() {
 		_ = srv.Process.Signal(os.Interrupt)
 		done := make(chan struct{})
-		go func() { srv.Wait(); close(done) }()
+		go func() { _ = srv.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
@@ -206,7 +209,7 @@ func run(j job, mode, bd string, port int, dur time.Duration, cliCPUs, cliPin st
 	for i := 0; i < 100; i++ {
 		c, err := net.DialTimeout("tcp", addr, time.Second)
 		if err == nil {
-			c.Close()
+			_ = c.Close()
 			up = true
 			break
 		}
@@ -231,7 +234,7 @@ func run(j job, mode, bd string, port int, dur time.Duration, cliCPUs, cliPin st
 		loops, spin := 8, -1
 		switch j.cli {
 		case "tl":
-		case "tls":
+		case "spin":
 			spin = 5000
 		case "tlm":
 			loops = j.n

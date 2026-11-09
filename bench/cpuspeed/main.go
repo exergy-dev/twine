@@ -1,3 +1,5 @@
+//go:build linux
+
 // cpuspeed pins N OS threads to distinct vCPUs and reports each one's
 // iterations/s of a fixed integer loop, to reveal heterogeneous host cores.
 package main

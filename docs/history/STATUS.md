@@ -1,8 +1,12 @@
 # Implementation status against design.md Section 13
 
+> **Historical:** the original design/build record, not maintained. See [README.md](../../README.md) and [docs/API.md](../API.md) for the current API, and [CHANGELOG.md](../../CHANGELOG.md) for what changed since.
+>
+> Superseded details: the repository is public at github.com/exergy-dev/twine and macOS runs in CI. `scripts/ci-local.sh`, cited below, has been removed: CI and local runs share the Makefile targets.
+
 Legend: **done** · **done (substitution)** — delivered differently from the
 letter of the design, with the reason · **not done** — with the cause.
-Numbers come from [BENCHMARKS.md](../BENCHMARKS.md); decisions are recorded
+Numbers come from [BENCHMARKS.md](../../BENCHMARKS.md); decisions are recorded
 in design.md Section 14.
 
 ## Phase 0: Scaffold — done
