@@ -27,15 +27,22 @@ func (c *captureConn) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 
-// sinkProto counts plaintext and hands its transport to the test.
+// sinkProto counts plaintext, hands its transport to the test and reports
+// ConnectionLost.
 type sinkProto struct {
 	made chan *twtls.Transport
+	lost chan error
 	n    int // loop-only
 }
 
 func (p *sinkProto) ConnectionMade(t twine.Transport) { p.made <- t.(*twtls.Transport) }
 func (p *sinkProto) DataReceived(b []byte)            { p.n += len(b) }
-func (p *sinkProto) ConnectionLost(error)             {}
+func (p *sinkProto) ConnectionLost(err error) {
+	select {
+	case p.lost <- err:
+	default:
+	}
+}
 
 // recordRig is a TLS 1.3 server connection on a one-loop engine, plus a
 // crypto/tls client that mints fresh ciphertext records for it (each record
@@ -51,7 +58,7 @@ type recordRig struct {
 func newRecordRig(tb testing.TB) *recordRig {
 	tb.Helper()
 	e := startEngine(tb, twine.Loops(1))
-	sink := &sinkProto{made: make(chan *twtls.Transport, 1)}
+	sink := &sinkProto{made: make(chan *twtls.Transport, 1), lost: make(chan error, 1)}
 	addr := listen(tb, e, serverConfig(tb), twine.FactoryFunc(func(net.Addr) twine.Protocol { return sink }))
 	raw, err := net.Dial("tcp", addr)
 	if err != nil {
