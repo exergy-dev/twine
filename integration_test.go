@@ -1383,6 +1383,10 @@ func TestSoakIdleConnections(t *testing.T) {
 	if testing.Short() {
 		n = 2000
 	}
+	// Each connection costs two fds in this process. macOS caps the
+	// per-process limit at kern.maxfilesperproc (typically 10240), which
+	// does not fit 10000 connections; scale down rather than fail on EMFILE.
+	n = fdBudgetConns(t, n, 1000)
 	e := startEngine(t, Loops(4))
 	lst := listen(t, e, echoFactory())
 	addr := lst.Addr().String()
