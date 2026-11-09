@@ -3,8 +3,6 @@ package twine
 import (
 	"net"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // transport is the Transport handle given to protocols. conn structs are
@@ -40,7 +38,7 @@ func (t *transport) FD() int {
 func (t *transport) Write(b []byte) {
 	t.c.loop.assertInLoop()
 	if t.gen != t.c.gen {
-		t.c.loop.metrics.WriteAfterClose.Add(1)
+		t.c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	t.c.write(b)
@@ -50,7 +48,7 @@ func (t *transport) Write(b []byte) {
 func (t *transport) Writev(bs ...[]byte) {
 	t.c.loop.assertInLoop()
 	if t.gen != t.c.gen {
-		t.c.loop.metrics.WriteAfterClose.Add(1)
+		t.c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	t.c.writev(bs)
@@ -193,18 +191,6 @@ func (t *transport) PendingWrite() int {
 		return 0
 	}
 	return t.c.ring.Len()
-}
-
-// SetNoDelay toggles TCP_NODELAY on the socket.
-func (t *transport) SetNoDelay(on bool) error {
-	if !t.live() {
-		return ErrClosed
-	}
-	v := 0
-	if on {
-		v = 1
-	}
-	return unix.SetsockoptInt(int(t.c.fd), unix.IPPROTO_TCP, unix.TCP_NODELAY, v)
 }
 
 // peerFor returns the peer address if gen matches (addresses are cleared on

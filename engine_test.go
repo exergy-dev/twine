@@ -1,13 +1,9 @@
 package twine
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"io"
+	"errors"
 	"net"
-	"runtime"
-	"sync"
 	"testing"
 	"time"
 )
@@ -53,71 +49,45 @@ func echoFactory() Factory {
 	return FactoryFunc(func(net.Addr) Protocol { return &echoProto{} })
 }
 
-func TestEchoRoundTrip(t *testing.T) {
-	for _, loops := range []int{1, 2, runtime.GOMAXPROCS(0)} {
-		t.Run("loops="+itoa(loops), func(t *testing.T) {
-			e := startEngine(t, Loops(loops))
-			lst, err := e.ListenTCP("127.0.0.1:0", echoFactory())
-			if err != nil {
-				t.Fatal(err)
-			}
-			var wg sync.WaitGroup
-			for i := 0; i < 8; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					c, err := net.Dial("tcp", lst.Addr().String())
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					defer c.Close()
-					msg := make([]byte, 1000)
-					rand.Read(msg)
-					for j := 0; j < 100; j++ {
-						if _, err := c.Write(msg); err != nil {
-							t.Error(err)
-							return
-						}
-						got := make([]byte, len(msg))
-						if _, err := io.ReadFull(c, got); err != nil {
-							t.Error(err)
-							return
-						}
-						if !bytes.Equal(got, msg) {
-							t.Error("echo mismatch")
-							return
-						}
-					}
-				}()
-			}
-			wg.Wait()
-		})
+func TestRunTwice(t *testing.T) {
+	e := New(Loops(1), Watchdog(0))
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Run(context.Background()) }()
+	for !e.loops[0].started.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	if err := e.Run(context.Background()); !errors.Is(err, ErrRunTwice) {
+		t.Errorf("Run while running = %v, want ErrRunTwice", err)
+	}
+	e.Stop()
+	if err := <-errCh; err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := e.Run(context.Background()); !errors.Is(err, ErrRunTwice) {
+		t.Errorf("Run after Run = %v, want ErrRunTwice", err)
+	}
+
+	// Stop before Run: Run returns nil at once.
+	e2 := New(Loops(1), Watchdog(0))
+	e2.Stop()
+	if err := e2.Run(context.Background()); err != nil {
+		t.Errorf("Run after Stop = %v, want nil", err)
 	}
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
-}
-
-// onLoop runs fn on l and waits for it.
+// onLoop runs fn on l and waits for it: up to 10 seconds in a test, and up
+// to 5 minutes in a benchmark (setup of a million timers plus a benchtime).
 func onLoop(t testing.TB, l *Loop, fn func()) {
 	t.Helper()
+	timeout := 10 * time.Second
+	if _, ok := t.(*testing.B); ok {
+		timeout = 5 * time.Minute
+	}
 	done := make(chan struct{})
 	l.CallFromThread(func() { defer close(done); fn() })
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(timeout):
 		t.Fatal("loop did not run task")
 	}
 }

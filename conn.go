@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/exergy-dev/twine/internal/poll"
 	"github.com/exergy-dev/twine/internal/ring"
@@ -36,10 +35,9 @@ const (
 	flagLostCalled                        // ConnectionLost delivered
 	flagRecycled                          // finishClose done
 	flagProducerPaused                    // PauseProducing has been delivered
-	flagNoDelay
-	flagLinger // idle timer is acting as the half-close linger deadline
-	flagPooled // allocated by getConn; may be returned to the free list
-	flagHangup // a poll event carried a hangup: read to EOF, even after a short read
+	flagLinger                            // idle timer is acting as the half-close linger deadline
+	flagPooled                            // allocated by getConn; may be returned to the free list
+	flagHangup                            // a poll event carried a hangup: read to EOF, even after a short read
 )
 
 // conn is the per-connection state. It implements Transport directly so that
@@ -124,20 +122,19 @@ func (c *conn) queueReady() {
 // --- lifecycle -------------------------------------------------------------
 
 // attachTCP initialises an accepted or connected socket and registers it.
-func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory, noDelay bool) *conn {
+func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory) *conn {
 	c := l.getConn()
 	c.fd = int32(fd)
 	c.kind = kindTCP
 	c.peer, c.host = peer, host
-	if noDelay {
-		c.flags |= flagNoDelay
-	}
 	l.register(c)
-	l.metrics.Connections.Add(1)
+	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
 	p := f.BuildProtocol(peer)
 	if p == nil {
-		p = nopProtocol{}
+		// The factory refused the connection: close it without callbacks.
+		c.abortNoCallback()
+		return c
 	}
 	c.setProto(p)
 	if err := l.poller.Add(fd, poll.Readable); err != nil {
@@ -157,14 +154,6 @@ func (l *Loop) callConnectionMade(c *conn) {
 	c.proto.ConnectionMade(c.h)
 }
 
-// nopProtocol stands in when a Factory returns nil (Twisted drops the
-// connection; we keep it open but ignore data).
-type nopProtocol struct{}
-
-func (nopProtocol) ConnectionMade(Transport) {}
-func (nopProtocol) DataReceived([]byte)      {}
-func (nopProtocol) ConnectionLost(error)     {}
-
 // onIdle is the idle-timer callback (wheel.Timer.Fn).
 func (c *conn) onIdle() {
 	if c.flags&flagClosed != 0 {
@@ -181,11 +170,8 @@ func (c *conn) eof() {
 	if c.flags&(flagClosed|flagEOF) != 0 {
 		return
 	}
-	c.flags |= flagEOF
 	// Stop reading; the socket will not deliver more data.
-	if c.flags&flagReadPaused == 0 {
-		c.flags |= flagReadPaused
-	}
+	c.flags |= flagEOF | flagReadPaused
 	if c.ring.Len() == 0 {
 		// Nothing left to send: close now. ConnectionLost(nil) is a clean
 		// close; a pending LoseConnection also ends here.
@@ -313,14 +299,14 @@ func (c *conn) write(b []byte) {
 		return
 	}
 	if c.flags&(flagClosed|flagClosing) != 0 {
-		c.loop.metrics.WriteAfterClose.Add(1)
+		c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	if c.ring.Len() == 0 && c.flags&flagFlushing == 0 {
 		n, err := unix.Write(int(c.fd), b)
 		if n == len(b) {
-			c.loop.metrics.WriteBytes.Add(uint64(n))
-			c.loop.metrics.WriteDirectHit.Add(1)
+			c.loop.metrics.writeBytes.Add(uint64(n))
+			c.loop.metrics.writeDirectHit.Add(1)
 			c.touchIdle()
 			if c.producer != nil && !c.streaming {
 				c.markDirty() // flush pokes the pull producer for more
@@ -328,7 +314,7 @@ func (c *conn) write(b []byte) {
 			return
 		}
 		if n > 0 {
-			c.loop.metrics.WriteBytes.Add(uint64(n))
+			c.loop.metrics.writeBytes.Add(uint64(n))
 			b = b[n:]
 		} else if err != nil && err != unix.EAGAIN && err != unix.EINTR {
 			c.failWrite(err)
@@ -342,7 +328,7 @@ func (c *conn) write(b []byte) {
 // writev implements Transport.Writev.
 func (c *conn) writev(bs [][]byte) {
 	if c.flags&(flagClosed|flagClosing) != 0 {
-		c.loop.metrics.WriteAfterClose.Add(1)
+		c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	total := 0
@@ -365,8 +351,8 @@ func (c *conn) writev(bs [][]byte) {
 		}
 		n, err := rawWritev(int(c.fd), iov)
 		if n == total {
-			c.loop.metrics.WriteBytes.Add(uint64(n))
-			c.loop.metrics.WriteDirectHit.Add(1)
+			c.loop.metrics.writeBytes.Add(uint64(n))
+			c.loop.metrics.writeDirectHit.Add(1)
 			c.touchIdle()
 			if c.producer != nil && !c.streaming {
 				c.markDirty()
@@ -380,7 +366,7 @@ func (c *conn) writev(bs [][]byte) {
 			}
 			n = 0
 		}
-		c.loop.metrics.WriteBytes.Add(uint64(n))
+		c.loop.metrics.writeBytes.Add(uint64(n))
 		// Buffer the unwritten tail.
 		for _, b := range bs {
 			if n >= len(b) {
@@ -450,9 +436,9 @@ func (c *conn) flush() {
 	c.flags |= flagFlushing
 	iov := c.ring.Iovecs(c.loop.iovecs[:])
 	n, err := rawWritev(int(c.fd), iov)
-	c.loop.metrics.Writev.Add(1)
+	c.loop.metrics.writev.Add(1)
 	if n > 0 {
-		c.loop.metrics.WriteBytes.Add(uint64(n))
+		c.loop.metrics.writeBytes.Add(uint64(n))
 		c.ring.Consume(n)
 		c.touchIdle()
 	} else if err != nil && err != unix.EAGAIN && err != unix.EINTR {
@@ -469,8 +455,8 @@ func (c *conn) flush() {
 			return
 		}
 	} else {
+		// Edge-triggered: Writable arrives when the socket drains.
 		c.armWrite()
-		c.markDirtyIfWritable(n)
 	}
 	// Producer resume below the low-water mark; pull producers are poked
 	// whenever the ring drains.
@@ -485,15 +471,6 @@ func (c *conn) flush() {
 		}
 	}
 	c.flags &^= flagFlushing
-}
-
-// markDirtyIfWritable re-queues c for another flush this iteration when the
-// socket accepted a full writev (so more may fit), bounded by the iovec
-// count so one conn cannot monopolise the loop.
-func (c *conn) markDirtyIfWritable(n int) {
-	_ = n
-	// Edge-triggered: we will get Writable when the socket drains. Nothing
-	// to do; flagDirty was already cleared by flushDirty.
 }
 
 // touchIdle resets the idle timer after activity.
@@ -517,22 +494,4 @@ func (c *conn) sockErr() error {
 		return ErrConnectionReset
 	}
 	return e
-}
-
-// rawWritev calls writev(2) with a prebuilt iovec array; unix.Writev takes
-// [][]byte and allocates the iovecs, so it is not used on the hot path.
-func rawWritev(fd int, iov []unix.Iovec) (int, error) {
-	if len(iov) == 0 {
-		return 0, nil
-	}
-	for {
-		n, _, e := unix.Syscall(unix.SYS_WRITEV, uintptr(fd), uintptr(unsafe.Pointer(&iov[0])), uintptr(len(iov)))
-		if e == unix.EINTR {
-			continue
-		}
-		if e != 0 {
-			return -1, e
-		}
-		return int(n), nil
-	}
 }

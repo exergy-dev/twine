@@ -265,3 +265,97 @@ func TestUDPStopProtocol(t *testing.T) {
 		}
 	})
 }
+
+// fromKeeper stores the source address pointer it is given (the bug the
+// call-scoped rule is about) next to a value copy.
+type fromKeeper struct {
+	tr     DatagramTransport
+	mu     sync.Mutex
+	kept   []net.Addr
+	copies []string
+	got    chan struct{}
+}
+
+func (k *fromKeeper) StartProtocol(t DatagramTransport) { k.tr = t }
+func (k *fromKeeper) DatagramReceived(b []byte, from net.Addr) {
+	k.mu.Lock()
+	k.kept = append(k.kept, from)
+	k.copies = append(k.copies, from.(*net.UDPAddr).AddrPort().String())
+	k.mu.Unlock()
+	k.got <- struct{}{}
+	if string(b) == "shut" {
+		k.tr.Close() // StopProtocol closes k.got
+	}
+}
+func (k *fromKeeper) StopProtocol() { close(k.got) }
+
+// The source address passed to DatagramReceived is call-scoped: debug builds
+// empty it after the call, so a retained pointer is visibly wrong, while a
+// copy taken during the call stays right.
+func TestUDPFromScrubbedInDebug(t *testing.T) {
+	enableDebug(t)
+	e := startEngine(t, Loops(1))
+	k := &fromKeeper{got: make(chan struct{}, 4)}
+	lst, err := e.ListenUDP("127.0.0.1:0", k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1 := dialUDP(t, lst.Addr())
+	c2 := dialUDP(t, lst.Addr())
+	for _, c := range []*net.UDPConn{c1, c2} {
+		if _, err := c.Write([]byte("hi")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-k.got:
+		case <-time.After(5 * time.Second):
+			t.Fatal("datagram not received")
+		}
+	}
+	onLoop(t, e.loops[0], func() {
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		for i, a := range k.kept {
+			if s := a.String(); s != ":0" && s != "<nil>" {
+				t.Errorf("retained from[%d] = %s after the call, want it scrubbed", i, s)
+			}
+		}
+		want := []string{c1.LocalAddr().String(), c2.LocalAddr().String()}
+		for i, s := range k.copies {
+			if s != want[i] {
+				t.Errorf("copy %d = %s, want %s", i, s, want[i])
+			}
+		}
+	})
+}
+
+// DatagramTransport.Close closes the socket from the protocol and calls
+// StopProtocol once.
+func TestDatagramTransportClose(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	k := &fromKeeper{got: make(chan struct{}, 4)}
+	lst, err := e.ListenUDP("127.0.0.1:0", k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialUDP(t, lst.Addr())
+	if _, err := c.Write([]byte("shut")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for open := true; open; {
+		select {
+		case _, open = <-k.got:
+		case <-deadline:
+			t.Fatal("StopProtocol not called after Close")
+		}
+	}
+	onLoop(t, e.loops[0], func() {
+		if n := e.loops[0].nconns; n != 0 {
+			t.Errorf("%d fds still registered after Close", n)
+		}
+	})
+	if err := lst.Close(); err != nil {
+		t.Errorf("Listener.Close after DatagramTransport.Close: %v", err)
+	}
+}

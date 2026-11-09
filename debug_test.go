@@ -248,6 +248,42 @@ func TestWatchdogSlowCallback(t *testing.T) {
 	}
 }
 
+// An idle engine's watchdog backs off from one sample per millisecond to one
+// per watchdogIdleInterval, and returns to the short interval under load.
+func TestWatchdogIdleBackoff(t *testing.T) {
+	e := startEngine(t, Loops(2), Watchdog(time.Millisecond))
+	time.Sleep(200 * time.Millisecond) // reach the idle interval
+	s0 := e.wdSamples.Load()
+	time.Sleep(500 * time.Millisecond)
+	idle := e.wdSamples.Load() - s0
+	t.Logf("%d watchdog samples in 500ms idle", idle)
+	if idle > 40 {
+		t.Errorf("%d watchdog samples in 500ms on an idle engine; want about %d", idle, 500*time.Millisecond/watchdogIdleInterval)
+	}
+
+	// Under load (a timer keeping a loop iterating) it samples every 1 ms.
+	l := e.loops[0]
+	stop := make(chan struct{})
+	var tick func()
+	tick = func() {
+		select {
+		case <-stop:
+		default:
+			l.CallLater(time.Millisecond, tick)
+		}
+	}
+	l.CallFromThread(tick)
+	time.Sleep(100 * time.Millisecond)
+	s1 := e.wdSamples.Load()
+	time.Sleep(200 * time.Millisecond)
+	busy := e.wdSamples.Load() - s1
+	close(stop)
+	t.Logf("%d watchdog samples in 200ms busy", busy)
+	if busy < 50 {
+		t.Errorf("%d watchdog samples in 200ms on a busy loop; want about 200", busy)
+	}
+}
+
 // Writes from a debug-mode echo still work end to end (assertions do not
 // fire on the loop).
 func TestDebugModeEcho(t *testing.T) {

@@ -31,19 +31,6 @@ func benchDelays(n int, span time.Duration) []time.Duration {
 	return d
 }
 
-// benchOnLoop runs fn on l and waits for it, with a timeout generous enough
-// for setup of a million timers plus a full benchtime.
-func benchOnLoop(b *testing.B, l *Loop, fn func()) {
-	b.Helper()
-	done := make(chan struct{})
-	l.CallFromThread(func() { defer close(done); fn() })
-	select {
-	case <-done:
-	case <-time.After(5 * time.Minute):
-		b.Fatal("loop did not run benchmark task")
-	}
-}
-
 // BenchmarkTimers1M measures CallLater on a wheel holding 1M live timers.
 // insert+cancel: one op is CallLater followed by Stop (the Phase 3 gate is
 // <= 50 ns and 0 allocs). fire: one op is one timer expiring and running its
@@ -53,7 +40,7 @@ func BenchmarkTimers1M(b *testing.B) {
 		e := startEngine(b, Loops(1))
 		l := e.loops[0]
 		delays := benchDelays(4096, time.Hour)
-		benchOnLoop(b, l, func() {
+		onLoop(b, l, func() {
 			for i := 0; i < liveTimers; i++ {
 				l.CallLater(delays[i&4095]+time.Hour, benchNoop)
 			}
@@ -74,7 +61,7 @@ func BenchmarkTimers1M(b *testing.B) {
 		e := startEngine(b, Loops(1))
 		l := e.loops[0]
 		delays := benchDelays(4096, time.Second)
-		benchOnLoop(b, l, func() {
+		onLoop(b, l, func() {
 			// Drive the wheel with a synthetic clock: each batch is
 			// scheduled within 1 s of now and fired by advancing 2 s. The
 			// engine is discarded afterwards, so leaving its wheel ahead of
@@ -338,7 +325,7 @@ func BenchmarkFutureResolve(b *testing.B) {
 		l := e.loops[0]
 		var sum int
 		cb := func(v int) { sum += v }
-		benchOnLoop(b, l, func() {
+		onLoop(b, l, func() {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
