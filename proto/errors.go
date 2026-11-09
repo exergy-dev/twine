@@ -15,3 +15,8 @@ var (
 	// LengthIncludesPrefix is set.
 	ErrMalformedFrame = errors.New("proto: malformed length-prefixed frame")
 )
+
+// ErrGaveUp is wrapped by the error passed to a ReconnectingClient's
+// OnStateChange callback when the client gives up: after MaxRetries
+// consecutive failures or when the engine stops.
+var ErrGaveUp = errors.New("proto: reconnecting client gave up")
