@@ -3,6 +3,8 @@ package ring
 import (
 	"bytes"
 	"math/rand"
+	"slices"
+	"strconv"
 	"testing"
 	"testing/quick"
 	"unsafe"
@@ -282,7 +284,7 @@ func TestGrowthClasses(t *testing.T) {
 		{"remainder above floor", []int{100, k4 + k64}, []int{k4, k256}},
 		{"geometric floor", []int{k4, 1, k16, 1, k64, 1}, []int{k4, k16, k64, k256}},
 		{"all four classes", []int{k4, k16, k64, k256}, []int{k4, k16, k64, k256}},
-		{"small backlog", repeat(100, 3000), []int{k4, k16, k64, k256}},
+		{"small backlog", slices.Repeat([]int{100}, 3000), []int{k4, k16, k64, k256}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -294,7 +296,7 @@ func TestGrowthClasses(t *testing.T) {
 				ref = append(ref, p...)
 			}
 			got := segSizes(r)
-			if !equalInts(got, c.want) {
+			if !slices.Equal(got, c.want) {
 				t.Fatalf("segments %v, want %v", got, c.want)
 			}
 			checkInvariants(t, r)
@@ -305,26 +307,6 @@ func TestGrowthClasses(t *testing.T) {
 			}
 		})
 	}
-}
-
-func repeat(n, times int) []int {
-	out := make([]int, times)
-	for i := range out {
-		out[i] = n
-	}
-	return out
-}
-
-func equalInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestResetThenReuse(t *testing.T) {
@@ -585,22 +567,8 @@ func BenchmarkIovecs(b *testing.B) {
 func byteSize(n int) string {
 	switch {
 	case n >= 1<<10 && n%(1<<10) == 0:
-		return itoa(n>>10) + "KiB"
+		return strconv.Itoa(n>>10) + "KiB"
 	default:
-		return itoa(n) + "B"
+		return strconv.Itoa(n) + "B"
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }
