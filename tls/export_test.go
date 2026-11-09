@@ -19,3 +19,15 @@ func (t *Transport) ForceRefusedWrite() {
 		panic("bio accepted a write after noWrite")
 	}
 }
+
+// SetScratchBusy marks the loop's shared plaintext buffer as in use, as a
+// drain further up the stack would (test hook). Loop-only.
+func (t *Transport) SetScratchBusy(busy bool) { t.scratch.busy = busy }
+
+// ScratchBusy reports whether the loop's shared plaintext buffer is marked
+// in use (test hook). Loop-only.
+func (t *Transport) ScratchBusy() bool { return t.scratch.busy }
+
+// OwnPlainBuffer reports whether the connection allocated a plaintext buffer
+// of its own (test hook). Loop-only.
+func (t *Transport) OwnPlainBuffer() bool { return t.plain != nil }

@@ -69,13 +69,16 @@
 //
 // crypto/tls must see a whole record before it returns plaintext, so a
 // partially received record (up to 16 KiB plus overhead) is buffered inside
-// the tls.Conn; this, and the 16 KiB plaintext buffer that tls.Conn.Read
-// decrypts into (allocated when the handshake completes), are the per
-// connection buffers TLS cannot avoid. Ciphertext from DataReceived is lent
-// to crypto/tls without copying in loop mode; only a remainder left when the
+// the tls.Conn: that is the per-connection buffer TLS cannot avoid. The
+// 16 KiB plaintext buffer that tls.Conn.Read decrypts into is shared by all
+// connections of a loop, because plaintext is only lent to the inner
+// protocol for the duration of DataReceived; a connection allocates one of
+// its own only when it is drained while that buffer is in use (TLS nested
+// inside TLS on the same loop). Ciphertext from DataReceived is lent to
+// crypto/tls without copying in loop mode; only a remainder left when the
 // inner protocol pauses reading mid-chunk is copied. During the handshake,
-// ciphertext is copied because the worker reads it after DataReceived
-// returns.
+// ciphertext is copied because the handshake goroutine reads it after
+// DataReceived returns.
 //
 // # Kernel TLS
 //
