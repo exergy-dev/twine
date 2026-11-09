@@ -87,6 +87,19 @@ type Loop struct {
 	metrics loopMetrics
 	cbStart atomic.Int64 // monotonic ns when the current callback began; 0 when idle
 	cbProto atomic.Pointer[conn]
+	// Completed slow dispatches, measured by the loop itself from clock reads
+	// it already makes: dispatchStart is the time the last poll returned,
+	// dispatchCbs counts the callbacks run since, lastCb is the connection of
+	// the most recent one (nil for a task). slowNs holds the longest span at
+	// or above the watchdog threshold since the watchdog last looked, and
+	// slowProto the connection to blame when exactly one callback ran.
+	dispatchStart int64
+	dispatchCbs   int
+	lastCb        *conn
+	wdNs          int64
+	slowNs        atomic.Int64
+	slowProto     atomic.Pointer[conn]
+	slowMulti     atomic.Bool
 }
 
 func newLoop(e *Engine, id int) *Loop {
@@ -103,6 +116,7 @@ func newLoop(e *Engine, id int) *Loop {
 	l.wheel = wheel.New(wheelTick, 0)
 	l.rdbuf = make([]byte, e.cfg.readBufferSize)
 	l.conns = make([]*conn, 1024)
+	l.wdNs = e.cfg.watchdog.Nanoseconds()
 	return l
 }
 
@@ -302,6 +316,15 @@ func (l *Loop) iterate() {
 
 		// 2. Fire expired timers.
 		l.refreshNow()
+		if l.dispatchStart != 0 && l.wdNs > 0 {
+			// Everything since the last poll returned: the callbacks of the
+			// previous iteration plus the tasks just drained. A span at or
+			// above the watchdog threshold is reported at its next sample,
+			// however far it has backed off while the engine was idle.
+			if d := l.nowNs - l.dispatchStart; d >= l.wdNs {
+				l.noteSlowDispatch(d)
+			}
+		}
 		l.fireDue()
 		fired := l.wheel.Advance(l.nowNs)
 		if fired > 0 {
@@ -338,6 +361,7 @@ func (l *Loop) iterate() {
 		} else {
 			l.refreshNow()
 		}
+		l.dispatchStart, l.dispatchCbs = l.nowNs, 0
 		if err != nil {
 			l.cfg.logger.Error("twine: poll failed", "loop", l.id, "err", err)
 		}
@@ -491,9 +515,22 @@ func (l *Loop) drainTasks() {
 func (l *Loop) runTask(fn func()) {
 	l.metrics.tasksRun.Add(1)
 	l.cbStart.Store(l.nowNs)
+	l.dispatchCbs++
+	l.lastCb = nil
 	defer l.cbStart.Store(0)
 	defer l.recoverTask()
 	fn()
+}
+
+// noteSlowDispatch records a dispatch span of d ns for the watchdog, keeping
+// the longest since the watchdog last cleared it.
+func (l *Loop) noteSlowDispatch(d int64) {
+	if d <= l.slowNs.Load() {
+		return
+	}
+	l.slowNs.Store(d)
+	l.slowMulti.Store(l.dispatchCbs != 1)
+	l.slowProto.Store(l.lastCb)
 }
 
 func (l *Loop) recoverTask() {
@@ -683,6 +720,8 @@ func (l *Loop) handleRead(c *conn, hangup bool) {
 func (l *Loop) callDataReceived(c *conn, b []byte) {
 	l.cbStart.Store(l.nowNs)
 	l.cbProto.Store(c)
+	l.dispatchCbs++
+	l.lastCb = c
 	defer l.endCallback()
 	defer l.recoverProto(c)
 	c.proto.DataReceived(b)
@@ -819,6 +858,8 @@ func (l *Loop) finishClose(c *conn) {
 func (l *Loop) callConnectionLost(c *conn) {
 	l.cbStart.Store(l.nowNs)
 	l.cbProto.Store(c)
+	l.dispatchCbs++
+	l.lastCb = c
 	defer l.endCallback()
 	defer l.recoverLost(c)
 	c.proto.ConnectionLost(c.lostErr)
@@ -833,6 +874,8 @@ func (l *Loop) recoverLost(c *conn) {
 // safeCall runs fn with panic recovery attributed to c.
 func (l *Loop) safeCall(c *conn, fn func()) {
 	l.cbStart.Store(l.nowNs)
+	l.dispatchCbs++
+	l.lastCb = c
 	defer l.endCallback()
 	defer l.recoverProto(c)
 	fn()

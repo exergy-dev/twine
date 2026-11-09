@@ -24,9 +24,15 @@ const watchdogIdleInterval = 50 * time.Millisecond
 // iteration since the previous sample (it is blocked in poll); while every
 // loop is idle the interval doubles up to watchdogIdleInterval, so an idle
 // engine costs about 20 wakeups a second instead of 1000. The first sample
-// that finds a loop busy drops back to the short interval, so a stall right
-// after an idle period is reported once it has run for threshold plus the
-// current interval.
+// that finds a loop busy drops back to the short interval.
+//
+// Sampling alone would miss a callback that starts and ends between two
+// samples, so each loop also measures, from clock reads it already makes,
+// how long it spent between one poll returning and the next poll starting.
+// A span at or above the threshold is reported at the next sample whatever
+// the interval, with the protocol when exactly one callback ran in it; a
+// callback that is still running is reported once it has run for threshold
+// plus the current interval, with the loop goroutine's stack.
 func (e *Engine) watchdog() {
 	threshold := e.cfg.watchdog
 	base := threshold / 2
@@ -53,6 +59,23 @@ func (e *Engine) watchdog() {
 				idle = false
 			}
 			lastIter[i] = iter
+			now := time.Now()
+			if d := l.slowNs.Swap(0); d > 0 {
+				// A dispatch that already finished, measured by the loop.
+				idle = false
+				if now.Sub(lastReport[i]) >= time.Second {
+					lastReport[i] = now
+					l.metrics.slowCallbacks.Add(1)
+					proto := "<task>"
+					if l.slowMulti.Load() {
+						proto = "<multiple>"
+					} else if c := l.slowProto.Load(); c != nil {
+						proto = protoNameOf(c)
+					}
+					e.cfg.logger.Warn("twine: slow callback",
+						"loop", l.id, "elapsed", time.Duration(d), "protocol", proto, "completed", true)
+				}
+			}
 			if start == 0 {
 				continue
 			}
@@ -60,7 +83,6 @@ func (e *Engine) watchdog() {
 			if elapsed < threshold {
 				continue
 			}
-			now := time.Now()
 			if now.Sub(lastReport[i]) < time.Second {
 				continue
 			}
@@ -68,9 +90,7 @@ func (e *Engine) watchdog() {
 			l.metrics.slowCallbacks.Add(1)
 			proto := "<none>"
 			if c := l.cbProto.Load(); c != nil {
-				if n := c.protoName.Load(); n != nil {
-					proto = *n
-				}
+				proto = protoNameOf(c)
 			}
 			e.cfg.logger.Warn("twine: slow callback",
 				"loop", l.id, "elapsed", elapsed, "protocol", proto,
@@ -83,6 +103,14 @@ func (e *Engine) watchdog() {
 		}
 		timer.Reset(interval)
 	}
+}
+
+// protoNameOf is the protocol type name recorded on c, or "<none>".
+func protoNameOf(c *conn) string {
+	if n := c.protoName.Load(); n != nil {
+		return *n
+	}
+	return "<none>"
 }
 
 // goroutineStack returns the stack of goroutine gid from a full dump.
