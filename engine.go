@@ -2,8 +2,8 @@ package twine
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 )
@@ -18,11 +18,12 @@ type Engine struct {
 	listeners     []*listener
 	shutdownHooks []func()
 	state         atomic.Int32
+	ran           atomic.Bool   // Run got past its start (ErrRunTwice from then on)
+	wdSamples     atomic.Uint64 // watchdog samples taken (tests)
 	next          atomic.Uint32 // NextLoop: outbound connections, UDP sockets
 	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
 	stopCh        chan struct{}
 	doneCh        chan struct{}
-	runErr        error
 }
 
 const (
@@ -49,6 +50,10 @@ func New(opts ...Option) *Engine {
 	return e
 }
 
+// Logger returns the engine's logger: the one passed to Logger, a logger
+// that discards everything after Logger(nil), or slog.Default().
+func (e *Engine) Logger() *slog.Logger { return e.cfg.logger }
+
 // Loops returns the engine's loops.
 func (e *Engine) Loops() []*Loop { return e.loops }
 
@@ -73,7 +78,6 @@ func (e *Engine) Metrics() []MetricsSnapshot {
 	out := make([]MetricsSnapshot, len(e.loops))
 	for i, l := range e.loops {
 		out[i] = l.Metrics()
-		out[i].LoopID = i
 	}
 	return out
 }
@@ -88,14 +92,23 @@ func (e *Engine) OnShutdown(fn func()) {
 }
 
 // Run starts the loops and blocks until ctx is done or Stop is called. It
-// returns nil after a clean shutdown, or the error that prevented a loop from
-// starting.
+// returns nil after a clean shutdown (or at once if Stop was called before
+// Run), the error that prevented a loop from starting, or ErrRunTwice if the
+// Engine has already run.
 func (e *Engine) Run(ctx context.Context) error {
-	if !e.state.CompareAndSwap(stateNew, stateRunning) {
-		if e.state.Load() == stateStopped {
+	// e.mu orders the start against listener.Close, which closes sockets
+	// directly only while it holds e.mu and the loops cannot start.
+	e.mu.Lock()
+	started := e.state.CompareAndSwap(stateNew, stateRunning)
+	if started {
+		e.ran.Store(true)
+	}
+	e.mu.Unlock()
+	if !started {
+		if e.state.Load() == stateStopped && !e.ran.Load() {
 			return nil // Stop was called before Run
 		}
-		return errors.New("twine: Engine.Run called twice")
+		return ErrRunTwice
 	}
 	ready := make(chan error, len(e.loops))
 	for _, l := range e.loops {
@@ -123,7 +136,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	case <-e.stopCh:
 	}
 	e.shutdown()
-	return e.runErr
+	return nil
 }
 
 // Stop begins graceful shutdown: stop accepting, flush, close. It returns
@@ -151,7 +164,8 @@ func (e *Engine) Stop() {
 // Done is closed when Run has returned.
 func (e *Engine) Done() <-chan struct{} { return e.doneCh }
 
-// shutdown implements design Section 8 rule 7.
+// shutdown closes listeners, runs the OnShutdown hooks, then asks every loop
+// to LoseConnection its connections, flush for up to ShutdownTimeout and exit.
 func (e *Engine) shutdown() {
 	e.mu.Lock()
 	ls := e.listeners
@@ -204,6 +218,9 @@ func (e *Engine) ListenTCP(addr string, f Factory, opts ...ListenOption) (Listen
 	lc := defaultListenConfig()
 	for _, o := range opts {
 		o(&lc)
+	}
+	if lc.backlog <= 0 {
+		lc.backlog = defaultBacklog
 	}
 	lst, err := e.newTCPListener(addr, f, lc)
 	if err != nil {

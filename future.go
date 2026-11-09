@@ -34,14 +34,22 @@ const (
 	futRejected
 )
 
-// Resolver settles a Future. Resolve and Reject are idempotent: the second
-// call is a no-op.
+// Resolver settles a Future. Its methods are safe from any goroutine, and
+// only the first Resolve or Reject counts: later calls are no-ops.
 type Resolver[T any] interface {
+	// Resolve settles the Future with v and schedules its Then and Finally
+	// callbacks on the Future's loop.
 	Resolve(v T)
+	// Reject settles the Future with err and schedules its Catch and
+	// Finally callbacks on the Future's loop.
 	Reject(err error)
 }
 
-// NewFuture creates a pending Future on l and its Resolver.
+// NewFuture creates a pending Future on l and its Resolver. l may be nil:
+// such a Future has no loop, and its callbacks run synchronously on the
+// goroutine that settles it, or that registers them once it is settled.
+// That suits code that must work before a loop is known (Rejected(nil, err)
+// for an early error, for example); Await works either way.
 func NewFuture[T any](l *Loop) (*Future[T], Resolver[T]) {
 	f := &Future[T]{loop: l}
 	if debugFutures {
@@ -146,8 +154,7 @@ func (f *Future[T]) guard(fn func()) (pe *PanicError) {
 		if r := recover(); r != nil {
 			pe = capturePanic(r)
 			if f.loop != nil {
-				f.loop.metrics.Panics.Add(1)
-				f.loop.cfg.logger.Error("twine: panic in Future callback", "loop", f.loop.id, "panic", pe.Value)
+				f.loop.logPanic("twine: panic in Future callback", pe)
 			}
 		}
 	}()
@@ -233,14 +240,16 @@ func (f *Future[T]) Await(ctx context.Context) (T, error) {
 	}
 }
 
-// Resolved returns an already-resolved Future on l.
+// Resolved returns an already-resolved Future on l (which may be nil; see
+// NewFuture).
 func Resolved[T any](l *Loop, v T) *Future[T] {
 	f, r := NewFuture[T](l)
 	r.Resolve(v)
 	return f
 }
 
-// Rejected returns an already-rejected Future on l.
+// Rejected returns an already-rejected Future on l (which may be nil; see
+// NewFuture).
 func Rejected[T any](l *Loop, err error) *Future[T] {
 	f, r := NewFuture[T](l)
 	r.Reject(err)
@@ -263,7 +272,8 @@ func Map[T, U any](f *Future[T], fn func(T) (U, error)) *Future[U] {
 }
 
 // All resolves with every value, in input order, when every input resolves;
-// it rejects on the first rejection.
+// it rejects on the first rejection. With no inputs it resolves with an
+// empty slice.
 func All[T any](l *Loop, fs ...*Future[T]) *Future[[]T] {
 	out, r := NewFuture[[]T](l)
 	if len(fs) == 0 {
@@ -274,7 +284,6 @@ func All[T any](l *Loop, fs ...*Future[T]) *Future[[]T] {
 	var remaining atomic.Int32
 	remaining.Store(int32(len(fs)))
 	for i, f := range fs {
-		i := i
 		f.Then(func(v T) {
 			vals[i] = v
 			if remaining.Add(-1) == 0 {
@@ -286,11 +295,11 @@ func All[T any](l *Loop, fs ...*Future[T]) *Future[[]T] {
 }
 
 // Any resolves with the first value; it rejects only if every input rejects,
-// with the last error.
+// with the last error. With no inputs it rejects with ErrNoFutures.
 func Any[T any](l *Loop, fs ...*Future[T]) *Future[T] {
 	out, r := NewFuture[T](l)
 	if len(fs) == 0 {
-		r.Reject(ErrLoopStopped)
+		r.Reject(ErrNoFutures)
 		return out
 	}
 	var remaining atomic.Int32
@@ -305,16 +314,20 @@ func Any[T any](l *Loop, fs ...*Future[T]) *Future[T] {
 	return out
 }
 
-// Sleep is CallLater as a Future. It must be called on l.
+// Sleep is CallLater as a Future: it resolves on l after d. It must be
+// called on l, which must not be nil.
 func Sleep(l *Loop, d time.Duration) *Future[struct{}] {
 	out, r := NewFuture[struct{}](l)
 	l.CallLater(d, func() { r.Resolve(struct{}{}) })
 	return out
 }
 
-// DeferToThread runs fn on the engine's worker pool and resolves the Future
-// on l. A loop calling DeferToThread never blocks; an off-loop caller blocks
-// only when every worker is busy and the submission queue is full.
+// DeferToThread runs fn on the engine's worker pool and settles the Future
+// on l (which must not be nil) with fn's result; a panic in fn rejects it
+// with a *PanicError, and an engine that has stopped rejects it with
+// ErrEngineStopped. A loop calling DeferToThread never blocks; an off-loop
+// caller blocks only when every worker is busy and the submission queue is
+// full.
 func DeferToThread[T any](l *Loop, fn func() (T, error)) *Future[T] {
 	out, r := NewFuture[T](l)
 	ok := l.eng.pool.submit(func() {

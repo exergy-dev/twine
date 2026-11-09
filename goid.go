@@ -13,9 +13,10 @@ var goidBufs = sync.Pool{New: func() any { return new([64]byte) }}
 
 // goid returns the current goroutine's id by parsing the "goroutine N "
 // header that runtime.Stack writes. It costs ~1µs and does not allocate in
-// steady state. It is used only where threadID is unavailable (non-Linux,
-// or LockOSThread(false)), and there it sits on the CallFromThread path via
-// InLoop, so it must stay allocation-free (TestCallFromThreadZeroAlloc).
+// steady state. The watchdog uses it to find the loop goroutine in a full
+// stack dump. It is also InLoop's fallback where threadID is unavailable
+// (OpenBSD, DragonFly), and there it sits on the CallFromThread path, so it
+// must stay allocation-free (TestGoidZeroAlloc).
 func goid() int64 {
 	buf := goidBufs.Get().(*[64]byte)
 	n := runtime.Stack(buf[:], false)

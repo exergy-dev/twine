@@ -2,6 +2,7 @@ package twine
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // sleepEcho is a goroutine-style protocol: it blocks in DataReceived and
@@ -232,5 +235,130 @@ func TestBlockingBackpressure(t *testing.T) {
 	<-readDone
 	if n != size || bad >= 0 {
 		t.Errorf("blocking echo returned %d of %d bytes (first bad %d), inner saw %d", n, size, bad, total.Load())
+	}
+}
+
+// proxyUser drives every method of the Blocking proxy Transport from the
+// protocol's own goroutine.
+type proxyUser struct {
+	t       Transport
+	results chan string
+	lost    chan error
+}
+
+type nopProducer struct{}
+
+func (nopProducer) PauseProducing()  {}
+func (nopProducer) ResumeProducing() {}
+func (nopProducer) StopProducing()   {}
+
+func (p *proxyUser) ConnectionMade(t Transport) {
+	p.t = t
+	ok := func(name string, cond bool) {
+		if !cond {
+			p.results <- name
+		}
+	}
+	ok("GetPeer", t.GetPeer() != nil)
+	ok("GetHost", t.GetHost() != nil)
+	ok("Loop", t.Loop() != nil && !t.Loop().InLoop())
+	v := new(int)
+	t.SetContext(v)
+	ok("Context", t.Context() == any(v))
+	t.SetIdleTimeout(time.Minute)
+	ok("PendingWrite", t.PendingWrite() == 0)
+	t.RegisterProducer(nopProducer{}, true)
+	t.UnregisterProducer()
+	t.PauseReading()
+	t.ResumeReading()
+	t.Writev([]byte("he"), nil, []byte("llo"))
+	p.results <- "done"
+}
+
+func (p *proxyUser) DataReceived(b []byte) {
+	switch string(b) {
+	case "panic":
+		panic("proxy boom")
+	case "quit":
+		p.t.Write([]byte("bye"))
+		p.t.LoseConnection()
+	case "abort":
+		p.t.Abort()
+	default:
+		p.t.Write(b)
+	}
+}
+
+func (p *proxyUser) ConnectionLost(err error) { p.lost <- err }
+
+func TestBlockingProxyMethods(t *testing.T) {
+	e := startEngine(t, Loops(1), Logger(nil))
+	results := make(chan string, 16)
+	lost := make(chan error, 4)
+	lst := listen(t, e, Blocking(FactoryFunc(func(net.Addr) Protocol {
+		return &proxyUser{results: results, lost: lost}
+	})))
+	expectLost := func(want func(error) bool) {
+		t.Helper()
+		select {
+		case err := <-lost:
+			if !want(err) {
+				t.Errorf("ConnectionLost(%v)", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no ConnectionLost")
+		}
+	}
+
+	c := dialTCP(t, lst.Addr().String())
+	for r := range results {
+		if r == "done" {
+			break
+		}
+		t.Errorf("proxy %s returned the wrong value", r)
+	}
+	got := make([]byte, 5)
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(c, got); err != nil || string(got) != "hello" {
+		t.Fatalf("Writev through the proxy: %q, %v", got, err)
+	}
+	echoOnce(t, c, []byte("echo"))
+	if _, err := c.Write([]byte("quit")); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := io.ReadAll(c); err != nil || string(b) != "bye" {
+		t.Errorf("after LoseConnection read %q, %v; want bye then EOF", b, err)
+	}
+	c.Close()
+	expectLost(func(err error) bool { return err == nil })
+
+	// Abort from the goroutine closes the connection.
+	c2 := dialTCP(t, lst.Addr().String())
+	<-results
+	if _, err := c2.Write([]byte("abort")); err != nil {
+		t.Fatal(err)
+	}
+	_ = c2.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadAll(c2); err != nil && !errors.Is(err, unix.ECONNRESET) {
+		t.Errorf("read after Abort: %v", err)
+	}
+	expectLost(func(err error) bool { return err == nil })
+
+	// A panic in the inner protocol aborts the connection, reaches the inner
+	// ConnectionLost as a PanicError, and is counted.
+	before := e.Loops()[0].Metrics().Panics
+	c3 := dialTCP(t, lst.Addr().String())
+	<-results
+	if _, err := c3.Write([]byte("panic")); err != nil {
+		t.Fatal(err)
+	}
+	_ = c3.SetDeadline(time.Now().Add(5 * time.Second))
+	_, _ = io.ReadAll(c3)
+	expectLost(func(err error) bool {
+		var pe *PanicError
+		return errors.As(err, &pe) && pe.Value == "proxy boom"
+	})
+	if d := e.Loops()[0].Metrics().Panics - before; d != 1 {
+		t.Errorf("Panics grew by %d, want 1", d)
 	}
 }

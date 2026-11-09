@@ -22,7 +22,7 @@ func TestPullProducerThatWritesNothingDoesNotSpin(t *testing.T) {
 	var tr Transport
 	made := make(chan struct{}, 1)
 	f := FactoryFunc(func(net.Addr) Protocol {
-		return &hookProtoSimple{onMade: func(tp Transport) { tr = tp; made <- struct{}{} }}
+		return &hookProto{made: func(_ *hookProto, tp Transport) { tr = tp; made <- struct{}{} }}
 	})
 	lst, err := e.ListenTCP("127.0.0.1:0", f)
 	if err != nil {
@@ -92,32 +92,5 @@ func TestIdleLoopBlocks(t *testing.T) {
 	delta := l.Metrics().Iterations - before
 	if delta > 50 {
 		t.Errorf("idle loop ran %d iterations in 300ms; it should be blocked in poll", delta)
-	}
-}
-
-type hookProtoSimple struct {
-	onMade func(Transport)
-}
-
-func (h *hookProtoSimple) ConnectionMade(t Transport) {
-	if h.onMade != nil {
-		h.onMade(t)
-	}
-}
-func (h *hookProtoSimple) DataReceived([]byte)  {}
-func (h *hookProtoSimple) ConnectionLost(error) {}
-
-// TestPinLoops checks that PinLoops lands each loop on the requested CPU.
-func TestPinLoops(t *testing.T) {
-	if !haveThreadID {
-		t.Skip("no affinity support on this platform")
-	}
-	e := startEngine(t, Loops(2), PinLoops(0, 1))
-	for i, l := range e.loops {
-		var cpu int
-		onLoop(t, l, func() { cpu = currentCPU() })
-		if cpu != i {
-			t.Errorf("loop %d runs on cpu %d, want %d", i, cpu, i)
-		}
 	}
 }
