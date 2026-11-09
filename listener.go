@@ -158,7 +158,7 @@ func (l *Loop) handleAccept(c *conn) {
 			continue
 		}
 		// Single listener: hand the connection to the next loop.
-		target := l.eng.NextLoop()
+		target := l.eng.acceptLoop()
 		if target == l {
 			l.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
 			continue
