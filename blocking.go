@@ -72,14 +72,11 @@ func (b *blockingProto) run() {
 		b.loop.ReportPanic(pe)
 		b.loop.CallFromThread(b.t.Abort)
 		// Drain so the loop's final ConnectionLost send never blocks, and
-		// deliver it to the inner protocol: the abort reports a clean
-		// close, so substitute the panic.
+		// deliver the panic to the inner protocol in place of whatever the
+		// abort reported (nil for the core, a truncation error under TLS).
 		for ev := range b.ch {
 			if ev.lost {
-				err := ev.err
-				if err == nil {
-					err = pe
-				}
+				err := error(pe)
 				func() {
 					defer func() { _ = recover() }()
 					b.inner.ConnectionLost(err)

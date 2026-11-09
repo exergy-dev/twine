@@ -50,11 +50,20 @@ v1.0.0, minor releases may break the API; every break is listed here.
   Content-Length; canned error responses carry Date and Server.
 - http: `RequestCtx.SetUserValue` and `UserValue` are removed; use
   `Transport.SetContext` for per-connection state.
+- `Any` with no inputs rejects with `ErrNoFutures` (it rejected with
+  `ErrLoopStopped`). A second `Engine.Run`, including one after a completed
+  run, returns `ErrRunTwice` (a run after a completed run returned nil).
+- Negative `Watchdog`, `ShutdownTimeout`, `CloseLinger` and
+  `SpinIterations` values are clamped or mean the default, and
+  `DatagramsSent` counts only datagrams the kernel accepted.
+
+### Deprecated
+
+- tls: `Transport.KernelOffloaded` (TX only); use `KernelOffload`.
 
 ### Added
 
-- `ErrNoFutures` (from `Any` with no inputs), `ErrRunTwice` (from a
-  second `Engine.Run`) and `ErrNilProtocol`.
+- `ErrNoFutures`, `ErrRunTwice` and `ErrNilProtocol` sentinels.
 - `Engine.Logger`, `Loop.ReportPanic`, and `poll` backend logging when a
   `twine_uring` build falls back to epoll.
 - proto: `ErrLineTooLong` and `ErrFrameTooLarge` are also available under

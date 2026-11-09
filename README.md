@@ -18,7 +18,7 @@ listed in [CHANGELOG.md](CHANGELOG.md). Bugs and questions go to the
 [issue tracker](https://github.com/exergy-dev/twine/issues).
 
 ```
-go get github.com/exergy-dev/twine@v0.1.0
+go get github.com/exergy-dev/twine@latest
 ```
 
 - Go 1.24+. Dependencies: standard library plus `golang.org/x/sys/unix`.

@@ -24,9 +24,10 @@ const (
 	// DefaultMaxPipelinedRequests bounds the requests served from one read
 	// before the connection yields to the loop.
 	DefaultMaxPipelinedRequests = 16
-	// DefaultMaxResponseBytes bounds a response body. It equals the
-	// engine's default twine.WriteBufferLimit.
-	DefaultMaxResponseBytes = 16 << 20
+	// DefaultMaxResponseBytes bounds a response body. It is 1 MiB below the
+	// engine's default twine.WriteBufferLimit (16 MiB) to leave room for
+	// headers and for an earlier pipelined response that is still queued.
+	DefaultMaxResponseBytes = 15 << 20
 )
 
 // Default timeouts.
@@ -87,8 +88,9 @@ type Server struct {
 	// is therefore replaced by a 500 response, the connection is closed
 	// after it, and the event is logged. When you lower
 	// twine.WriteBufferLimit, set this below it, leaving room for headers
-	// and pipelined responses. HEAD responses, which carry no body, are
-	// exempt.
+	// and pipelined responses: the cap applies per response, not to the
+	// total pending on the connection. HEAD responses, which carry no body,
+	// are exempt.
 	MaxResponseBytes int
 
 	// IdleTimeout closes a connection that has had no I/O for this long

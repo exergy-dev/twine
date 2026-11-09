@@ -193,6 +193,12 @@ type Transport interface {
 }
 ```
 
+## github.com/exergy-dev/twine/metrics
+
+```
+func PrometheusHandler(e *twine.Engine) http.Handler
+```
+
 ## github.com/exergy-dev/twine/proto
 
 ```
@@ -329,7 +335,7 @@ const (
 	DefaultMaxHeaderBytes = 8 << 10
 	DefaultMaxBodyBytes = 4 << 20
 	DefaultMaxPipelinedRequests = 16
-	DefaultMaxResponseBytes = 16 << 20
+	DefaultMaxResponseBytes = 15 << 20
 )
 const (
 	DefaultIdleTimeout = 90 * time.Second
