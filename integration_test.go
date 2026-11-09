@@ -1434,7 +1434,13 @@ func TestSoakIdleConnections(t *testing.T) {
 		}
 	}()
 	if err := dialErr.Load(); err != nil {
-		t.Fatalf("dial: %v", err)
+		open := 0
+		for _, c := range clients {
+			if c != nil {
+				open++
+			}
+		}
+		t.Fatalf("dial: %v (%d of %d clients connected)", err, open, n)
 	}
 	if !waitUntil(30*time.Second, func() bool { return sumMetrics(e).Connections == uint64(n) }) {
 		t.Fatalf("server has %d connections, want %d", sumMetrics(e).Connections, n)
