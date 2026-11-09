@@ -175,9 +175,11 @@ func (l *Loop) CallFromThread(fn func()) {
 	}
 }
 
-// CallLater runs fn on the loop after d. It returns a Timer that may be
-// stopped or reset from the loop. The Timer handle is single-use: once it has
-// fired or Stop has returned true it is recycled and must not be used again.
+// CallLater runs fn on the loop after d (d <= 0: on the next loop
+// iteration, never re-entrantly). It must be called on the loop. The
+// returned Timer may be stopped or reset on the loop; once it has fired or
+// been stopped it is inert, and a kept handle never affects a later timer.
+// Timers have millisecond resolution (the timing wheel's tick).
 func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 	l.assertInLoop()
 	t := l.newTimer()

@@ -43,6 +43,10 @@ var (
 	// returned a nil Protocol; the connection is closed.
 	ErrNilProtocol = errors.New("twine: factory returned a nil Protocol")
 
+	// ErrNoFutures rejects the Future returned by Any when it is given no
+	// Futures to wait for.
+	ErrNoFutures = errors.New("twine: Any called with no Futures")
+
 	// ErrRunTwice is returned by a second call to Engine.Run while the first
 	// is running or after it has returned. An Engine runs once.
 	ErrRunTwice = errors.New("twine: Engine.Run called twice")
