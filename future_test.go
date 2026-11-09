@@ -534,7 +534,6 @@ func TestDeferToThread(t *testing.T) {
 		fs := make([]*Future[int], n)
 		onLoop(t, l, func() {
 			for i := range fs {
-				i := i
 				fs[i] = DeferToThread(l, func() (int, error) { time.Sleep(time.Millisecond); return i, nil })
 			}
 		})

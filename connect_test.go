@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -225,7 +226,7 @@ func blackholeAddr(t *testing.T) string {
 	}
 	sa, _ := unix.Getsockname(fd)
 	port := sa.(*unix.SockaddrInet4).Port
-	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	// Fill the accept queue (backlog 0 admits one; add a spare).
 	for i := 0; i < 3; i++ {
 		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
