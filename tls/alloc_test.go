@@ -115,9 +115,11 @@ const recordPayload = 1 << 10
 // attempts. AllocsPerRun counts process-wide, so a background goroutine (the
 // GC, the watchdog, a runtime worker under -race on a busy CI runner) can add
 // allocations to one attempt; the minimum is the code path's own count.
+const allocAttempts = 3
+
 func minAllocsPerRun(runs int, fn func()) float64 {
 	best := math.Inf(1)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < allocAttempts; i++ {
 		if a := testing.AllocsPerRun(runs, fn); a < best {
 			best = a
 		}
@@ -146,7 +148,9 @@ func TestRecordWriteAllocs(t *testing.T) {
 func TestRecordReadAllocs(t *testing.T) {
 	r := newRecordRig(t)
 	const runs = 50
-	recs := r.mint(t, runs+1, bytes.Repeat([]byte("r"), recordPayload))
+	// Each AllocsPerRun attempt consumes runs+1 records (one warm-up run).
+	const total = allocAttempts * (runs + 1)
+	recs := r.mint(t, total, bytes.Repeat([]byte("r"), recordPayload))
 	var allocs float64
 	var got int
 	i := 0
@@ -157,8 +161,8 @@ func TestRecordReadAllocs(t *testing.T) {
 		})
 		got = r.sink.n
 	})
-	if got != (runs+1)*recordPayload {
-		t.Fatalf("delivered %d plaintext bytes, want %d", got, (runs+1)*recordPayload)
+	if got != total*recordPayload {
+		t.Fatalf("delivered %d plaintext bytes, want %d", got, total*recordPayload)
 	}
 	t.Logf("%v allocs per record read", allocs)
 	if allocs > maxReadAllocs {
