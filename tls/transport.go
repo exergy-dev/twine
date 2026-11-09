@@ -322,6 +322,16 @@ func (t *Transport) drain() {
 		if n > 0 {
 			t.inner.DataReceived(t.plain[:n])
 		}
+		if t.offloaded && t.bio.refused && (err == nil || errors.Is(err, errWouldBlock)) {
+			// Under kTLS TX crypto/tls tried to write without failing the
+			// read: that is its reply to a peer KeyUpdate that requests one.
+			// It keeps the write error to itself until its next Write, which
+			// never comes (Write goes to the kernel), and carries on reading
+			// (Read then usually returns errWouldBlock), so the peer would
+			// wait for the KeyUpdate RFC 8446 section 4.6.3 requires. Abort.
+			// A real read error (whose alert was refused) is reported as is.
+			err = errOffloadWrite
+		}
 		if err != nil {
 			t.readError(err)
 			return

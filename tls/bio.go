@@ -55,6 +55,7 @@ type bio struct {
 	err         error  // (mu) terminal error once the connection is gone
 	loopMode    bool   // (mu) written once by the loop on mode switch
 	noWrite     bool   // (mu) kTLS TX installed: crypto/tls writes are refused
+	refused     bool   // (mu) a write was refused because of noWrite
 
 	borrowed []byte // loop mode only: the current DataReceived slice
 	flushFn  func() // b.flushOut, allocated once
@@ -180,6 +181,9 @@ func (b *bio) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	if b.noWrite {
+		// crypto/tls may swallow this error (its KeyUpdate reply path does),
+		// so record the refusal for the Transport to act on.
+		b.refused = true
 		b.mu.Unlock()
 		return 0, errOffloadWrite
 	}
