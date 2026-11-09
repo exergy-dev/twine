@@ -2,7 +2,6 @@ package twine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -18,6 +17,7 @@ type Engine struct {
 	listeners     []*listener
 	shutdownHooks []func()
 	state         atomic.Int32
+	ran           atomic.Bool   // Run got past its start (ErrRunTwice from then on)
 	next          atomic.Uint32 // NextLoop: outbound connections, UDP sockets
 	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
 	stopCh        chan struct{}
@@ -86,15 +86,17 @@ func (e *Engine) OnShutdown(fn func()) {
 }
 
 // Run starts the loops and blocks until ctx is done or Stop is called. It
-// returns nil after a clean shutdown, or the error that prevented a loop from
-// starting.
+// returns nil after a clean shutdown (or at once if Stop was called before
+// Run), the error that prevented a loop from starting, or ErrRunTwice if the
+// Engine has already run.
 func (e *Engine) Run(ctx context.Context) error {
 	if !e.state.CompareAndSwap(stateNew, stateRunning) {
-		if e.state.Load() == stateStopped {
+		if e.state.Load() == stateStopped && !e.ran.Load() {
 			return nil // Stop was called before Run
 		}
-		return errors.New("twine: Engine.Run called twice")
+		return ErrRunTwice
 	}
+	e.ran.Store(true)
 	ready := make(chan error, len(e.loops))
 	for _, l := range e.loops {
 		go l.run(ready)
@@ -149,7 +151,8 @@ func (e *Engine) Stop() {
 // Done is closed when Run has returned.
 func (e *Engine) Done() <-chan struct{} { return e.doneCh }
 
-// shutdown implements design Section 8 rule 7.
+// shutdown closes listeners, runs the OnShutdown hooks, then asks every loop
+// to LoseConnection its connections, flush for up to ShutdownTimeout and exit.
 func (e *Engine) shutdown() {
 	e.mu.Lock()
 	ls := e.listeners

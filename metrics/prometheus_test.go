@@ -18,8 +18,8 @@ import (
 type echo struct{ t twine.Transport }
 
 func (e *echo) ConnectionMade(t twine.Transport) { e.t = t }
-func (e *echo) DataReceived(b []byte)             { e.t.Write(b) }
-func (e *echo) ConnectionLost(error)              {}
+func (e *echo) DataReceived(b []byte)            { e.t.Write(b) }
+func (e *echo) ConnectionLost(error)             {}
 
 func TestPrometheusHandler(t *testing.T) {
 	eng := twine.New(twine.Loops(2), twine.ReusePort(false), twine.Watchdog(0))
