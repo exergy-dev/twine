@@ -7,8 +7,9 @@ import (
 )
 
 // DefaultHandshakeTimeout bounds a handshake when HandshakeTimeout is not
-// given. A handshake occupies a worker goroutine while it waits for the
-// peer, so an unbounded handshake would let idle peers exhaust the pool.
+// given. A handshake holds a goroutine and a tls.Conn until it completes or
+// times out, so a peer that connects and stays silent costs both for this
+// long.
 const DefaultHandshakeTimeout = 10 * time.Second
 
 // Option configures Server, Client, Listen and Connect.
@@ -26,6 +27,9 @@ func buildOptions(opts []Option) options {
 	o := options{handshakeTimeout: DefaultHandshakeTimeout}
 	for _, fn := range opts {
 		fn(&o)
+	}
+	if o.handshakeTimeout <= 0 {
+		o.handshakeTimeout = DefaultHandshakeTimeout
 	}
 	return o
 }
@@ -53,8 +57,11 @@ func OnHandshakeError(fn func(err error)) Option {
 }
 
 // HandshakeTimeout bounds the handshake; on expiry the connection is aborted
-// and the handshake fails with ErrHandshakeTimeout. Default
-// DefaultHandshakeTimeout; 0 disables the timeout.
+// and the handshake fails with a *HandshakeError whose Err is
+// ErrHandshakeTimeout. d <= 0 means DefaultHandshakeTimeout: a handshake
+// cannot be unbounded, because each one holds a goroutine and a tls.Conn
+// until it completes, so without a bound every peer that connects and stays
+// silent would hold them for as long as it keeps the socket open.
 func HandshakeTimeout(d time.Duration) Option {
 	return func(o *options) { o.handshakeTimeout = d }
 }
