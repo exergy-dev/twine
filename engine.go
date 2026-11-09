@@ -18,6 +18,7 @@ type Engine struct {
 	shutdownHooks []func()
 	state         atomic.Int32
 	ran           atomic.Bool   // Run got past its start (ErrRunTwice from then on)
+	wdSamples     atomic.Uint64 // watchdog samples taken (tests)
 	next          atomic.Uint32 // NextLoop: outbound connections, UDP sockets
 	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
 	stopCh        chan struct{}
