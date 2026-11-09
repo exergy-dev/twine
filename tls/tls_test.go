@@ -1025,3 +1025,50 @@ func TestReentrantWriteFromProducer(t *testing.T) {
 		t.Fatalf("got %d bytes with %d P, want %d with %d", len(got), bytes.Count(got, []byte("P")), total+n, n)
 	}
 }
+
+// TestTLSInsideTLS: a TLS server nested inside another, on a one-loop
+// engine. The inner connection's drain runs inside the outer connection's
+// DataReceived, while the loop's shared plaintext buffer still holds the
+// outer plaintext the inner connection is reading from; the inner drain
+// must decrypt into a buffer of its own (see loopScratch).
+func TestTLSInsideTLS(t *testing.T) {
+	e := startEngine(t, twine.Loops(1))
+	cfg := serverConfig(t)
+	addr := listen(t, e, cfg, twtls.Server(cfg, echoFactory()))
+	outer := dial(t, addr, nil)
+	defer outer.Close()
+	c := ctls.Client(outer, &ctls.Config{InsecureSkipVerify: true})
+	if err := c.Handshake(); err != nil {
+		t.Fatalf("inner handshake: %v", err)
+	}
+	buf := make([]byte, 64)
+	for i := 0; i < 200; i++ {
+		msg := []byte(fmt.Sprintf("nested message %04d", i))
+		if _, err := c.Write(msg); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		if _, err := io.ReadFull(c, buf[:len(msg)]); err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if !bytes.Equal(buf[:len(msg)], msg) {
+			t.Fatalf("echo %d: got %q want %q", i, buf[:len(msg)], msg)
+		}
+	}
+	data := make([]byte, 1<<20)
+	_, _ = rand.Read(data)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Write(data)
+		errCh <- err
+	}()
+	got := make([]byte, len(data))
+	if _, err := io.ReadFull(c, got); err != nil {
+		t.Fatalf("stream read: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("stream write: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("nested 1 MiB stream corrupted")
+	}
+}

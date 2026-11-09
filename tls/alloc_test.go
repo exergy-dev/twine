@@ -151,6 +151,35 @@ func TestRecordReadAllocs(t *testing.T) {
 	}
 }
 
+// TestDrainScratchBuffer: a drain decrypts into the loop's shared buffer and
+// releases it afterwards; a drain that finds it in use (a drain further up
+// the stack, as with TLS nested in TLS) uses a buffer of its own and leaves
+// the shared one marked in use.
+func TestDrainScratchBuffer(t *testing.T) {
+	r := newRecordRig(t)
+	recs := r.mint(t, 2, []byte("scratch"))
+	var own1, busy1, own2, busy2 bool
+	var got int
+	onLoop(r.loop, func() {
+		r.server.FeedCiphertext(recs[0])
+		own1, busy1 = r.server.OwnPlainBuffer(), r.server.ScratchBusy()
+		r.server.SetScratchBusy(true)
+		r.server.FeedCiphertext(recs[1])
+		own2, busy2 = r.server.OwnPlainBuffer(), r.server.ScratchBusy()
+		r.server.SetScratchBusy(false)
+		got = r.sink.n
+	})
+	if got != 2*len("scratch") {
+		t.Fatalf("delivered %d plaintext bytes, want %d", got, 2*len("scratch"))
+	}
+	if own1 || busy1 {
+		t.Fatalf("free shared buffer: own buffer=%v, still busy=%v; want false, false", own1, busy1)
+	}
+	if !own2 || !busy2 {
+		t.Fatalf("busy shared buffer: own buffer=%v, still busy=%v; want true, true", own2, busy2)
+	}
+}
+
 func BenchmarkRecordWrite(b *testing.B) {
 	r := newRecordRig(b)
 	payload := bytes.Repeat([]byte("w"), recordPayload)

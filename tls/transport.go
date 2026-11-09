@@ -14,10 +14,6 @@ import (
 	"github.com/exergy-dev/twine"
 )
 
-// plainBufSize is the per-connection plaintext buffer handed to
-// tls.Conn.Read: one maximum-size TLS record (2^14 bytes of plaintext).
-const plainBufSize = 16 << 10
-
 // Connection states.
 const (
 	stHandshaking uint8 = iota
@@ -41,7 +37,11 @@ type Transport struct {
 	loop  *twine.Loop
 	bio   *bio
 	tc    *ctls.Conn
-	plain []byte // per-connection plaintext buffer, allocated after the handshake
+	// scratch is the loop's shared plaintext buffer (set when the handshake
+	// completes); plain is this connection's own, allocated only if a drain
+	// ever finds scratch in use (TLS nested in TLS). See loopScratch.
+	scratch *loopScratch
+	plain   []byte
 
 	state     uint8
 	made      bool // inner.ConnectionMade has been called
@@ -217,7 +217,7 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	t.bio.flushOut()
 	t.bio.switchToLoopMode()
 	t.state = stReady
-	t.plain = make([]byte, plainBufSize)
+	t.scratch = scratchFor(t.loop)
 	if t.f.opts.kernelOffload {
 		t.offloaded = installKTLS(t)
 	}
@@ -308,19 +308,37 @@ func loggerOf(l *twine.Loop) *slog.Logger {
 }
 
 // drain reads plaintext until crypto/tls would block and delivers each chunk
-// to inner. Loop-only, loop mode.
+// to inner. Loop-only, loop mode. It decrypts into the loop's shared buffer
+// unless a drain further up the stack is using it (see loopScratch).
 func (t *Transport) drain() {
 	if t.draining {
 		return
 	}
 	t.draining = true
-	defer func() { t.draining = false }()
+	sc := t.scratch
+	shared := !sc.busy
+	var buf []byte
+	if shared {
+		sc.busy = true
+		buf = sc.buf
+	} else {
+		if t.plain == nil {
+			t.plain = make([]byte, plainBufSize)
+		}
+		buf = t.plain
+	}
+	defer func() {
+		t.draining = false
+		if shared {
+			sc.busy = false
+		}
+	}()
 	for t.state == stReady && !t.paused && !t.peerEOF && !t.aborted && t.lostErr == nil {
 		t.inTLS = true
-		n, err := t.tc.Read(t.plain) // may write alerts or KeyUpdate replies
+		n, err := t.tc.Read(buf) // may write alerts or KeyUpdate replies
 		t.leaveTLS(nil)
 		if n > 0 {
-			t.inner.DataReceived(t.plain[:n])
+			t.inner.DataReceived(buf[:n])
 		}
 		if t.offloaded && t.bio.refused && (err == nil || errors.Is(err, errWouldBlock)) {
 			// Under kTLS TX crypto/tls tried to write without failing the
