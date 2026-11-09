@@ -171,6 +171,147 @@ func TestAMPFramingLimits(t *testing.T) {
 	}
 }
 
+func TestTransportAccessors(t *testing.T) {
+	ft := newFake()
+	for _, p := range []interface {
+		twine.Protocol
+		Transport() twine.Transport
+	}{&LineReceiver{}, &NetstringReceiver{}, &LengthPrefixed{}, &AMP{}} {
+		if p.Transport() != nil {
+			t.Fatalf("%T: transport before ConnectionMade", p)
+		}
+		p.ConnectionMade(ft)
+		if p.Transport() != ft {
+			t.Fatalf("%T: Transport is not the one passed to ConnectionMade", p)
+		}
+	}
+	re := &RemoteError{Code: "C", Description: "d"}
+	if re.Error() != "proto: AMP remote error C: d" {
+		t.Fatalf("RemoteError.Error() = %q", re.Error())
+	}
+}
+
+// TestAMPCallNoAnswer covers CallNoAnswer on the loop (a fake transport
+// has no loop, so every call is inline).
+func TestAMPCallNoAnswer(t *testing.T) {
+	a := &AMP{}
+	if err := a.CallNoAnswer("Ping", nil); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("before connect: %v", err)
+	}
+	ft := newFake()
+	a.ConnectionMade(ft)
+	args := Args{"x": "1"}
+	if err := a.CallNoAnswer("Ping", args); err != nil {
+		t.Fatal(err)
+	}
+	args["x"] = "2" // already encoded
+	boxes := decodeBoxes(t, ft.out)
+	if fmt.Sprint(boxes) != fmt.Sprint([]map[string]string{{"_command": "Ping", "x": "1"}}) {
+		t.Fatalf("boxes %v", boxes)
+	}
+	if a.Pending() != 0 {
+		t.Fatal("CallNoAnswer left a pending call")
+	}
+	ft.reset()
+	a.ConnectionLost(errors.New("reset"))
+	if err := a.CallNoAnswer("Ping", nil); !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("after loss: %v", err)
+	}
+	if len(ft.out) != 0 {
+		t.Fatal("wrote after loss")
+	}
+}
+
+// TestAMPOnLoopAndEngineStop calls from the client's own loop, then stops
+// the engine with a call pending.
+func TestAMPOnLoopAndEngineStop(t *testing.T) {
+	e := startEngine(t, 2)
+	notes := make(chan string, 4)
+	handle := func(cmd string, args Args) *twine.Future[Args] {
+		switch cmd {
+		case "Note":
+			notes <- args["v"]
+			return twine.Resolved[Args](nil, nil)
+		case "Hang":
+			f, _ := twine.NewFuture[Args](nil)
+			return f
+		}
+		return sumHandler(cmd, args)
+	}
+	lst, err := e.ListenTCP("127.0.0.1:0", ampFactory(handle, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	made := make(chan *ampPeer, 1)
+	tr, err := e.Loops()[1].ConnectTCP(lst.Addr().String(), ampFactory(nil, made)).Await(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := <-made
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var sum *twine.Future[Args]
+	onLoop(t, tr.Loop(), func() {
+		if err := client.CallNoAnswer("Note", Args{"v": "from the loop"}); err != nil {
+			t.Error(err)
+		}
+		sum = client.Call("Sum", Args{"a": "1", "b": "2"})
+	})
+	if v, err := sum.Await(ctx); err != nil || v["total"] != "3" {
+		t.Fatalf("Sum from the loop: %v, %v", v, err)
+	}
+	select {
+	case v := <-notes:
+		if v != "from the loop" {
+			t.Fatalf("note %q", v)
+		}
+	case <-ctx.Done():
+		t.Fatal("note not delivered")
+	}
+
+	pending := client.Call("Hang", nil)
+	waitFor(t, "Hang to be pending", func() bool {
+		n := -1
+		onLoop(t, tr.Loop(), func() { n = client.Pending() })
+		return n == 1
+	})
+	e.Stop()
+	<-e.Done()
+	if _, err := pending.Await(ctx); !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("pending call after engine stop: %v", err)
+	}
+	if _, err := client.Call("Sum", nil).Await(ctx); !errors.Is(err, ErrConnectionLost) {
+		t.Fatalf("call after engine stop: %v", err)
+	}
+}
+
+// TestAMPLateAnswerAfterLoss: a handler that settles after the connection
+// is gone writes nothing, whether it resolves or rejects, and the partial
+// box buffer is released.
+func TestAMPLateAnswerAfterLoss(t *testing.T) {
+	var rs []twine.Resolver[Args]
+	a := &AMP{Handle: func(string, Args) *twine.Future[Args] {
+		f, r := twine.NewFuture[Args](nil)
+		rs = append(rs, r)
+		return f
+	}}
+	ft := newFake()
+	a.ConnectionMade(ft)
+	feed(a, twistedBox("_ask", "1", "_command", "A"))
+	feed(a, twistedBox("_ask", "2", "_command", "B"))
+	feed(a, []byte{0, 5, 'k'}) // a partial key frame
+	a.ConnectionLost(nil)
+	if a.lp.buf != nil {
+		t.Fatal("partial frame buffer kept after ConnectionLost")
+	}
+	rs[0].Resolve(Args{"late": "1"})
+	rs[1].Reject(errors.New("late"))
+	if len(ft.out) != 0 {
+		t.Fatalf("wrote %q after the connection was lost", ft.out)
+	}
+}
+
 // ampPeer is an AMP protocol that reports itself once connected.
 type ampPeer struct {
 	AMP
@@ -268,5 +409,43 @@ func TestAMPRoundTrip(t *testing.T) {
 	hung[0].Resolve(Args{"late": "1"})
 	if _, err := client.Call("Sum", nil).Await(ctx); !errors.Is(err, ErrConnectionLost) {
 		t.Fatalf("call after loss: %v", err)
+	}
+}
+
+// TestAMPCallArgsNotRetained mutates the Args map right after each Call and
+// CallNoAnswer from a goroutine that is not the loop. The request must have
+// been encoded before Call returned (README ownership rule 5), so -race
+// stays quiet and every answer reflects the value at call time.
+func TestAMPCallArgsNotRetained(t *testing.T) {
+	e := startEngine(t, 2)
+	lst, err := e.ListenTCP("127.0.0.1:0", ampFactory(sumHandler, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	made := make(chan *ampPeer, 1)
+	if _, err := e.Loops()[1].ConnectTCP(lst.Addr().String(), ampFactory(nil, made)).Await(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client := <-made
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	args := Args{"a": "0", "b": "1"}
+	futs := make([]*twine.Future[Args], 0, 200)
+	for i := range 200 {
+		args["a"] = strconv.Itoa(i)
+		futs = append(futs, client.Call("Sum", args))
+		if err := client.CallNoAnswer("Sum", args); err != nil {
+			t.Fatal(err)
+		}
+		args["a"] = "garbage"
+		args["extra"] = strconv.Itoa(i)
+		delete(args, "extra")
+	}
+	for i, f := range futs {
+		v, err := f.Await(ctx)
+		if err != nil || v["total"] != strconv.Itoa(i+1) {
+			t.Fatalf("call %d: %v, %v", i, v, err)
+		}
 	}
 }

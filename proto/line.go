@@ -23,7 +23,7 @@ const DefaultMaxLineLength = 16 << 10
 // (a trailing '\r' then stays in the line).
 //
 // A line longer than MaxLineLength (excluding the delimiter) aborts the
-// connection and ConnectionLost reports twine.ErrLineTooLong. The check is
+// connection and ConnectionLost reports ErrLineTooLong. The check is
 // applied to complete lines and to a pending partial line once it is longer
 // than MaxLineLength+len(Delimiter)-1 bytes, so an endless line is caught
 // without waiting for its delimiter.
@@ -51,34 +51,23 @@ type LineReceiver struct {
 	// framing error recorded before an abort, or the core's error otherwise.
 	OnConnectionLost func(err error)
 
-	t   twine.Transport
-	buf []byte // incomplete trailing line (may end with a delimiter prefix)
-	win []byte // scratch for delimiter-spanning search
-	err error
-	raw bool
-	iov [2][]byte
+	stream        // buf holds an incomplete trailing line (may end with a delimiter prefix)
+	win    []byte // scratch for delimiter-spanning search
+	raw    bool
+	iov    [2][]byte // Writev argument; a literal through the interface would allocate
 }
 
 var _ twine.Protocol = (*LineReceiver)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (lr *LineReceiver) ConnectionMade(t twine.Transport) {
-	lr.t = t
-	if lr.OnConnectionMade != nil {
-		lr.OnConnectionMade(t)
-	}
+	lr.made(t, lr.OnConnectionMade)
 }
 
 // ConnectionLost implements twine.Protocol. It substitutes the recorded
 // framing error, if any, and calls OnConnectionLost.
 func (lr *LineReceiver) ConnectionLost(err error) {
-	if lr.err != nil {
-		err = lr.err
-	}
-	lr.buf = nil
-	if lr.OnConnectionLost != nil {
-		lr.OnConnectionLost(err)
-	}
+	lr.lost(err, lr.OnConnectionLost)
 }
 
 // Transport returns the transport stored by ConnectionMade.
@@ -104,14 +93,11 @@ func (lr *LineReceiver) SetLineMode(extra []byte) {
 // RawMode reports whether the receiver is in raw mode.
 func (lr *LineReceiver) RawMode() bool { return lr.raw }
 
-// SendLine writes line followed by the delimiter with a single Writev. When
-// t is nil the stored transport is used. It does not allocate.
-func (lr *LineReceiver) SendLine(t twine.Transport, line []byte) {
-	if t == nil {
-		t = lr.t
-	}
+// SendLine writes line followed by the delimiter to the transport stored by
+// ConnectionMade, with a single Writev. It does not allocate.
+func (lr *LineReceiver) SendLine(line []byte) {
 	lr.iov[0], lr.iov[1] = line, lr.delim()
-	t.Writev(lr.iov[:]...)
+	lr.t.Writev(lr.iov[:]...)
 	lr.iov = [2][]byte{}
 }
 
@@ -127,15 +113,6 @@ func (lr *LineReceiver) maxLen() int {
 		return DefaultMaxLineLength
 	}
 	return lr.MaxLineLength
-}
-
-// fail records err and aborts the transport.
-func (lr *LineReceiver) fail(err error) {
-	lr.err = err
-	lr.buf = lr.buf[:0]
-	if lr.t != nil {
-		lr.t.Abort()
-	}
 }
 
 // DataReceived implements twine.Protocol.
@@ -170,7 +147,7 @@ func (lr *LineReceiver) DataReceived(b []byte) {
 			if i < 0 {
 				lr.buf = append(lr.buf, b...)
 				if len(lr.buf) > max+len(d)-1 {
-					lr.fail(twine.ErrLineTooLong)
+					lr.fail(ErrLineTooLong)
 				}
 				return
 			}
@@ -179,18 +156,20 @@ func (lr *LineReceiver) DataReceived(b []byte) {
 			pos = i + len(d)
 		}
 		if len(line) > max {
-			lr.fail(twine.ErrLineTooLong)
+			lr.fail(ErrLineTooLong)
 			return
 		}
 		// Detach the buffer before the callback so a re-entrant
 		// SetLineMode(extra) cannot overwrite line; reclaim the storage
-		// afterwards when nothing re-entered.
-		saved := lr.buf[:0]
+		// afterwards when nothing re-entered, unless a long line grew it
+		// past retainLimit.
+		saved := lr.buf
 		lr.buf = nil
 		if lr.LineReceived != nil {
 			lr.LineReceived(line)
 		}
 		if lr.buf == nil {
+			saved.reset()
 			lr.buf = saved
 		}
 		b = b[pos:]
@@ -220,14 +199,14 @@ func (lr *LineReceiver) parse(b, d []byte, max int) {
 		i := bytes.Index(b, d)
 		if i < 0 {
 			if len(b) > max+len(d)-1 {
-				lr.fail(twine.ErrLineTooLong)
+				lr.fail(ErrLineTooLong)
 				return
 			}
 			lr.buf = append(lr.buf, b...)
 			return
 		}
 		if i > max {
-			lr.fail(twine.ErrLineTooLong)
+			lr.fail(ErrLineTooLong)
 			return
 		}
 		line := b[:i]

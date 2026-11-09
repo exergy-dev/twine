@@ -1,14 +1,14 @@
 // Command chat is a line-based chat room built on proto.LineReceiver and
 // proto.Broadcast. Connect with any line-oriented client:
 //
-//	go run ./examples/chat --addr :9001
+//	go run ./examples/chat -addr :9001
 //	nc -C localhost 9001        # or: telnet localhost 9001
 //
 // Every line a client sends is broadcast to every connected client, across
 // all loops. "/nick NAME" renames the sender and "/quit" disconnects.
 //
-// With --trace FILE the run is recorded with runtime/trace (design Section
-// 11); inspect it with "go tool trace FILE".
+// With -trace FILE the run is recorded with runtime/trace; inspect it with
+// "go tool trace FILE".
 package main
 
 import (
@@ -46,7 +46,7 @@ func newClient(room *proto.Broadcast) twine.Factory {
 }
 
 func (c *client) connectionMade(t twine.Transport) {
-	c.SendLine(t, fmt.Appendf(nil, "* welcome %s; %d other(s) here. /nick NAME to rename, /quit to leave", c.nick, c.room.Len()))
+	c.SendLine(fmt.Appendf(nil, "* welcome %s; %d other(s) here. /nick NAME to rename, /quit to leave", c.nick, c.room.Len()))
 	c.room.Send(fmt.Appendf(nil, "* %s joined\r\n", c.nick))
 	c.room.Add(t)
 }
@@ -61,7 +61,7 @@ func (c *client) lineReceived(line []byte) {
 		c.room.Send(fmt.Appendf(nil, "* %s is now %s\r\n", c.nick, nick))
 		c.nick = nick
 	case bytes.Equal(line, []byte("/quit")):
-		c.SendLine(nil, []byte("* bye"))
+		c.SendLine([]byte("* bye"))
 		c.Transport().LoseConnection()
 	case len(bytes.TrimSpace(line)) == 0:
 	default:
