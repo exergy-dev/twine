@@ -6,11 +6,11 @@
 // one multishot IORING_OP_POLL_ADD (IORING_POLL_ADD_MULTI, edge-triggered,
 // the io_uring default); Wait reaps the resulting CQEs and translates their
 // poll masks into the same Event flags as the epoll backend. Batched
-// accept/read/write submissions (the io_uring completion model, design
-// Section 13 Phase 6) were NOT implemented: the Poller contract is
-// readiness-based and the root package performs its own non-blocking
-// syscalls, so a completion backend would need a different Poller API
-// (design Section 14 open question on io_uring). What io_uring buys here is
+// accept/read/write submissions (the io_uring completion model) were NOT
+// implemented: the Poller contract is readiness-based and the root package
+// performs its own non-blocking syscalls, so a completion backend would need
+// a different Poller API (whether io_uring should ever become the default is
+// an open question in docs/history/design.md). What io_uring buys here is
 // syscall batching: Add and Mod only write SQEs into the shared ring and are
 // submitted together by the next Wait (one io_uring_enter per loop
 // iteration instead of one epoll_ctl per change), and Wait(0) with nothing
@@ -68,10 +68,11 @@
 //     readiness that has already been posted to the CQ; a wakeup whose
 //     task_work is still pending on another thread shows up on a later Wait.
 //
-// New falls back to an embedded copy of the epoll backend when io_uring is
-// unusable (any setup or mmap failure, e.g. ENOSYS/EPERM/EINVAL, the kernel lacks
-// IORING_FEAT_NODROP or IORING_FEAT_EXT_ARG, or multishot poll (Linux 5.13)
-// is rejected), so a -tags twine_uring binary still runs everywhere.
+// New falls back to the epoll backend (the epoller the default build uses)
+// when io_uring is unusable (any setup or mmap failure, e.g.
+// ENOSYS/EPERM/EINVAL, the kernel lacks IORING_FEAT_NODROP or
+// IORING_FEAT_EXT_ARG, or multishot poll (Linux 5.13) is rejected), so a
+// -tags twine_uring binary still runs everywhere.
 
 package poll
 
@@ -239,8 +240,8 @@ var forceEpoll bool
 type Poller struct {
 	w      waker
 	closed bool
-	ring   *uring         // nil when running on the epoll fallback
-	ep     *epollFallback // non-nil iff ring == nil
+	ring   *uring   // nil when running on the epoll fallback
+	ep     *epoller // non-nil iff ring == nil
 	// uringErr records why io_uring was not used (nil when ring != nil or
 	// when forceEpoll is set). Diagnostics only.
 	uringErr error
@@ -267,9 +268,9 @@ func open(useURing bool) (*Poller, error) {
 		}
 		p.uringErr = err
 	}
-	ep, err := newEpollFallback(p.w.fd)
-	if err != nil {
-		p.w.close()
+	ep := &epoller{}
+	if err := ep.open(p.w.fd); err != nil {
+		_ = p.w.close()
 		return nil, err
 	}
 	p.ep = ep
@@ -435,7 +436,7 @@ func newURing(wakeFD int) (r *uring, err error) {
 	r = &uring{fd: fd}
 	defer func() {
 		if err != nil {
-			r.close()
+			_ = r.close()
 			r = nil
 		}
 	}()
@@ -920,132 +921,4 @@ func (r *uring) drain(evs []Event, w *waker) (n int, woke bool, err error) {
 		w.drain()
 	}
 	return n, woke, err
-}
-
-// ---------------------------------------------------------------------------
-// epoll fallback.
-//
-// COPY of the logic in epoll_linux.go, which is excluded by the twine_uring
-// build tag. Used only when io_uring is unusable at New time. Keep the two in
-// sync.
-// ---------------------------------------------------------------------------
-
-// epollFallback is an epoll instance with an embedded event buffer.
-type epollFallback struct {
-	epfd int
-	kevs [MaxEvents]unix.EpollEvent
-}
-
-// newEpollFallback creates the epoll instance and registers the wake fd.
-func newEpollFallback(wakeFD int) (*epollFallback, error) {
-	epfd, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
-	if err != nil {
-		return nil, err
-	}
-	ev := unix.EpollEvent{Events: unix.EPOLLIN | unix.EPOLLET, Fd: int32(wakeFD)}
-	if err := unix.EpollCtl(epfd, unix.EPOLL_CTL_ADD, wakeFD, &ev); err != nil {
-		unix.Close(epfd)
-		return nil, err
-	}
-	return &epollFallback{epfd: epfd}, nil
-}
-
-// epollInterest is a copy of interest in epoll_linux.go.
-func epollInterest(flags uint32) uint32 {
-	ev := uint32(unix.EPOLLRDHUP | unix.EPOLLET)
-	if flags&Readable != 0 {
-		ev |= unix.EPOLLIN
-	}
-	if flags&Writable != 0 {
-		ev |= unix.EPOLLOUT
-	}
-	return ev
-}
-
-func (e *epollFallback) add(fd int, flags uint32) error {
-	ev := unix.EpollEvent{Events: epollInterest(flags), Fd: int32(fd)}
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &ev)
-}
-
-func (e *epollFallback) mod(fd int, flags uint32) error {
-	ev := unix.EpollEvent{Events: epollInterest(flags), Fd: int32(fd)}
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &ev)
-}
-
-func (e *epollFallback) del(fd int) error {
-	var ev unix.EpollEvent // non-nil for kernels < 2.6.9
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_DEL, fd, &ev)
-}
-
-func (e *epollFallback) close() error {
-	return unix.Close(e.epfd)
-}
-
-// wait is a copy of Poller.Wait in epoll_linux.go; evs is already capped.
-func (e *epollFallback) wait(evs []Event, timeout time.Duration, w *waker) (int, error) {
-	msec := epollMs(timeout)
-	var deadline time.Time
-	if timeout > 0 {
-		deadline = time.Now().Add(timeout)
-	}
-	var n int
-	for {
-		var err error
-		n, err = unix.EpollWait(e.epfd, e.kevs[:len(evs)], msec)
-		if err == nil {
-			break
-		}
-		if err != unix.EINTR {
-			return 0, err
-		}
-		if timeout > 0 {
-			rem := time.Until(deadline)
-			if rem <= 0 {
-				return 0, nil
-			}
-			msec = epollMs(rem)
-		}
-	}
-	out := 0
-	wfd := int32(w.fd)
-	for i := 0; i < n; i++ {
-		kev := &e.kevs[i]
-		if kev.Fd == wfd {
-			w.drain()
-			continue
-		}
-		var f uint32
-		if kev.Events&(unix.EPOLLIN|unix.EPOLLPRI) != 0 {
-			f |= Readable
-		}
-		if kev.Events&unix.EPOLLOUT != 0 {
-			f |= Writable
-		}
-		if kev.Events&(unix.EPOLLHUP|unix.EPOLLRDHUP) != 0 {
-			f |= Hangup
-		}
-		if kev.Events&unix.EPOLLERR != 0 {
-			f |= Error
-		}
-		evs[out] = Event{FD: kev.Fd, Flags: f}
-		out++
-	}
-	return out, nil
-}
-
-// epollMs is a copy of durationToMs in epoll_linux.go: negative means block
-// forever (-1); positive durations round up to a whole millisecond, capped
-// at math.MaxInt32.
-func epollMs(d time.Duration) int {
-	if d < 0 {
-		return -1
-	}
-	ms := d / time.Millisecond
-	if d%time.Millisecond != 0 {
-		ms++
-	}
-	if ms > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int(ms)
 }
