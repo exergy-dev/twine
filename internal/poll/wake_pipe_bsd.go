@@ -34,8 +34,9 @@ func (w *waker) open(kq int) error {
 	return nil
 }
 
-// wake writes one byte to the pipe: a single write(2). A full pipe (EAGAIN)
-// means a wakeup is already pending, so it is not an error.
+// wake writes one byte to the pipe: a single write(2), retried on EINTR. A
+// full pipe (EAGAIN) means a wakeup is already pending, so it is not an
+// error.
 func (w *waker) wake() error {
 	for {
 		_, err := unix.Write(w.w, w.one[:])
@@ -51,7 +52,7 @@ func (w *waker) wake() error {
 
 // consume reports whether kev is the wakeup pipe and, if so, drains it.
 func (w *waker) consume(kev *unix.Kevent_t) bool {
-	if kev.Filter != unix.EVFILT_READ || kev.Ident != uint64(w.r) {
+	if kev.Filter != unix.EVFILT_READ || int(kev.Ident) != w.r {
 		return false
 	}
 	for {

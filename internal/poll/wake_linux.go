@@ -30,14 +30,20 @@ func (w *waker) open() error {
 	return nil
 }
 
-// wake adds 1 to the eventfd counter: a single write(2). EAGAIN means the
-// counter is saturated, so the reader is already guaranteed to wake.
+// wake adds 1 to the eventfd counter: a single write(2), retried on EINTR.
+// EAGAIN means the counter is saturated, so the reader is already
+// guaranteed to wake.
 func (w *waker) wake() error {
-	_, err := unix.Write(w.fd, w.one[:])
-	if err == unix.EAGAIN {
-		return nil
+	for {
+		_, err := unix.Write(w.fd, w.one[:])
+		switch err {
+		case unix.EINTR:
+			continue
+		case unix.EAGAIN:
+			return nil
+		}
+		return err
 	}
-	return err
 }
 
 // drain resets the eventfd counter to zero. EAGAIN (already drained) is

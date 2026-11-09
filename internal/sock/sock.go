@@ -90,7 +90,7 @@ func ListenUDP(network, addr string, reusePort bool) (fd int, laddr *net.UDPAddr
 	if err != nil {
 		return -1, nil, err
 	}
-	laddr = LocalUDP(fd)
+	laddr = localUDP(fd)
 	if laddr == nil {
 		unix.Close(fd)
 		return -1, nil, unix.EINVAL
@@ -230,16 +230,6 @@ func SetBuffers(fd, rcv, snd int) error {
 	return nil
 }
 
-// SetKeepAlive sets SO_KEEPALIVE.
-func SetKeepAlive(fd int, on bool) error {
-	return unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_KEEPALIVE, boolInt(on))
-}
-
-// SetNonblock puts fd into non-blocking mode.
-func SetNonblock(fd int) error {
-	return unix.SetNonblock(fd, true)
-}
-
 // SockaddrToTCP converts a unix.Sockaddr to a *net.TCPAddr. It allocates
 // (one per accept is acceptable; the read/write path never calls it).
 // Returns nil for unsupported families.
@@ -253,9 +243,9 @@ func SockaddrToTCP(sa unix.Sockaddr) *net.TCPAddr {
 	return nil
 }
 
-// SockaddrToUDP converts a unix.Sockaddr to a *net.UDPAddr. It allocates.
+// sockaddrToUDP converts a unix.Sockaddr to a *net.UDPAddr. It allocates.
 // Returns nil for unsupported families.
-func SockaddrToUDP(sa unix.Sockaddr) *net.UDPAddr {
+func sockaddrToUDP(sa unix.Sockaddr) *net.UDPAddr {
 	switch sa := sa.(type) {
 	case *unix.SockaddrInet4:
 		return &net.UDPAddr{IP: ip4(sa.Addr), Port: sa.Port}
@@ -274,13 +264,13 @@ func LocalTCP(fd int) *net.TCPAddr {
 	return SockaddrToTCP(sa)
 }
 
-// LocalUDP returns getsockname(fd) as a *net.UDPAddr, or nil on error.
-func LocalUDP(fd int) *net.UDPAddr {
+// localUDP returns getsockname(fd) as a *net.UDPAddr, or nil on error.
+func localUDP(fd int) *net.UDPAddr {
 	sa, err := unix.Getsockname(fd)
 	if err != nil {
 		return nil
 	}
-	return SockaddrToUDP(sa)
+	return sockaddrToUDP(sa)
 }
 
 // UDPAddrToSockaddr converts a for sendto/sendmmsg, filling caller-provided
@@ -353,23 +343,6 @@ func NewBatch(n, bufSize int) *Batch {
 // is owned by the Batch and reused by every call.
 func (b *Batch) Msgs() []Message { return b.msgs }
 
-// AddrOf converts a received message's raw sockaddr to a *net.UDPAddr. It
-// allocates. Returns nil when AddrLen is 0 or the family is unsupported.
-func (m *Message) AddrOf() *net.UDPAddr {
-	if m.AddrLen == 0 {
-		return nil
-	}
-	switch m.Addr.Family {
-	case unix.AF_INET:
-		r := (*unix.RawSockaddrInet4)(unsafe.Pointer(&m.Addr))
-		return &net.UDPAddr{IP: ip4(r.Addr), Port: getPort(&r.Port)}
-	case unix.AF_INET6:
-		r := &m.Addr
-		return &net.UDPAddr{IP: ip6(r.Addr), Port: getPort(&r.Port), Zone: zoneName(r.Scope_id)}
-	}
-	return nil
-}
-
 // SetAddr fills the raw sockaddr from a without allocating (except for a
 // non-numeric IPv6 zone, see UDPAddrToSockaddr). An IPv4 (or IPv4-mapped)
 // address is stored as sockaddr_in, anything else as sockaddr_in6. A nil a
@@ -401,8 +374,8 @@ func (m *Message) SetAddr(a *net.UDPAddr) {
 // FillAddr fills dst in place from the received raw sockaddr: dst.IP is
 // resliced to 4 or 16 bytes (reusing its backing array when its capacity is
 // at least 16, so the call does not allocate), Port is set and Zone is set to
-// "". The IPv6 scope id is dropped (use AddrOf to keep it). For AddrLen 0 or
-// an unsupported family dst is cleared (nil IP, port 0).
+// "". The IPv6 scope id is dropped. For AddrLen 0 or an unsupported family
+// dst is cleared (nil IP, port 0).
 func (m *Message) FillAddr(dst *net.UDPAddr) {
 	dst.Zone = ""
 	if m.AddrLen != 0 {
