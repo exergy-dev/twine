@@ -1,6 +1,26 @@
 // Package http is a zero-allocation HTTP/1.1 server for the twine event
 // loop.
 //
+// The Handler runs on the connection's event loop, and the response is the
+// state of the RequestCtx when the Handler returns: the server sends it
+// then, and there is no asynchronous response API. A Handler must compute
+// its answer without blocking, so handlers that wait on I/O (a database,
+// another service, the file system) belong on net/http. twine.DeferToThread
+// and Loop.CallLater are only for fire-and-forget work (logging, metrics,
+// refreshing a cache) whose result does not go into this response.
+//
+// The package name shadows net/http; import it as twhttp and leave
+// net/http unaliased:
+//
+//	import (
+//		"net/http"
+//
+//		"github.com/exergy-dev/twine"
+//		twhttp "github.com/exergy-dev/twine/http"
+//	)
+//
+// # Allocation model
+//
 // A Server's Factory builds one protocol object per connection. That object
 // embeds the connection's RequestCtx and owns a few byte buffers that grow
 // on demand and are reused for every request on the connection, so the
@@ -27,6 +47,34 @@
 //     drain so that idle connections stay small; such requests allocate.
 //
 // Every []byte a RequestCtx returns is valid only while the Handler runs.
+//
+// # Routing and request targets
+//
+// There is no router: switch on the path. Converting a []byte to a string
+// for a switch or a comparison does not allocate.
+//
+//	switch string(ctx.Path()) {
+//	case "/":
+//		ctx.WriteString("home")
+//	case "/health":
+//		ctx.WriteString("ok")
+//	default:
+//		ctx.SetStatus(http.StatusNotFound)
+//	}
+//
+// Path is the path as sent. It is not percent-decoded and dot segments are
+// not removed, so "/%61" does not match "/a" and "/x/../admin" does not
+// match "/admin"; the parser only checks that percent escapes are well
+// formed (400 otherwise). Decode and clean it yourself (net/url.PathUnescape,
+// path.Clean) when routing must treat such spellings alike, and never use it
+// as a file-system path unchecked. RawQuery is not decoded either.
+//
+// Accepted request targets are origin-form ("/path?query"), asterisk-form
+// ("*", as used by OPTIONS) and absolute-form
+// ("http://host:port/path?query", or https), whose authority becomes Host
+// and whose empty path is reported as "/". Absolute-form targets with userinfo or an
+// IPv6-literal host ("http://[::1]/"), the authority-form target of CONNECT
+// ("host:443") and anything else are answered with 400.
 //
 // # Protocol behaviour
 //
@@ -87,8 +135,11 @@
 // # net/http compatibility
 //
 // The package uses no net/http types on its fast path. Adapt runs a
-// net/http.Handler on the server at a documented cost: each request
-// allocates a *net/http.Request, its URL and Header map, strings for every
-// header, a copy of the body and a ResponseWriter (a few dozen allocations
-// per request). Use it for migration, not for hot endpoints.
+// net/http.Handler on the server for migration, not for hot endpoints: each
+// request allocates a *net/http.Request, its URL and Header map, strings
+// for every header, a copy of the body and a ResponseWriter (about 10
+// allocations plus 3 per request header). The handler still runs on the
+// loop and must not block, its response is still sent when it returns
+// (interim 1xx responses are dropped), and Flusher, Hijacker and Pusher are
+// not available.
 package http

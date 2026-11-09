@@ -14,13 +14,14 @@ import (
 // *net/http.Request with its URL and Header map (one string per header name
 // and value), the method, request URI, host and remote-address strings, a
 // copy of the body behind an io.Reader, and a ResponseWriter with its own
-// Header map; expect a few dozen allocations per request (roughly 10 plus 3
-// per request header) and a full copy of the request body. The body is
-// copied because a net/http handler may keep reading it after ServeHTTP
-// returns.
+// Header map: about 10 allocations plus 3 per request header, and a full
+// copy of the request body. The body is copied because a net/http handler
+// may keep reading it after ServeHTTP returns.
 //
-// The handler runs on the loop like any Handler and must not block. The
-// response is buffered and sent when ServeHTTP returns: Flusher, Hijacker
+// The handler runs on the loop like any Handler and must not block:
+// adapting a net/http handler that waits on I/O does not make it safe, so
+// keep such handlers on net/http.Server. The response is buffered and sent
+// when ServeHTTP returns: Flusher, Hijacker
 // and Pusher are not implemented, interim responses (WriteHeader with a
 // 1xx code, such as 103 Early Hints) are dropped while the final response
 // is still sent, and an unset Content-Type is sniffed with

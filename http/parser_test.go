@@ -36,6 +36,9 @@ func TestParserStatus(t *testing.T) {
 		{"bad escape", "GET /%zz HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 400", true},
 		{"absolute form", "GET http://example.com/p?q HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 200", false},
 		{"asterisk", "OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 200", false},
+		{"absolute ipv6", "GET http://[::1]:80/ HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 400", true},
+		{"absolute userinfo", "GET http://u:p@h/ HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 400", true},
+		{"connect authority", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n", "HTTP/1.1 400", true},
 		{"two hosts", "GET / HTTP/1.1\r\nHost: x\r\nHost: y\r\n\r\n", "HTTP/1.1 400", true},
 		{"cl and te", "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "HTTP/1.1 400", true},
 		{"bad cl", "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: +1\r\n\r\na", "HTTP/1.1 400", true},
@@ -115,6 +118,13 @@ func TestRequestAccessors(t *testing.T) {
 	serveOnce(t, l, s, "GET http://h.example:81?q HTTP/1.1\r\nHost: other\r\n\r\n")
 	if seen[1] != "/" || seen[2] != "q" || seen[5] != "h.example:81" {
 		t.Fatalf("absolute form: %q", seen)
+	}
+
+	// Path is raw: no percent-decoding, no dot-segment removal.
+	seen = nil
+	serveOnce(t, l, s, "GET /x/../%61%2Fb?q=%20 HTTP/1.1\r\nHost: x\r\n\r\n")
+	if seen[1] != "/x/../%61%2Fb" || seen[2] != "q=%20" {
+		t.Fatalf("raw path: %q", seen)
 	}
 }
 

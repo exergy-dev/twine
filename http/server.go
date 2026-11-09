@@ -52,10 +52,13 @@ const largeBody = 32 << 10
 // exported fields, then call Factory or Listen; fields must not change
 // afterwards. One Server may serve any number of listeners and engines.
 type Server struct {
-	// Handler is called on the connection's loop for every request. It
-	// must not block (use twine.DeferToThread for blocking work, though the
-	// response is still sent when Handler returns). A nil Handler answers
-	// 404.
+	// Handler is called on the connection's loop for every request. The
+	// response is the state of the RequestCtx when Handler returns: it is
+	// sent then, and there is no asynchronous response. Handler must not
+	// block, so handlers that wait on I/O belong on net/http. Work started
+	// with twine.DeferToThread or Loop.CallLater cannot contribute to the
+	// response; use them only for fire-and-forget tasks. A nil Handler
+	// answers 404.
 	Handler func(ctx *RequestCtx)
 
 	// Name, when set, is sent as the Server response header.
