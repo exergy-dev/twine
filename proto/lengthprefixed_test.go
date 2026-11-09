@@ -98,6 +98,24 @@ func TestLengthPrefixedLimits(t *testing.T) {
 	}
 }
 
+func TestLengthPrefixedBadPrefixLen(t *testing.T) {
+	for _, p := range []int{-1, 3, 5, 8} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("PrefixLen %d: ConnectionMade did not panic", p)
+				}
+			}()
+			lp := &LengthPrefixed{PrefixLen: p}
+			lp.ConnectionMade(newFake())
+		}()
+	}
+	for _, p := range []int{0, 1, 2, 4} {
+		lp := &LengthPrefixed{PrefixLen: p}
+		lp.ConnectionMade(newFake())
+	}
+}
+
 func TestLengthPrefixedRandomSplits(t *testing.T) {
 	rng := rand.New(rand.NewPCG(7, 8))
 	for iter := 0; iter < 500; iter++ {

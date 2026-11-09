@@ -161,13 +161,15 @@ func (lr *LineReceiver) DataReceived(b []byte) {
 		}
 		// Detach the buffer before the callback so a re-entrant
 		// SetLineMode(extra) cannot overwrite line; reclaim the storage
-		// afterwards when nothing re-entered.
-		saved := lr.buf[:0]
+		// afterwards when nothing re-entered, unless a long line grew it
+		// past retainLimit.
+		saved := lr.buf
 		lr.buf = nil
 		if lr.LineReceived != nil {
 			lr.LineReceived(line)
 		}
 		if lr.buf == nil {
+			saved.reset()
 			lr.buf = saved
 		}
 		b = b[pos:]
