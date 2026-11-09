@@ -1,7 +1,6 @@
 package twine
 
 import (
-	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -180,9 +179,9 @@ func TestTimerFireZeroAlloc(t *testing.T) {
 	}
 }
 
-// goid is the InLoop fallback where no thread id is available (every
-// non-Linux platform, and LockOSThread(false)), so it sits on the
-// CallFromThread push path and must not allocate.
+// goid is the InLoop fallback where no thread id is available (OpenBSD,
+// DragonFly), so there it sits on the CallFromThread push path and must not
+// allocate.
 func TestGoidZeroAlloc(t *testing.T) {
 	want := goid()
 	if want <= 0 {
@@ -199,17 +198,7 @@ func TestGoidZeroAlloc(t *testing.T) {
 }
 
 func TestCallFromThreadZeroAlloc(t *testing.T) {
-	// LockOSThread(false) makes InLoop use goid on Linux too, which is the
-	// path every non-Linux platform takes.
-	for _, lock := range []bool{true, false} {
-		t.Run(fmt.Sprintf("LockOSThread=%v", lock), func(t *testing.T) {
-			testCallFromThreadZeroAlloc(t, LockOSThread(lock))
-		})
-	}
-}
-
-func testCallFromThreadZeroAlloc(t *testing.T, opt Option) {
-	e := startEngine(t, Loops(1), opt)
+	e := startEngine(t, Loops(1))
 	l := e.loops[0]
 	fn := bumpSink
 	// Push from off-loop.

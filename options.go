@@ -25,7 +25,6 @@ type config struct {
 	writeHighWater  int
 	writeLowWater   int
 	writeLimit      int
-	lockOSThread    bool
 	watchdog        time.Duration
 	logger          *slog.Logger
 	maxReadsPerEv   int
@@ -49,7 +48,6 @@ func defaultConfig() config {
 		writeHighWater:  256 << 10,
 		writeLowWater:   64 << 10,
 		writeLimit:      16 << 20,
-		lockOSThread:    true,
 		watchdog:        time.Millisecond,
 		logger:          slog.Default(),
 		maxReadsPerEv:   8,
@@ -116,9 +114,6 @@ func WriteLowWater(n int) Option { return func(c *config) { c.writeLowWater = n 
 // aborted with ErrWriteBufferFull. Default 16 MiB.
 func WriteBufferLimit(n int) Option { return func(c *config) { c.writeLimit = n } }
 
-// LockOSThread pins each loop goroutine to its own OS thread. Default true.
-func LockOSThread(on bool) Option { return func(c *config) { c.lockOSThread = on } }
-
 // Watchdog sets the slow-callback threshold. Default 1ms; 0 disables.
 func Watchdog(threshold time.Duration) Option { return func(c *config) { c.watchdog = threshold } }
 
@@ -142,15 +137,10 @@ func ShutdownTimeout(d time.Duration) Option { return func(c *config) { c.shutdo
 
 // PinLoops pins loop i to cpus[i % len(cpus)] with sched_setaffinity (Linux;
 // ignored elsewhere). Pinning loops to distinct physical cores keeps them off
-// each other's hyperthreads and away from the worker pool; it implies
-// LockOSThread. Default: no pinning.
+// each other's hyperthreads and away from the worker pool. Every loop is
+// always locked to its own OS thread, pinned or not. Default: no pinning.
 func PinLoops(cpus ...int) Option {
-	return func(c *config) {
-		c.pinCPUs = append([]int(nil), cpus...)
-		if len(cpus) > 0 {
-			c.lockOSThread = true
-		}
-	}
+	return func(c *config) { c.pinCPUs = append([]int(nil), cpus...) }
 }
 
 // CloseLinger bounds how long LoseConnection waits, after sending SHUT_WR,
