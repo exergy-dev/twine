@@ -823,8 +823,8 @@ func TestClientDialError(t *testing.T) {
 	}
 }
 
-// TestTwineToTwine runs both ends in one engine; both handshakes share the
-// worker pool.
+// TestTwineToTwine runs both ends in one engine; each handshake, client and
+// server, runs on a goroutine of its own.
 func TestTwineToTwine(t *testing.T) {
 	e := startEngine(t)
 	_, pool := selfSigned(t)

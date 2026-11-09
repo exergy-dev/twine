@@ -87,9 +87,7 @@ func (w *wrapper) ConnectionMade(under twine.Transport) {
 	} else {
 		t.tc = ctls.Server(t.bio, t.f.cfg)
 	}
-	if d := t.f.opts.handshakeTimeout; d > 0 {
-		t.hsTimer = t.loop.CallLater(d, t.onHandshakeTimeout)
-	}
+	t.hsTimer = t.loop.CallLater(t.f.opts.handshakeTimeout, t.onHandshakeTimeout) // always > 0
 	// From here until the Future settles, only the handshake goroutine
 	// touches t.tc.
 	t.startHandshake().Then(t.onHandshakeDone).Catch(t.onHandshakeError)
@@ -129,13 +127,13 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 	return fut
 }
 
-// DataReceived feeds ciphertext to the handshake worker or, after the
+// DataReceived feeds ciphertext to the handshake goroutine or, after the
 // handshake, decrypts it on the loop and delivers plaintext to inner.
 func (w *wrapper) DataReceived(b []byte) {
 	t := (*Transport)(w)
 	switch t.state {
 	case stHandshaking:
-		t.bio.feed(b) // copies: b dies when we return, the worker reads later
+		t.bio.feed(b) // copies: b dies when we return, the handshake reads later
 	case stReady:
 		if t.peerEOF || t.aborted {
 			return
@@ -150,7 +148,7 @@ func (w *wrapper) DataReceived(b []byte) {
 	}
 }
 
-// ConnectionLost tears down the bio (waking a blocked handshake worker) and
+// ConnectionLost tears down the bio (waking a blocked handshake goroutine) and
 // tells inner, exactly once, if it had been told about the connection.
 func (w *wrapper) ConnectionLost(err error) {
 	t := (*Transport)(w)
@@ -165,10 +163,11 @@ func (w *wrapper) ConnectionLost(err error) {
 	t.bio.shutdown(eofOr(err))
 	if prev == stHandshaking || prev == stFailed {
 		t.stopTimer()
-		// The worker's callback reports the failure with crypto/tls's own
-		// error (e.g. the peer's alert), which is more useful than EOF. The
-		// worker also rejects the Connect Future directly, so the Future
-		// settles even if the loop exits before that callback runs.
+		// The handshake goroutine's callback reports the failure with
+		// crypto/tls's own error (e.g. the peer's alert), which is more
+		// useful than EOF. The goroutine also rejects the Connect Future
+		// directly, so it settles even if the loop exits before that
+		// callback runs.
 		return
 	}
 	if t.made {
@@ -205,11 +204,11 @@ func (t *Transport) onHandshakeTimeout() {
 	t.under.Abort()
 }
 
-// onHandshakeDone runs on the loop once the worker's Handshake returned nil.
+// onHandshakeDone runs on the loop once the handshake goroutine's Handshake returned nil.
 func (t *Transport) onHandshakeDone(struct{}) {
 	t.stopTimer()
 	if t.state != stHandshaking {
-		// Lost (or timed out) after the worker finished but before this
+		// Lost (or timed out) after the handshake finished but before this
 		// callback ran: the inner protocol is never involved.
 		t.handshakeFailed(eofOr(t.bio.err))
 		return

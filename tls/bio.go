@@ -26,7 +26,8 @@ var errWouldBlock net.Error = wouldBlockError{}
 
 // bio is the memory-BIO net.Conn that a *crypto/tls.Conn runs over.
 //
-// Handshake mode (the default): the tls.Conn is driven by a worker goroutine.
+// Handshake mode (the default): the tls.Conn is driven by the handshake
+// goroutine.
 // Read blocks on cond until the loop feeds ciphertext (feed) or the
 // connection is lost (shutdown). Write appends to out and asks the loop, via
 // CallFromThread, to ship out to the real transport (flushOut).
@@ -39,8 +40,8 @@ var errWouldBlock net.Error = wouldBlockError{}
 //
 // Fields marked (mu) are guarded by mu in handshake mode. In loop mode they
 // are touched only by the loop, after a happens-before edge established by
-// the handshake Future (the worker has returned from Handshake before the
-// Future resolves, and resolution goes through CallFromThread).
+// the handshake Future (the handshake goroutine has returned from Handshake
+// before the Future resolves, and resolution goes through CallFromThread).
 type bio struct {
 	loop  *twine.Loop     // immutable
 	under twine.Transport // loop-only
@@ -140,7 +141,7 @@ func (b *bio) appendIn(p []byte) {
 	b.in = append(b.in, p...)
 }
 
-// feed queues a copy of ciphertext for the handshake worker and wakes it.
+// feed queues a copy of ciphertext for the handshake goroutine and wakes it.
 // Loop-only, handshake mode.
 func (b *bio) feed(p []byte) {
 	b.mu.Lock()
@@ -230,15 +231,16 @@ func (b *bio) switchToLoopMode() {
 	b.mu.Unlock()
 }
 
-// shutdown marks the bio dead with err, wakes a blocked worker, and drops
-// all buffered ciphertext. Safe from any goroutine; the first error wins.
+// shutdown marks the bio dead with err and wakes a blocked handshake
+// goroutine. Queued ciphertext is kept (see below). Safe from any goroutine;
+// the first error wins.
 func (b *bio) shutdown(err error) {
 	b.mu.Lock()
 	if b.err == nil {
 		b.err = err
 	}
-	// Queued ciphertext is kept: a handshake worker reads it before it sees
-	// err, so an alert that arrived just before the close is still reported.
+	// Queued ciphertext is kept: the handshake goroutine reads it before it
+	// sees err, so an alert that arrived just before the close is reported.
 	b.cond.Broadcast()
 	b.mu.Unlock()
 }
@@ -266,7 +268,7 @@ func (b *bio) SetReadDeadline(time.Time) error { return nil }
 // SetWriteDeadline implements net.Conn as a no-op.
 func (b *bio) SetWriteDeadline(time.Time) error { return nil }
 
-// eofOr maps a nil connection-lost error to io.EOF for the handshake worker.
+// eofOr maps a nil connection-lost error to io.EOF for the handshake.
 func eofOr(err error) error {
 	if err == nil {
 		return io.EOF
