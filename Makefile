@@ -118,8 +118,8 @@ fuzz:
 # (Linux only).
 bench:
 	mkdir -p bench/results
-	$(GO) test -run=^$$ -bench=. -benchmem -count=5 $(PKGS) | tee bench/results/$(SHA).txt
-	cd bench && $(GO) test -run=^$$ -bench=. -benchmem -count=5 ./... | tee -a ../bench/results/$(SHA).txt
+	$(GO) test -p 1 -run=^$$ -bench=. -benchmem -count=5 $(PKGS) | tee bench/results/$(SHA).txt
+	cd bench && $(GO) test -p 1 -run=^$$ -bench=. -benchmem -count=5 ./... | tee -a ../bench/results/$(SHA).txt
 
 # Compare this commit's `make bench` output against a baseline. To make one,
 # run `make bench` on the base commit and copy its bench/results/<sha>.txt.
