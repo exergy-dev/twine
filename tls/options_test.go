@@ -1,6 +1,8 @@
 package tls
 
 import (
+	"errors"
+	"net"
 	"testing"
 	"time"
 )
@@ -19,6 +21,24 @@ func TestHandshakeTimeoutDefault(t *testing.T) {
 	} {
 		if got := buildOptions(tc.opts).handshakeTimeout; got != tc.want {
 			t.Errorf("handshakeTimeout = %v, want %v", got, tc.want)
+		}
+	}
+}
+
+func TestHandshakeErrorMessage(t *testing.T) {
+	peer := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 443}
+	for _, tc := range []struct {
+		err  *HandshakeError
+		want string
+	}{
+		{&HandshakeError{Peer: peer, Err: ErrHandshakeTimeout}, "tls: handshake with 192.0.2.1:443 failed: handshake timeout"},
+		{&HandshakeError{Err: errors.New("boom")}, "tls: handshake failed: boom"},
+	} {
+		if got := tc.err.Error(); got != tc.want {
+			t.Errorf("Error() = %q, want %q", got, tc.want)
+		}
+		if !errors.Is(tc.err, tc.err.Err) {
+			t.Errorf("errors.Is(%v, its Err) = false", tc.err)
 		}
 	}
 }
