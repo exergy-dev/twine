@@ -119,8 +119,9 @@ type Server struct {
 	serverLine  []byte
 	logger      *slog.Logger
 
-	mu    sync.Mutex
-	dates map[*twine.Loop]*dateState
+	mu      sync.Mutex
+	dates   map[*twine.Loop]*dateState
+	engines map[*twine.Engine]struct{} // engines with a cleanup hook
 }
 
 func (s *Server) init() {
@@ -182,13 +183,7 @@ func (s *Server) Factory() twine.Factory {
 // Listen binds addr on e and serves HTTP on it. It is shorthand for
 // e.ListenTCP(addr, s.Factory(), opts...).
 func (s *Server) Listen(e *twine.Engine, addr string, opts ...twine.ListenOption) (twine.Listener, error) {
-	lst, err := e.ListenTCP(addr, s.Factory(), opts...)
-	if err != nil {
-		return nil, err
-	}
-	loops := e.Loops()
-	e.OnShutdown(func() { s.forgetLoops(loops) })
-	return lst, nil
+	return e.ListenTCP(addr, s.Factory(), opts...)
 }
 
 func (s *Server) buildProtocol(net.Addr) twine.Protocol {
