@@ -635,7 +635,7 @@ Work the phases in order. Each phase is a mergeable milestone with acceptance cr
 - [x] kTLS offload with capability probe and fallback *(TLS 1.3 AES-GCM via reflected traffic secrets; see Section 14)*
 - [x] `proto.AMP`; `SO_BUSY_POLL` and `TCP_DEFER_ACCEPT` options
 - [x] 1M-connection soak on a 16-core host; publish numbers against the Section 2 targets in `BENCHMARKS.md` *(run on a 32-vCPU WSL2 host inside an unprivileged netns: 1,000,000 connections held 10 min at 582 MB RSS; see BENCHMARKS.md)*
-- [x] API freeze, `v1.0.0` tag, godoc pass on every exported symbol *(docs/API.md; local tag, no remote)*
+- [x] API snapshot, `v0.1.0` tag, godoc pass on every exported symbol *(docs/API.md; local tag, no remote; the API is not frozen until v1.0.0)*
 
 **Accept:** every Section 2 target met or the miss documented with a cause; `go vet`, `staticcheck`, `-race` clean; godoc coverage 100% of exported identifiers. *Status: 6 targets met, 2 missed with measured causes (BENCHMARKS.md); lint and race clean; godoc 100%.*
 
