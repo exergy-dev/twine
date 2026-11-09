@@ -166,16 +166,20 @@ func (ctx *RequestCtx) SetContentTypeBytes(ct []byte) { ctx.ct = appendSafe(ctx.
 // name (ASCII case-insensitive). Content-Type is routed to SetContentType;
 // Content-Length and Transfer-Encoding are ignored (the length is computed);
 // "Connection: close" closes the connection after the response; Server and
-// Date replace the automatic values. CR and LF in name or value are replaced
-// with spaces so a header cannot split the response.
+// Date replace the automatic values.
+//
+// A header whose name is empty or contains a byte that is not an RFC 9110
+// token character (space, ':', CR, LF, controls, non-ASCII, ...) is
+// dropped, as net/http does. CR and LF in a value are replaced with spaces
+// so a header cannot split the response.
 func (ctx *RequestCtx) SetHeader(name, value string) { setHeader(ctx, name, value, true) }
 
 // SetHeaderBytes is SetHeader with []byte arguments; it does not allocate.
 func (ctx *RequestCtx) SetHeaderBytes(name, value []byte) { setHeader(ctx, name, value, true) }
 
 // AddHeader adds a response header line without replacing existing ones
-// (for Set-Cookie and other repeatable headers). Special names behave as in
-// SetHeader.
+// (for Set-Cookie and other repeatable headers). Special and invalid names
+// behave as in SetHeader.
 func (ctx *RequestCtx) AddHeader(name, value string) { setHeader(ctx, name, value, false) }
 
 // DelHeader removes response headers previously set with name.
@@ -228,13 +232,13 @@ func (ctx *RequestCtx) resetResponse() {
 
 // setHeader implements SetHeader (replace set) and AddHeader.
 func setHeader[N, V text](ctx *RequestCtx, name N, value V, replace bool) {
-	if special(ctx, name, value, replace) {
+	if !validName(name) || special(ctx, name, value, replace) {
 		return
 	}
 	if replace {
 		delHeader(ctx, name)
 	}
-	ctx.hdrs = appendSafe(ctx.hdrs, name)
+	ctx.hdrs = append(ctx.hdrs, name...)
 	ctx.hdrs = append(ctx.hdrs, ':', ' ')
 	ctx.hdrs = appendSafe(ctx.hdrs, value)
 	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
@@ -300,8 +304,22 @@ func delHeader[N text](ctx *RequestCtx, name N) {
 	ctx.hdrs = h
 }
 
+// validName reports whether name is a valid header field name: a non-empty
+// RFC 9110 token.
+func validName[N text](name N) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if !tokenTable[name[i]] {
+			return false
+		}
+	}
+	return true
+}
+
 // appendSafe appends s with CR and LF replaced by spaces so that a header
-// name or value cannot inject extra lines into the response.
+// value cannot inject extra lines into the response.
 func appendSafe[S text](dst []byte, s S) []byte {
 	for i := 0; i < len(s); i++ {
 		c := s[i]

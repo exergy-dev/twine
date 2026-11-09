@@ -1,6 +1,9 @@
 package http
 
 import (
+	"bufio"
+	"io"
+	nethttp "net/http"
 	"strings"
 	"testing"
 )
@@ -129,6 +132,37 @@ func TestResponseHeaders(t *testing.T) {
 	for _, bad := range []string{"X-A: 1", "999", "Server: srv", "\r\nEvil"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("unexpected %q in\n%s", bad, out)
+		}
+	}
+}
+
+// TestInvalidHeaderNamesDropped checks that a response header with an
+// empty or non-token name is dropped instead of corrupting the response.
+func TestInvalidHeaderNamesDropped(t *testing.T) {
+	s := &Server{Handler: func(ctx *RequestCtx) {
+		ctx.SetHeader("", "empty")
+		ctx.SetHeader("Bad Name", "space")
+		ctx.SetHeader("X:Y", "colon")
+		ctx.AddHeader("X-Ctl\x7f", "del")
+		ctx.AddHeader("caf\xc3\xa9", "utf8")
+		ctx.SetHeaderBytes([]byte("A\r\nB"), []byte("crlf"))
+		ctx.SetHeaderBytes(nil, []byte("nil"))
+		ctx.SetHeader("X-Good", "1")
+		ctx.DelHeader("")
+		ctx.WriteString("ok")
+	}}
+	out, _ := serveOnce(t, testLoop(t), s, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	resp, err := nethttp.ReadResponse(bufio.NewReader(strings.NewReader(out)), nil)
+	if err != nil {
+		t.Fatalf("net/http rejects the response: %v\n%q", err, out)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || string(body) != "ok" || resp.Header.Get("X-Good") != "1" {
+		t.Fatalf("%d %q %v", resp.StatusCode, body, resp.Header)
+	}
+	for _, v := range []string{"empty", "space", "colon", "del", "utf8", "crlf", "nil"} {
+		if strings.Contains(out, v) {
+			t.Errorf("invalid header with value %q was sent:\n%q", v, out)
 		}
 	}
 }
