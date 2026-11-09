@@ -9,3 +9,7 @@ func CipherUsable(suite uint16) bool {
 	k, _, _, ok := kindFor(suite)
 	return ok && cipherUsable(k)
 }
+
+// FeedCiphertext hands b to the connection as if the core had read it from
+// the socket (test hook for the record-path benchmarks). Loop-only.
+func (t *Transport) FeedCiphertext(b []byte) { (*wrapper)(t).DataReceived(b) }
