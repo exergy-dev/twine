@@ -15,11 +15,12 @@
 // Build the binaries first (the runner does it into -bin if they are missing):
 //
 //	go run ./scaling -mode echo -servers twine,gnet -loops 1,2,4,8 -conns 1000,4000
-//	go run ./scaling -mode http -servers twine@8,nethttp@8,nethttp@16@0-15 -conns 256,10000 -clients gor,tl,tls
+//	go run ./scaling -mode http -servers twine@8,nethttp@8,nethttp@16@0-15 -conns 256,10000 -clients gor,tl,spin
 //
 // Client configurations: gor = bench/echoclient or bench/httpclient
 // (goroutine per connection); tl = bench/twineload, 8 loops on 16,18,..,30;
-// tls = tl with SpinIterations(5000) (client threads stay awake); tlm / tlms
+// spin = tl with SpinIterations(5000) (client threads stay awake; results
+// recorded before the rename print client=tls); tlm / tlms
 // = twineload with as many loops as the server has (default spin / spin 5000).
 package main
 
@@ -61,7 +62,7 @@ func main() {
 	servers := flag.String("servers", "twine", "comma list of kind[@loops[@cpus]]: twine, gnet, nethttp; loops/cpus given = a fixed configuration, otherwise swept over -loops on the first N even CPUs")
 	loopsFlag := flag.String("loops", "1,2,4,8", "server loop counts to sweep")
 	connsFlag := flag.String("conns", "1000", "connection counts")
-	clients := flag.String("clients", "gor,tl,tls,tlm,tlms", "client configurations (see package doc)")
+	clients := flag.String("clients", "gor,tl,spin,tlm,tlms", "client configurations (see package doc)")
 	dur := flag.Duration("duration", 10*time.Second, "measured window per run")
 	cliCPUs := flag.String("client-cpus", "16-31", "taskset CPU list for the load generator")
 	cliPin := flag.String("client-pin", "16,18,20,22,24,26,28,30", "PinLoops list for twineload")
@@ -231,7 +232,7 @@ func run(j job, mode, bd string, port int, dur time.Duration, cliCPUs, cliPin st
 		loops, spin := 8, -1
 		switch j.cli {
 		case "tl":
-		case "tls":
+		case "spin":
 			spin = 5000
 		case "tlm":
 			loops = j.n
