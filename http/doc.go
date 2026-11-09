@@ -42,7 +42,10 @@
 //
 // Limits: MaxHeaderBytes (8 KiB) or more than 64 header lines yields 431;
 // MaxBodyBytes (4 MiB) yields 413, checked against Content-Length as soon
-// as the head arrives. Malformed requests yield 400, unsupported transfer
+// as the head arrives, and against the decoded size of a chunked body as it
+// arrives; a chunked request whose raw size (framing included) passes
+// MaxHeaderBytes + 2*MaxBodyBytes + 64 KiB also yields 413, so no
+// connection buffers much more than twice MaxBodyBytes. Malformed requests yield 400, unsupported transfer
 // codings 501, unsupported versions 505. Each of these responses carries
 // "Connection: close" and the connection is half-closed after it; anything
 // the peer sends afterwards is discarded. The parser is deliberately

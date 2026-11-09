@@ -55,7 +55,8 @@ type Server struct {
 	MaxHeaderBytes int
 
 	// MaxBodyBytes bounds the request body (default DefaultMaxBodyBytes).
-	// Exceeding it yields 413.
+	// Exceeding it yields 413, as does a chunked request whose raw size
+	// passes MaxHeaderBytes + 2*MaxBodyBytes + 64 KiB.
 	MaxBodyBytes int
 
 	// MaxPipelinedRequests bounds how many requests are served from one
@@ -96,8 +97,10 @@ func (s *Server) init() {
 		if s.maxPipe <= 0 {
 			s.maxPipe = DefaultMaxPipelinedRequests
 		}
-		// Raw bytes one request may occupy while incomplete: the head, the
-		// body and chunked framing overhead up to the body size again.
+		// Raw bytes an incomplete chunked request may occupy: the head,
+		// the payload, and framing up to the payload size again. A
+		// Content-Length request needs no raw cap: its length is checked
+		// against maxBody as soon as the head is parsed.
 		s.maxRaw = s.maxHdr + 2*s.maxBody + 64<<10
 		if s.Name != "" {
 			s.serverLine = appendSafe(append([]byte(nil), "Server: "...), s.Name)
@@ -368,18 +371,16 @@ func (c *conn) parseOne(data []byte) (int, int) {
 	return total, parseOK
 }
 
-// needBody handles an incomplete body: it enforces the raw size limit and
-// answers Expect: 100-continue once.
+// needBody handles an incomplete body: it enforces the raw size limit of
+// a chunked request and answers Expect: 100-continue once.
 func (c *conn) needBody(have int) int {
 	r := &c.ctx.req
-	limit := c.s.maxRaw
-	if r.chunked {
-		// Chunked framing is not bounded by 2× the payload: one-byte chunks
-		// cost six raw bytes each. The decoded size is enforced separately,
-		// so the raw cap only needs to bound the work per request.
-		limit = c.s.maxHdr + 8*c.s.maxBody + 64<<10
-	}
-	if have > limit {
+	// The decoded chunked body is bounded by MaxBodyBytes, but the raw
+	// framing is not (one-byte chunks cost six raw bytes each), and all of
+	// it is buffered until the request completes. Framing heavier than
+	// the payload itself is refused with 413 so a connection never pins
+	// more than about twice MaxBodyBytes.
+	if r.chunked && have > c.s.maxRaw {
 		return 413
 	}
 	if r.expect100 && !c.cont && r.minor == 1 {
