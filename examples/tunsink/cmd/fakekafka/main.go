@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command fakekafka runs an in-process franz-go kfake broker so tunsink can
 // be benchmarked without a Kafka installation.
 //

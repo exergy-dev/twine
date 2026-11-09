@@ -7,6 +7,7 @@ with a goroutine-per-connection baseline as a reference row.
 
 It is a separate module (it depends on
 [franz-go](https://github.com/twmb/franz-go)); build it from this directory.
+Linux only: it needs a TUN device, and the commands carry `//go:build linux`.
 
 ```
 .
@@ -17,7 +18,7 @@ It is a separate module (it depends on
 ├── cmd/fakekafka        in-process kfake broker so the benchmark needs no Kafka install
 ├── cmd/aesbench         standalone AES-256-GCM decrypt cost of one frame
 ├── bench.sh             the benchmark matrix (runs in an unprivileged netns)
-└── results/             raw benchmark output (quick-go.txt from the host described below)
+└── results/             raw benchmark output (quick.txt from the host described below)
 ```
 
 ## Wire format and data flow
@@ -128,7 +129,7 @@ negative check: the load generator encrypts under a different key, so the
 cell must end with `check=FAIL`, `decrypt_err` equal to the server's frame
 count and `tun_rx=0`, which proves the hot path really verifies every tag.
 
-`./bench.sh compare results/quick-go.txt` prints, per (mode, kafka, aes,
+`./bench.sh compare results/quick.txt` prints, per (mode, kafka, aes,
 cores, conns, size) cell, the twine and baseline `sunk/s` (`frames/s` for
 older files), baseline/twine as a percentage, and a `chk` column naming
 servers whose `check` failed. Missing rows show `-`; old `twine` rows count
@@ -147,12 +148,12 @@ saturated loop (`TWINE_GOMAXPROCS` overrides).
 
 ## Results
 
-Quick run (`./bench.sh quick results/quick-go.txt`): 4 s cells, one run each,
+Quick run (`./bench.sh quick results/quick.txt`): 4 s cells, one run each,
 512-byte packets, AES off and on. Host: i9-14900KF, WSL2 kernel 6.18, Go
 1.25.3 + franz-go 1.21.1, kfake broker on 3 dedicated CPUs, an otherwise idle
 machine (see the stray-broker note below). All 20 cells pass `check` (every
 frame reached the TUN and, with Kafka on, Kafka; with AES on, no decrypt
-error). Raw rows in [results/quick-go.txt](results/quick-go.txt). Numbers are
+error). Raw rows in [results/quick.txt](results/quick.txt). Numbers are
 `sunk/s`, million frames per second written to the TUN during the load
 generator's run; the AES column is the same cell with every frame AES-256-GCM
 encrypted by the load generator and decrypted by the server, and the

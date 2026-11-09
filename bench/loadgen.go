@@ -1,3 +1,5 @@
+//go:build linux
+
 package bench
 
 import (
@@ -72,7 +74,7 @@ func CloseAll(conns []net.Conn) {
 		if tc, ok := c.(*net.TCPConn); ok {
 			_ = tc.SetLinger(0)
 		}
-		c.Close()
+		_ = c.Close()
 	}
 }
 

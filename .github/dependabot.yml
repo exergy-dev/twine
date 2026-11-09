@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # The root module supports Go 1.24; newer x/sys releases can raise the
+      # go directive. Bump it by hand after checking its go.mod.
+      - dependency-name: golang.org/x/sys
+  - package-ecosystem: gomod
+    directories:
+      - /bench
+      - /examples/tunsink
+    schedule:
+      interval: weekly
