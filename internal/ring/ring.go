@@ -209,13 +209,15 @@ func (r *Ring) Iovecs(dst []unix.Iovec) []unix.Iovec {
 
 // Consume drops n bytes from the front (n <= Len). Segments that become empty
 // are returned to the allocator, including the last one when Len reaches 0,
-// so an empty Ring holds no slab. Consume panics if n < 0 or n > Len.
-func (r *Ring) Consume(n int) {
+// so an empty Ring holds no slab. Consume panics if n < 0 or n > Len. The
+// twine_debug build verifies the invariants afterwards (consume_debug.go);
+// the release wrapper in consume_release.go keeps Consume's code free of the
+// deferred check.
+//
+// consume is the implementation behind Consume.
+func (r *Ring) consume(n int) {
 	if n < 0 || n > r.length {
 		panic("ring: Consume out of range")
-	}
-	if debugtag.On {
-		defer r.mustVerify()
 	}
 	r.length -= n
 	for n > 0 {

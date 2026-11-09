@@ -21,8 +21,6 @@ package wheel
 import (
 	"math/bits"
 	"time"
-
-	"github.com/exergy-dev/twine/internal/debugtag"
 )
 
 const (
@@ -85,8 +83,6 @@ type Wheel struct {
 	cur   int64 // current tick (ticks since base)
 	now   int64 // last time passed to Advance (or New); cur is its tick outside Advance
 	count int
-
-	advancing bool // inside Advance; maintained only when debugtag.On
 }
 
 // New creates a wheel with the given tick length whose tick 0 is at the
@@ -214,15 +210,13 @@ func (w *Wheel) Remove(t *Timer) bool {
 // allocates.
 //
 // A Fn that unconditionally re-adds its own timer with at <= now makes
-// Advance loop forever. Advance must not be called from inside Fn.
-func (w *Wheel) Advance(now int64) int {
-	if debugtag.On {
-		if w.advancing {
-			panic("wheel: Advance called from inside a timer's Fn")
-		}
-		w.advancing = true
-		defer func() { w.advancing = false }()
-	}
+// Advance loop forever. Advance must not be called from inside Fn; the
+// twine_debug build panics if it is (see advance_debug.go). The release
+// wrapper is the one-line advance_release.go, so the Wheel's layout and
+// Advance's code stay identical to a build without the check.
+//
+// advance is the implementation behind Advance.
+func (w *Wheel) advance(now int64) int {
 	if now <= w.now {
 		fired := 0
 		for w.due.next != &w.due {
