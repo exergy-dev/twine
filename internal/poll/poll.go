@@ -36,8 +36,6 @@
 //     full nanosecond timeout.
 package poll
 
-import "golang.org/x/sys/unix"
-
 // Event flags. Several may be set at once in Event.Flags.
 const (
 	// Readable reports that the fd has data to read (EPOLLIN|EPOLLPRI /
@@ -69,6 +67,3 @@ type Event struct {
 	// Flags is a combination of Readable, Writable, Hangup and Error.
 	Flags uint32
 }
-
-// errNoEvents is returned by Wait when the caller passes an empty slice.
-var errNoEvents error = unix.EINVAL
