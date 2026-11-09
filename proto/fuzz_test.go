@@ -103,7 +103,7 @@ func FuzzLengthPrefixed(f *testing.F) {
 		et := newFake()
 		enc.ConnectionMade(et)
 		for _, fr := range c.frames {
-			if err := enc.SendFrame(nil, fr); err != nil {
+			if err := enc.SendFrame(fr); err != nil {
 				t.Fatal(err)
 			}
 		}

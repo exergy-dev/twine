@@ -17,7 +17,7 @@ func TestLineReceiverZeroAlloc(t *testing.T) {
 	if a := testing.AllocsPerRun(1000, func() { lr.DataReceived(chunk) }); a != 0 {
 		t.Fatalf("LineReceiver.DataReceived allocates %v per run", a)
 	}
-	if a := testing.AllocsPerRun(1000, func() { lr.SendLine(nil, chunk[:10]); ft.reset() }); a != 0 {
+	if a := testing.AllocsPerRun(1000, func() { lr.SendLine(chunk[:10]); ft.reset() }); a != 0 {
 		t.Fatalf("LineReceiver.SendLine allocates %v per run", a)
 	}
 	if n == 0 {
@@ -35,7 +35,7 @@ func TestNetstringZeroAlloc(t *testing.T) {
 	if a := testing.AllocsPerRun(1000, func() { ns.DataReceived(chunk) }); a != 0 {
 		t.Fatalf("NetstringReceiver.DataReceived allocates %v per run", a)
 	}
-	if a := testing.AllocsPerRun(1000, func() { ns.SendString(nil, chunk); ft.reset() }); a != 0 {
+	if a := testing.AllocsPerRun(1000, func() { ns.SendString(chunk); ft.reset() }); a != 0 {
 		t.Fatalf("NetstringReceiver.SendString allocates %v per run", a)
 	}
 	if n == 0 {
@@ -52,14 +52,14 @@ func TestLengthPrefixedZeroAlloc(t *testing.T) {
 		lp.ConnectionMade(ft)
 		body := []byte("0123456789abcdef")
 		for i := 0; i < 3; i++ {
-			_ = lp.SendFrame(nil, body)
+			_ = lp.SendFrame(body)
 		}
 		chunk := append([]byte(nil), ft.out...)
 		ft.reset()
 		if a := testing.AllocsPerRun(1000, func() { lp.DataReceived(chunk) }); a != 0 {
 			t.Fatalf("prefix %d: LengthPrefixed.DataReceived allocates %v per run", p, a)
 		}
-		if a := testing.AllocsPerRun(1000, func() { _ = lp.SendFrame(nil, body); ft.reset() }); a != 0 {
+		if a := testing.AllocsPerRun(1000, func() { _ = lp.SendFrame(body); ft.reset() }); a != 0 {
 			t.Fatalf("prefix %d: LengthPrefixed.SendFrame allocates %v per run", p, a)
 		}
 		if n != 1001*3*len(body) {

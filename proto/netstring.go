@@ -79,15 +79,12 @@ func (ns *NetstringReceiver) Transport() twine.Transport { return ns.t }
 // Err returns the framing error that made the receiver abort, or nil.
 func (ns *NetstringReceiver) Err() error { return ns.err }
 
-// SendString writes s as a netstring with a single Writev. When t is nil the
-// stored transport is used. It does not allocate.
-func (ns *NetstringReceiver) SendString(t twine.Transport, s []byte) {
-	if t == nil {
-		t = ns.t
-	}
+// SendString writes s as a netstring to the transport stored by
+// ConnectionMade, with a single Writev. It does not allocate.
+func (ns *NetstringReceiver) SendString(s []byte) {
 	h := append(strconv.AppendInt(ns.hdr[:0], int64(len(s)), 10), ':')
 	ns.iov[0], ns.iov[1], ns.iov[2] = h, s, comma
-	t.Writev(ns.iov[:]...)
+	ns.t.Writev(ns.iov[:]...)
 	ns.iov = [3][]byte{}
 }
 

@@ -31,7 +31,7 @@ func TestLengthPrefixedConfigs(t *testing.T) {
 					for i := range f {
 						f[i] = byte(rng.IntN(256))
 					}
-					if err := enc.SendFrame(nil, f); err != nil {
+					if err := enc.SendFrame(f); err != nil {
 						t.Fatal(err)
 					}
 					want = append(want, f)
@@ -56,13 +56,13 @@ func TestLengthPrefixedConfigs(t *testing.T) {
 func TestLengthPrefixedWireFormat(t *testing.T) {
 	lp := &LengthPrefixed{PrefixLen: 2}
 	ft, _ := newLP(lp)
-	_ = lp.SendFrame(nil, []byte("abc"))
+	_ = lp.SendFrame([]byte("abc"))
 	if !bytes.Equal(ft.out, []byte{0, 3, 'a', 'b', 'c'}) || ft.writes != 1 {
 		t.Fatalf("BE out %v", ft.out)
 	}
 	lp = &LengthPrefixed{LittleEndian: true, LengthIncludesPrefix: true}
 	ft, _ = newLP(lp)
-	_ = lp.SendFrame(nil, []byte("abc"))
+	_ = lp.SendFrame([]byte("abc"))
 	if !bytes.Equal(ft.out, []byte{7, 0, 0, 0, 'a', 'b', 'c'}) {
 		t.Fatalf("LE incl out %v", ft.out)
 	}
@@ -90,10 +90,10 @@ func TestLengthPrefixedLimits(t *testing.T) {
 
 	lp = &LengthPrefixed{PrefixLen: 1}
 	ft, _ = newLP(lp)
-	if err := lp.SendFrame(nil, make([]byte, 256)); !errors.Is(err, twine.ErrFrameTooLarge) || len(ft.out) != 0 {
+	if err := lp.SendFrame(make([]byte, 256)); !errors.Is(err, twine.ErrFrameTooLarge) || len(ft.out) != 0 {
 		t.Fatalf("oversized SendFrame: %v, wrote %d", err, len(ft.out))
 	}
-	if err := lp.SendFrame(nil, make([]byte, 255)); err != nil {
+	if err := lp.SendFrame(make([]byte, 255)); err != nil {
 		t.Fatal(err)
 	}
 }

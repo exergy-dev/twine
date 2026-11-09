@@ -190,8 +190,8 @@ func TestLineReceiverSetLineModeInsideLine(t *testing.T) {
 func TestLineReceiverSendLine(t *testing.T) {
 	lr := &LineReceiver{Delimiter: []byte("\n")}
 	ft, _ := newLR(t, lr)
-	lr.SendLine(nil, []byte("hi"))
-	lr.SendLine(ft, []byte("there"))
+	lr.SendLine([]byte("hi"))
+	lr.SendLine([]byte("there"))
 	if string(ft.out) != "hi\nthere\n" || ft.writes != 2 {
 		t.Fatalf("out %q writes %d", ft.out, ft.writes)
 	}

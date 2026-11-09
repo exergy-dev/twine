@@ -46,7 +46,7 @@ func newClient(room *proto.Broadcast) twine.Factory {
 }
 
 func (c *client) connectionMade(t twine.Transport) {
-	c.SendLine(t, fmt.Appendf(nil, "* welcome %s; %d other(s) here. /nick NAME to rename, /quit to leave", c.nick, c.room.Len()))
+	c.SendLine(fmt.Appendf(nil, "* welcome %s; %d other(s) here. /nick NAME to rename, /quit to leave", c.nick, c.room.Len()))
 	c.room.Send(fmt.Appendf(nil, "* %s joined\r\n", c.nick))
 	c.room.Add(t)
 }
@@ -61,7 +61,7 @@ func (c *client) lineReceived(line []byte) {
 		c.room.Send(fmt.Appendf(nil, "* %s is now %s\r\n", c.nick, nick))
 		c.nick = nick
 	case bytes.Equal(line, []byte("/quit")):
-		c.SendLine(nil, []byte("* bye"))
+		c.SendLine([]byte("* bye"))
 		c.Transport().LoseConnection()
 	case len(bytes.TrimSpace(line)) == 0:
 	default:

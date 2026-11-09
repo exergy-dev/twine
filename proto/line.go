@@ -104,14 +104,11 @@ func (lr *LineReceiver) SetLineMode(extra []byte) {
 // RawMode reports whether the receiver is in raw mode.
 func (lr *LineReceiver) RawMode() bool { return lr.raw }
 
-// SendLine writes line followed by the delimiter with a single Writev. When
-// t is nil the stored transport is used. It does not allocate.
-func (lr *LineReceiver) SendLine(t twine.Transport, line []byte) {
-	if t == nil {
-		t = lr.t
-	}
+// SendLine writes line followed by the delimiter to the transport stored by
+// ConnectionMade, with a single Writev. It does not allocate.
+func (lr *LineReceiver) SendLine(line []byte) {
 	lr.iov[0], lr.iov[1] = line, lr.delim()
-	t.Writev(lr.iov[:]...)
+	lr.t.Writev(lr.iov[:]...)
 	lr.iov = [2][]byte{}
 }
 

@@ -118,16 +118,13 @@ func (lp *LengthPrefixed) MaxSendable() int {
 
 const maxInt = int(^uint(0) >> 1)
 
-// SendFrame writes the prefix and b with a single Writev. When t is nil the
-// stored transport is used. It returns twine.ErrFrameTooLarge, writing
-// nothing, when b does not fit the prefix (see MaxSendable). It does not
-// allocate.
-func (lp *LengthPrefixed) SendFrame(t twine.Transport, b []byte) error {
+// SendFrame writes the prefix and b to the transport stored by
+// ConnectionMade, with a single Writev. It returns twine.ErrFrameTooLarge,
+// writing nothing, when b does not fit the prefix (see MaxSendable). It
+// does not allocate.
+func (lp *LengthPrefixed) SendFrame(b []byte) error {
 	if len(b) > lp.MaxSendable() {
 		return twine.ErrFrameTooLarge
-	}
-	if t == nil {
-		t = lp.t
 	}
 	p := lp.prefixLen()
 	n := uint32(len(b))
@@ -136,7 +133,7 @@ func (lp *LengthPrefixed) SendFrame(t twine.Transport, b []byte) error {
 	}
 	lp.putPrefix(lp.out[:p], n)
 	lp.iov[0], lp.iov[1] = lp.out[:p], b
-	t.Writev(lp.iov[:]...)
+	lp.t.Writev(lp.iov[:]...)
 	lp.iov = [2][]byte{}
 	return nil
 }
