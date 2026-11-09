@@ -203,6 +203,12 @@ func TestReconnectingClientEngineStop(t *testing.T) {
 				t.Fatalf("after Stop: gave up %v, connected %v", rc.GaveUp(), rc.Connected())
 			}
 			ev := expectState(t, states, false)
+			if connected && !errors.Is(ev.err, ErrGaveUp) {
+				// The server side of the same engine may close the connection
+				// before the shutdown hook reaches this loop: then the loss and
+				// the give-up arrive as two calls.
+				ev = expectState(t, states, false)
+			}
 			if !errors.Is(ev.err, ErrGaveUp) {
 				t.Fatalf("final state error %v, want ErrGaveUp", ev.err)
 			}

@@ -55,8 +55,10 @@ func MaxRetries(n int) ReconnectOption {
 // When the client gives up (see GaveUp) fn is called once more with false
 // and an error that wraps ErrGaveUp and the cause: the last connect error
 // after MaxRetries, or the loss error (twine.ErrEngineStopped for a clean
-// close) when the engine stops. If a connection was open at that moment,
-// this one call also reports its loss.
+// close) when the engine stops. A connection that is open when the engine
+// stops is usually reported by that same call; if its peer closes it first
+// (the server side of the same engine shutting down), fn sees (false, loss
+// error) and then the give-up call.
 func OnStateChange(fn func(connected bool, err error)) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.onState = fn }
 }
