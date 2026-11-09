@@ -80,8 +80,14 @@ func (ctx *RequestCtx) Host() []byte {
 // name under ASCII case folding, or nil. Values are trimmed of surrounding
 // whitespace. The lookup is a linear scan of at most 64 entries; no map is
 // built.
-func (ctx *RequestCtx) Header(name string) []byte {
-	r := &ctx.req
+func (ctx *RequestCtx) Header(name string) []byte { return lookupHeader(&ctx.req, name) }
+
+// HeaderBytes is Header with a []byte name.
+func (ctx *RequestCtx) HeaderBytes(name []byte) []byte { return lookupHeader(&ctx.req, name) }
+
+// lookupHeader implements Header. Entries whose length or first byte
+// differ are skipped before the full compare.
+func lookupHeader[N text](r *request, name N) []byte {
 	if len(name) == 0 {
 		return nil
 	}
@@ -92,18 +98,6 @@ func (ctx *RequestCtx) Header(name string) []byte {
 			continue
 		}
 		if equalFold(r.data[h.ns:h.ne], name) {
-			return r.slice(h.vs, h.ve)
-		}
-	}
-	return nil
-}
-
-// HeaderBytes is Header with a []byte name.
-func (ctx *RequestCtx) HeaderBytes(name []byte) []byte {
-	r := &ctx.req
-	for i := 0; i < r.nh; i++ {
-		h := &r.hdrs[i]
-		if equalFoldBytes(r.data[h.ns:h.ne], name) {
 			return r.slice(h.vs, h.ve)
 		}
 	}
@@ -166,7 +160,7 @@ func (ctx *RequestCtx) Status() int { return ctx.status }
 func (ctx *RequestCtx) SetContentType(ct string) { ctx.ct = appendSafe(ctx.ct[:0], ct) }
 
 // SetContentTypeBytes is SetContentType with a []byte value.
-func (ctx *RequestCtx) SetContentTypeBytes(ct []byte) { ctx.ct = appendSafeBytes(ctx.ct[:0], ct) }
+func (ctx *RequestCtx) SetContentTypeBytes(ct []byte) { ctx.ct = appendSafe(ctx.ct[:0], ct) }
 
 // SetHeader sets a response header, replacing earlier values of the same
 // name (ASCII case-insensitive). Content-Type is routed to SetContentType;
@@ -174,38 +168,18 @@ func (ctx *RequestCtx) SetContentTypeBytes(ct []byte) { ctx.ct = appendSafeBytes
 // "Connection: close" closes the connection after the response; Server and
 // Date replace the automatic values. CR and LF in name or value are replaced
 // with spaces so a header cannot split the response.
-func (ctx *RequestCtx) SetHeader(name, value string) {
-	if ctx.special(name, value, true) {
-		return
-	}
-	ctx.delHeader(name)
-	ctx.appendHeader(name, value)
-}
+func (ctx *RequestCtx) SetHeader(name, value string) { setHeader(ctx, name, value, true) }
 
 // SetHeaderBytes is SetHeader with []byte arguments; it does not allocate.
-func (ctx *RequestCtx) SetHeaderBytes(name, value []byte) {
-	if ctx.specialBytes(name, value, true) {
-		return
-	}
-	ctx.delHeaderBytes(name)
-	ctx.hdrs = appendSafeBytes(ctx.hdrs, name)
-	ctx.hdrs = append(ctx.hdrs, ':', ' ')
-	ctx.hdrs = appendSafeBytes(ctx.hdrs, value)
-	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
-}
+func (ctx *RequestCtx) SetHeaderBytes(name, value []byte) { setHeader(ctx, name, value, true) }
 
 // AddHeader adds a response header line without replacing existing ones
 // (for Set-Cookie and other repeatable headers). Special names behave as in
 // SetHeader.
-func (ctx *RequestCtx) AddHeader(name, value string) {
-	if ctx.special(name, value, false) {
-		return
-	}
-	ctx.appendHeader(name, value)
-}
+func (ctx *RequestCtx) AddHeader(name, value string) { setHeader(ctx, name, value, false) }
 
 // DelHeader removes response headers previously set with name.
-func (ctx *RequestCtx) DelHeader(name string) { ctx.delHeader(name) }
+func (ctx *RequestCtx) DelHeader(name string) { delHeader(ctx, name) }
 
 // SetConnectionClose closes the connection after this response.
 func (ctx *RequestCtx) SetConnectionClose() { ctx.close = true }
@@ -252,57 +226,35 @@ func (ctx *RequestCtx) resetResponse() {
 	ctx.user = nil
 }
 
-// special handles header names the server manages itself. It reports
-// whether the header was consumed.
-func (ctx *RequestCtx) special(name, value string, replace bool) bool {
-	switch len(name) {
-	case 4:
-		if equalFoldStr(name, "date") {
-			if replace {
-				ctx.delHeader(name)
-			}
-			ctx.noDate = true
-		}
-	case 6:
-		if equalFoldStr(name, "server") {
-			if replace {
-				ctx.delHeader(name)
-			}
-			ctx.noServer = true
-		}
-	case 10:
-		if equalFoldStr(name, "connection") {
-			if equalFoldStr(value, "close") {
-				ctx.close = true
-			}
-			return true
-		}
-	case 12:
-		if equalFoldStr(name, "content-type") {
-			ctx.SetContentType(value)
-			return true
-		}
-	case 14:
-		return equalFoldStr(name, "content-length")
-	case 17:
-		return equalFoldStr(name, "transfer-encoding")
+// setHeader implements SetHeader (replace set) and AddHeader.
+func setHeader[N, V text](ctx *RequestCtx, name N, value V, replace bool) {
+	if special(ctx, name, value, replace) {
+		return
 	}
-	return false
+	if replace {
+		delHeader(ctx, name)
+	}
+	ctx.hdrs = appendSafe(ctx.hdrs, name)
+	ctx.hdrs = append(ctx.hdrs, ':', ' ')
+	ctx.hdrs = appendSafe(ctx.hdrs, value)
+	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
 }
 
-func (ctx *RequestCtx) specialBytes(name, value []byte, replace bool) bool {
+// special handles header names the server manages itself. It reports
+// whether the header was consumed.
+func special[N, V text](ctx *RequestCtx, name N, value V, replace bool) bool {
 	switch len(name) {
 	case 4:
 		if equalFold(name, "date") {
 			if replace {
-				ctx.delHeaderBytes(name)
+				delHeader(ctx, name)
 			}
 			ctx.noDate = true
 		}
 	case 6:
 		if equalFold(name, "server") {
 			if replace {
-				ctx.delHeaderBytes(name)
+				delHeader(ctx, name)
 			}
 			ctx.noServer = true
 		}
@@ -315,7 +267,7 @@ func (ctx *RequestCtx) specialBytes(name, value []byte, replace bool) bool {
 		}
 	case 12:
 		if equalFold(name, "content-type") {
-			ctx.SetContentTypeBytes(value)
+			ctx.ct = appendSafe(ctx.ct[:0], value)
 			return true
 		}
 	case 14:
@@ -326,15 +278,8 @@ func (ctx *RequestCtx) specialBytes(name, value []byte, replace bool) bool {
 	return false
 }
 
-func (ctx *RequestCtx) appendHeader(name, value string) {
-	ctx.hdrs = appendSafe(ctx.hdrs, name)
-	ctx.hdrs = append(ctx.hdrs, ':', ' ')
-	ctx.hdrs = appendSafe(ctx.hdrs, value)
-	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
-}
-
 // delHeader removes every line of ctx.hdrs whose name folds to name.
-func (ctx *RequestCtx) delHeader(name string) {
+func delHeader[N text](ctx *RequestCtx, name N) {
 	h := ctx.hdrs
 	for i := 0; i < len(h); {
 		end := i
@@ -355,54 +300,11 @@ func (ctx *RequestCtx) delHeader(name string) {
 	ctx.hdrs = h
 }
 
-func (ctx *RequestCtx) delHeaderBytes(name []byte) {
-	h := ctx.hdrs
-	for i := 0; i < len(h); {
-		end := i
-		for end < len(h) && h[end] != '\n' {
-			end++
-		}
-		end++
-		colon := i
-		for h[colon] != ':' {
-			colon++
-		}
-		if equalFoldBytes(h[i:colon], name) {
-			h = append(h[:i], h[end:]...)
-			continue
-		}
-		i = end
-	}
-	ctx.hdrs = h
-}
-
-func equalFoldStr(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if lowerTable[a[i]] != lowerTable[b[i]] {
-			return false
-		}
-	}
-	return true
-}
-
 // appendSafe appends s with CR and LF replaced by spaces so that a header
 // name or value cannot inject extra lines into the response.
-func appendSafe(dst []byte, s string) []byte {
+func appendSafe[S text](dst []byte, s S) []byte {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c == '\r' || c == '\n' {
-			c = ' '
-		}
-		dst = append(dst, c)
-	}
-	return dst
-}
-
-func appendSafeBytes(dst, s []byte) []byte {
-	for _, c := range s {
 		if c == '\r' || c == '\n' {
 			c = ' '
 		}

@@ -83,21 +83,12 @@ var lowerTable = func() (t [256]byte) {
 	return t
 }()
 
-// equalFold reports whether b equals s under ASCII case folding.
-func equalFold(b []byte, s string) bool {
-	if len(b) != len(s) {
-		return false
-	}
-	for i := 0; i < len(b); i++ {
-		if lowerTable[b[i]] != lowerTable[s[i]] {
-			return false
-		}
-	}
-	return true
-}
+// text is the constraint of the helpers that take header names and values
+// either as strings or as byte slices.
+type text interface{ ~string | ~[]byte }
 
-// equalFoldBytes is equalFold for two byte slices.
-func equalFoldBytes(a, b []byte) bool {
+// equalFold reports whether a equals b under ASCII case folding.
+func equalFold[A, B text](a A, b B) bool {
 	if len(a) != len(b) {
 		return false
 	}
