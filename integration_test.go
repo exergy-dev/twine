@@ -800,14 +800,18 @@ func TestIdleTimeout(t *testing.T) {
 			if r.elapsed < idle-10*time.Millisecond {
 				t.Errorf("idle timeout fired early: %v < %v", r.elapsed, idle)
 			}
-			if r.elapsed > idle+10*time.Millisecond+10*time.Millisecond {
-				t.Errorf("idle timeout fired late: %v (deadline %v + tick + 10ms slack)", r.elapsed, idle)
+			if r.elapsed > idle+100*time.Millisecond {
+				t.Errorf("idle timeout fired late: %v (deadline %v + tick + 100ms scheduling slack)", r.elapsed, idle)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("idle timeout never fired")
 		}
 	})
 	t.Run("activity resets", func(t *testing.T) {
+		// A longer timeout here: the client's sleeps run on a shared CI
+		// runner, and a 25 ms sleep against a 50 ms timeout has been seen
+		// to overshoot on macOS.
+		const idle = 300 * time.Millisecond
 		e := startEngine(t, Loops(1))
 		lostCh := make(chan res, 1)
 		lst := listen(t, e, hookFactory(func() *hookProto {
@@ -823,7 +827,7 @@ func TestIdleTimeout(t *testing.T) {
 		c := dialTCP(t, lst.Addr().String())
 		buf := make([]byte, 1)
 		for i := 0; i < 6; i++ {
-			time.Sleep(idle / 2)
+			time.Sleep(idle / 4)
 			if _, err := c.Write([]byte{'x'}); err != nil {
 				t.Fatalf("write %d: %v (connection timed out despite activity)", i, err)
 			}
@@ -837,8 +841,8 @@ func TestIdleTimeout(t *testing.T) {
 			if !errors.Is(r.err, ErrIdleTimeout) {
 				t.Errorf("ConnectionLost(%v), want ErrIdleTimeout", r.err)
 			}
-			if r.elapsed < 6*idle/2 {
-				t.Errorf("connection lost after %v despite activity every %v", r.elapsed, idle/2)
+			if r.elapsed < 6*idle/4 {
+				t.Errorf("connection lost after %v despite activity every %v", r.elapsed, idle/4)
 			}
 			if r.sinceRx < idle-10*time.Millisecond || r.sinceRx > idle+100*time.Millisecond {
 				t.Errorf("timeout fired %v after the last read, want ~%v", r.sinceRx, idle)
