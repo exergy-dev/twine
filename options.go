@@ -110,7 +110,7 @@ func (c *config) finalize() {
 		c.closeLinger = 0
 	}
 	if c.logger == nil {
-		c.logger = slog.New(discardHandler{})
+		c.logger = slog.New(slog.DiscardHandler)
 	}
 }
 
