@@ -26,6 +26,15 @@ const (
 	DefaultMaxPipelinedRequests = 16
 )
 
+// Default timeouts.
+const (
+	// DefaultIdleTimeout closes a connection with no I/O for this long.
+	DefaultIdleTimeout = 90 * time.Second
+	// DefaultReadTimeout bounds how long a request may take to arrive once
+	// its first bytes are buffered.
+	DefaultReadTimeout = 60 * time.Second
+)
+
 // maxRetained is the largest buffer a connection keeps between requests.
 // Buffers grow as needed and are reused; one that grew past this (a large
 // body or response) is released when it drains so idle connections stay
@@ -64,20 +73,34 @@ type Server struct {
 	// reading is paused and serving continues on the next loop iteration.
 	MaxPipelinedRequests int
 
-	// IdleTimeout, when positive, closes connections with no I/O for that
-	// long.
+	// IdleTimeout closes a connection that has had no I/O for this long
+	// (default DefaultIdleTimeout when zero; negative disables it). It is
+	// the engine's per-connection idle timer, so it bounds idle keep-alive
+	// connections but restarts on every byte a slow peer sends.
 	IdleTimeout time.Duration
+
+	// ReadTimeout bounds how long one request may take to arrive once its
+	// first bytes are buffered (default DefaultReadTimeout when zero;
+	// negative disables it). A request still incomplete when it expires is
+	// answered with 408 and the connection is closed. Unlike IdleTimeout it
+	// does not restart on activity, so a peer trickling a head or body byte
+	// by byte cannot hold the connection and its reassembly buffer. The
+	// timer is armed only while an incomplete request is buffered: requests
+	// that arrive in one read never touch it.
+	ReadTimeout time.Duration
 
 	// Logger receives Handler panics. Defaults to slog.Default().
 	Logger *slog.Logger
 
-	once       sync.Once
-	maxHdr     int
-	maxBody    int
-	maxPipe    int
-	maxRaw     int
-	serverLine []byte
-	logger     *slog.Logger
+	once        sync.Once
+	maxHdr      int
+	maxBody     int
+	maxPipe     int
+	maxRaw      int
+	idleTimeout time.Duration
+	readTimeout time.Duration
+	serverLine  []byte
+	logger      *slog.Logger
 
 	mu    sync.Mutex
 	dates map[*twine.Loop]*dateState
@@ -102,6 +125,8 @@ func (s *Server) init() {
 		// Content-Length request needs no raw cap: its length is checked
 		// against maxBody as soon as the head is parsed.
 		s.maxRaw = s.maxHdr + 2*s.maxBody + 64<<10
+		s.idleTimeout = orDefault(s.IdleTimeout, DefaultIdleTimeout)
+		s.readTimeout = orDefault(s.ReadTimeout, DefaultReadTimeout)
 		if s.Name != "" {
 			s.serverLine = appendSafe(append([]byte(nil), "Server: "...), s.Name)
 			s.serverLine = append(s.serverLine, '\r', '\n')
@@ -111,6 +136,18 @@ func (s *Server) init() {
 			s.logger = slog.Default()
 		}
 	})
+}
+
+// orDefault maps a timeout setting to its effective value: 0 means def and
+// a negative value means disabled (0).
+func orDefault(d, def time.Duration) time.Duration {
+	switch {
+	case d == 0:
+		return def
+	case d < 0:
+		return 0
+	}
+	return d
 }
 
 // Factory returns a twine.Factory that serves HTTP on every connection it
@@ -138,6 +175,7 @@ func (s *Server) buildProtocol(net.Addr) twine.Protocol {
 	c.ctx.c = c
 	c.ctx.req.contentLength = -1
 	c.resumeFn = c.resume
+	c.readTimeoutFn = c.onReadTimeout
 	return c
 }
 
@@ -163,6 +201,15 @@ type conn struct {
 	resumePending bool // a CallLater(0) continuation is scheduled
 	prodPaused    bool // the transport asked us to stop producing
 	resumeFn      func()
+
+	// ReadTimeout state. readDeadline (loop clock, UnixNano) is set when an
+	// incomplete request starts being buffered and cleared when a request
+	// completes. readTimer is armed at most once per ReadTimeout and is not
+	// stopped when a request completes: it checks readDeadline when it
+	// fires and re-arms for the remainder or does nothing.
+	readDeadline  int64
+	readTimer     *twine.Timer
+	readTimeoutFn func()
 }
 
 var _ twine.Protocol = (*conn)(nil)
@@ -173,10 +220,42 @@ func (c *conn) ConnectionMade(t twine.Transport) {
 	c.t = t
 	c.loop = t.Loop()
 	c.date = c.s.dateFor(c.loop)
-	if c.s.IdleTimeout > 0 {
-		t.SetIdleTimeout(c.s.IdleTimeout)
+	if c.s.idleTimeout > 0 {
+		t.SetIdleTimeout(c.s.idleTimeout)
 	}
 	t.RegisterProducer(c, true)
+}
+
+// startReadTimer starts the ReadTimeout clock for the incomplete request
+// now in c.buf, unless it is already running. It runs only on the
+// reassembly path.
+func (c *conn) startReadTimer() {
+	if c.s.readTimeout <= 0 || c.readDeadline != 0 {
+		return
+	}
+	c.readDeadline = c.loop.Now().UnixNano() + int64(c.s.readTimeout)
+	if c.readTimer == nil {
+		c.readTimer = c.loop.CallLater(c.s.readTimeout, c.readTimeoutFn)
+	}
+}
+
+// onReadTimeout is the ReadTimeout timer callback.
+func (c *conn) onReadTimeout() {
+	c.readTimer = nil
+	if c.closed || c.readDeadline == 0 {
+		return // the request completed; the next one restarts the clock
+	}
+	now := c.loop.Now().UnixNano()
+	if c.resumePending || c.prodPaused {
+		// The server, not the peer, is behind: buffered requests wait for
+		// a continuation or for the client to drain responses.
+		c.readDeadline = now + int64(c.s.readTimeout)
+	}
+	if remain := c.readDeadline - now; remain > 0 {
+		c.readTimer = c.loop.CallLater(time.Duration(remain), c.readTimeoutFn)
+		return
+	}
+	c.sendError(nethttp.StatusRequestTimeout)
 }
 
 // ConnectionLost implements twine.Protocol.
@@ -184,6 +263,10 @@ func (c *conn) ConnectionLost(error) {
 	c.closed = true
 	if c.date != nil {
 		c.date.release()
+	}
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+		c.readTimer = nil
 	}
 	c.buf, c.chunkBody, c.wbuf = nil, nil, nil
 	c.ctx.out, c.ctx.hdrs = nil, nil
@@ -252,6 +335,7 @@ func (c *conn) DataReceived(b []byte) {
 		if !c.closed && n < len(b) {
 			c.buf = append(c.buf[:0], b[n:]...)
 			c.reserve()
+			c.startReadTimer()
 		}
 	}
 	c.flushOut()
@@ -264,12 +348,19 @@ func (c *conn) processBuf() {
 		c.buf = c.buf[:0]
 		return
 	}
+	if n > 0 {
+		c.readDeadline = 0 // a request completed
+	}
 	rest := copy(c.buf, c.buf[n:])
 	c.buf = c.buf[:rest]
-	if rest == 0 && cap(c.buf) > maxRetained {
-		c.buf = nil
+	if rest == 0 {
+		if cap(c.buf) > maxRetained {
+			c.buf = nil
+		}
+		return
 	}
 	c.reserve()
+	c.startReadTimer()
 }
 
 // reserve grows c.buf once to hold a Content-Length request whose head is
@@ -568,7 +659,7 @@ type cannedError struct {
 // cannedErrors covers every status the parser and the timeouts produce.
 var cannedErrors = func() []cannedError {
 	var t []cannedError
-	for _, code := range []int{400, 413, 431, 501, 505} {
+	for _, code := range []int{400, 408, 413, 431, 501, 505} {
 		body := nethttp.StatusText(code) + "\n"
 		b := append([]byte(nil), defaultContentType...)
 		b = append(b, "Content-Length: "...)
