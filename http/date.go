@@ -22,6 +22,13 @@ type dateState struct {
 // dateFor returns the date cache for l, creating it and arming its
 // once-per-second refresh timer on first use. Called from ConnectionMade on
 // l.
+//
+// The first cache created for an engine registers an OnShutdown hook that
+// drops all of that engine's caches, whose timers stop with its loops.
+// Registering here rather than in Listen covers servers attached with
+// Factory as well. A hook registered after shutdown has begun never runs;
+// that needs a connection made during shutdown on a loop with no cache,
+// and costs one stale map entry.
 func (s *Server) dateFor(l *twine.Loop) *dateState {
 	s.mu.Lock()
 	d := s.dates[l]
@@ -30,8 +37,14 @@ func (s *Server) dateFor(l *twine.Loop) *dateState {
 		d.tickFn = d.tick
 		if s.dates == nil {
 			s.dates = make(map[*twine.Loop]*dateState)
+			s.engines = make(map[*twine.Engine]struct{})
 		}
 		s.dates[l] = d
+		e := l.Engine()
+		if _, hooked := s.engines[e]; !hooked {
+			s.engines[e] = struct{}{}
+			e.OnShutdown(func() { s.forgetEngine(e) })
+		}
 	}
 	s.mu.Unlock()
 	d.conns++
@@ -42,13 +55,14 @@ func (s *Server) dateFor(l *twine.Loop) *dateState {
 	return d
 }
 
-// forgetLoops drops the caches of an engine that is shutting down; their
+// forgetEngine drops the caches of an engine that is shutting down; their
 // timers will never fire again.
-func (s *Server) forgetLoops(loops []*twine.Loop) {
+func (s *Server) forgetEngine(e *twine.Engine) {
 	s.mu.Lock()
-	for _, l := range loops {
+	for _, l := range e.Loops() {
 		delete(s.dates, l)
 	}
+	delete(s.engines, e)
 	s.mu.Unlock()
 }
 

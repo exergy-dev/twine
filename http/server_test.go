@@ -3,6 +3,7 @@ package http
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -481,6 +482,50 @@ func TestServerCloseWhilePaused(t *testing.T) {
 			t.Fatal("server did not finish closing within 2s")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestDateCacheCleanup serves one Server through Factory (not Listen) on
+// several engines in turn: each engine's per-loop Date caches must be
+// dropped when it stops, so a long-lived Server does not keep stopped
+// loops reachable.
+func TestDateCacheCleanup(t *testing.T) {
+	s := &Server{Handler: testHandler}
+	for i := 0; i < 3; i++ {
+		e := twine.New(twine.Loops(2), twine.Watchdog(0))
+		lst, err := e.ListenTCP("127.0.0.1:0", s.Factory())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		errc := make(chan error, 1)
+		go func() { errc <- e.Run(ctx) }()
+		c := newClient()
+		for j := 0; j < 4; j++ { // spread over both loops
+			resp, err := c.Get("http://" + lst.Addr().String() + "/hello")
+			if err != nil {
+				t.Fatal(err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			c.CloseIdleConnections()
+		}
+		s.mu.Lock()
+		live := len(s.dates)
+		s.mu.Unlock()
+		if live == 0 {
+			t.Fatal("no Date cache while serving")
+		}
+		cancel()
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+		s.mu.Lock()
+		dates, engines := len(s.dates), len(s.engines)
+		s.mu.Unlock()
+		if dates != 0 || engines != 0 {
+			t.Fatalf("engine %d stopped: %d Date caches and %d engines still referenced", i, dates, engines)
+		}
 	}
 }
 
