@@ -402,3 +402,99 @@ func TestFactoryReturnsNil(t *testing.T) {
 		t.Errorf("Connections = %d, want 0 (refused connections leaked)", e.Loops()[0].Metrics().Connections)
 	}
 }
+
+func TestLiteralTCPAddr(t *testing.T) {
+	for addr, want := range map[string]string{
+		"127.0.0.1:80":       "127.0.0.1:80",
+		"[::1]:443":          "[::1]:443",
+		"[fe80::1%lo]:9":     "[fe80::1%lo]:9",
+		":9000":              ":9000",
+		"[::ffff:1.2.3.4]:1": "1.2.3.4:1", // as net.ResolveTCPAddr prints it
+		"localhost:80":       "",
+		"example.com:443":    "",
+		"127.0.0.1:http":     "",
+		"127.0.0.1":          "",
+		"":                   "",
+	} {
+		a, ok := literalTCPAddr(addr)
+		got := ""
+		if ok {
+			got = a.String()
+		}
+		if got != want {
+			t.Errorf("literalTCPAddr(%q) = %q, %v; want %q", addr, got, ok, want)
+		}
+	}
+}
+
+// A host name is resolved on the worker pool, never on the loop: while a
+// lookup stalls, another connection on the same loop keeps echoing.
+func TestDialHostnameResolvesOffLoop(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	lst := listen(t, e, echoFactory())
+	_, port, _ := net.SplitHostPort(lst.Addr().String())
+
+	release := make(chan struct{})
+	var lookups atomic.Int32
+	orig := resolveTCPAddr
+	resolveTCPAddr = func(network, addr string) (*net.TCPAddr, error) {
+		lookups.Add(1)
+		host, p, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		switch host {
+		case "slow.test":
+			<-release
+			return net.ResolveTCPAddr(network, net.JoinHostPort("127.0.0.1", p))
+		case "local.test":
+			return net.ResolveTCPAddr(network, net.JoinHostPort("127.0.0.1", p))
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	t.Cleanup(func() { resolveTCPAddr = orig })
+
+	c := dialTCP(t, lst.Addr().String())
+	echoOnce(t, c, []byte("warm"))
+
+	p := newClientProto()
+	fut := e.Loops()[0].ConnectTCP(net.JoinHostPort("slow.test", port), FactoryFunc(func(net.Addr) Protocol { return p }),
+		LocalAddr("local.test:0"))
+	if !waitUntil(2*time.Second, func() bool { return lookups.Load() >= 1 }) {
+		t.Fatal("resolver never called")
+	}
+	// The lookup is stalled; the loop must still serve the other connection.
+	for i := 0; i < 5; i++ {
+		start := time.Now()
+		echoOnce(t, c, []byte("during lookup"))
+		if d := time.Since(start); d > 50*time.Millisecond {
+			t.Errorf("echo took %v while a DNS lookup was stalled", d)
+		}
+	}
+	if fut.Done() {
+		t.Fatal("Dial settled before its lookup finished")
+	}
+	close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tr, err := fut.Await(ctx)
+	if err != nil {
+		t.Fatalf("Dial via the resolver: %v", err)
+	}
+	if lookups.Load() != 2 {
+		t.Errorf("%d lookups, want 2 (remote and LocalAddr)", lookups.Load())
+	}
+	onLoop(t, tr.Loop(), func() {
+		if ta, ok := tr.GetPeer().(*net.TCPAddr); !ok || ta.String() != lst.Addr().String() {
+			t.Errorf("GetPeer = %v, want %v", tr.GetPeer(), lst.Addr())
+		}
+		tr.Abort()
+	})
+
+	// A failed lookup rejects the Future with the resolver's error.
+	_, err = e.Dial("nowhere.test:1", echoFactory()).Await(ctx)
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		t.Errorf("Dial to an unknown host = %v, want a *net.DNSError", err)
+	}
+}

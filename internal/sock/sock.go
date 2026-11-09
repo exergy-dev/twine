@@ -136,6 +136,23 @@ func Connect(network, addr, local string) (fd int, raddr *net.TCPAddr, inProgres
 			return -1, nil, false, err
 		}
 	}
+	fd, inProgress, err = ConnectAddr(network, raddr, la)
+	if err != nil {
+		return -1, nil, false, err
+	}
+	return fd, raddr, inProgress, nil
+}
+
+// ConnectAddr is Connect for addresses already resolved, so it never does a
+// name lookup (the root package resolves host names off the loop thread).
+// la may be nil (no bind). A nil or unspecified raddr.IP dials the loopback
+// address. On error the socket is closed and fd is -1.
+func ConnectAddr(network string, raddr, la *net.TCPAddr) (fd int, inProgress bool, err error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+	default:
+		return -1, false, net.UnknownNetworkError(network)
+	}
 	fam := dialFamily(network, raddr.IP, la)
 	ip := raddr.IP
 	if ip == nil || ip.IsUnspecified() {
@@ -146,11 +163,11 @@ func Connect(network, addr, local string) (fd int, raddr *net.TCPAddr, inProgres
 	}
 	rsa, err := toSockaddr(fam, ip, raddr.Port, raddr.Zone)
 	if err != nil {
-		return -1, nil, false, err
+		return -1, false, err
 	}
 	fd, err = newSocket(fam, unix.SOCK_STREAM)
 	if err != nil {
-		return -1, nil, false, err
+		return -1, false, err
 	}
 	if fam == unix.AF_INET6 && network == "tcp6" {
 		_ = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_V6ONLY, 1)
@@ -162,19 +179,19 @@ func Connect(network, addr, local string) (fd int, raddr *net.TCPAddr, inProgres
 		}
 		if err != nil {
 			unix.Close(fd)
-			return -1, nil, false, err
+			return -1, false, err
 		}
 	}
 	switch err = unix.Connect(fd, rsa); err {
 	case nil:
-		return fd, raddr, false, nil
+		return fd, false, nil
 	case unix.EINPROGRESS, unix.EALREADY, unix.EINTR:
 		// EINTR on a non-blocking connect: the handshake continues
 		// asynchronously, exactly as for EINPROGRESS.
-		return fd, raddr, true, nil
+		return fd, true, nil
 	default:
 		unix.Close(fd)
-		return -1, nil, false, err
+		return -1, false, err
 	}
 }
 
