@@ -35,27 +35,37 @@ func (l *listener) Close() error {
 	if !l.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	l.eng.removeListener(l)
+	e := l.eng
+	e.removeListener(l)
 	l.mu.Lock()
 	conns := l.conns
 	l.mu.Unlock()
-	for _, c := range conns {
-		c := c
-		lp := c.loop
-		if lp.started.Load() {
-			lp.CallFromThread(func() {
-				if c.kind == kindUDP {
-					c.closeUDP()
-				} else {
-					c.closeListenerFD()
-				}
-			})
-		} else {
-			// Loop never started; close the fd directly. registerListener
-			// sees fd == -1 and skips it.
-			_ = unix.Close(int(c.fd))
-			c.fd = -1
+
+	// Before Run (or after a Stop that came before Run) no loop is running
+	// and none can start while e.mu is held (Run takes it to start), so the
+	// sockets are closed here; the queued register tasks then find fd == -1.
+	// Otherwise the close is queued behind the register task on each loop:
+	// touching c.fd from this goroutine would race with the loop.
+	e.mu.Lock()
+	if st := e.state.Load(); st == stateNew || (st == stateStopped && !e.ran.Load()) {
+		for _, c := range conns {
+			if c.fd >= 0 {
+				_ = unix.Close(int(c.fd))
+				c.fd = -1
+			}
 		}
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+	for _, c := range conns {
+		c.loop.CallFromThread(func() {
+			if c.kind == kindUDP {
+				c.closeUDP()
+			} else {
+				c.closeListenerFD()
+			}
+		})
 	}
 	return nil
 }
@@ -110,6 +120,7 @@ func (l *Loop) registerListener(c *conn) {
 		l.cfg.logger.Error("twine: registering listener", "loop", l.id, "err", err)
 		l.unregister(c)
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
 	// Drain any backlog that accumulated before registration (edge-triggered

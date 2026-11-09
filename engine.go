@@ -91,13 +91,20 @@ func (e *Engine) OnShutdown(fn func()) {
 // Run), the error that prevented a loop from starting, or ErrRunTwice if the
 // Engine has already run.
 func (e *Engine) Run(ctx context.Context) error {
-	if !e.state.CompareAndSwap(stateNew, stateRunning) {
+	// e.mu orders the start against listener.Close, which closes sockets
+	// directly only while it holds e.mu and the loops cannot start.
+	e.mu.Lock()
+	started := e.state.CompareAndSwap(stateNew, stateRunning)
+	if started {
+		e.ran.Store(true)
+	}
+	e.mu.Unlock()
+	if !started {
 		if e.state.Load() == stateStopped && !e.ran.Load() {
 			return nil // Stop was called before Run
 		}
 		return ErrRunTwice
 	}
-	e.ran.Store(true)
 	ready := make(chan error, len(e.loops))
 	for _, l := range e.loops {
 		go l.run(ready)
