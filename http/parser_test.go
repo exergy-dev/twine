@@ -5,16 +5,8 @@ import (
 	"testing"
 )
 
-// serveOnce feeds raw through a fresh fake connection (no loop) in one
-// chunk and returns the output and whether the server closed.
-func serveOnce(s *Server, raw string) (string, bool) {
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
-	c.DataReceived([]byte(raw))
-	return ft.String(), ft.closing
-}
-
 func TestParserStatus(t *testing.T) {
+	l := testLoop(t)
 	big := strings.Repeat("a", 9<<10)
 	tests := []struct {
 		name, raw string
@@ -60,7 +52,7 @@ func TestParserStatus(t *testing.T) {
 	s := &Server{Handler: func(ctx *RequestCtx) { ctx.Write(ctx.Body()) }}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out, closed := serveOnce(s, tc.raw)
+			out, closed := serveOnce(t, l, s, tc.raw)
 			if tc.status == "" {
 				if out != "" {
 					t.Fatalf("expected no response, got %q", out)
@@ -85,6 +77,7 @@ func firstLine(s string) string {
 }
 
 func TestRequestAccessors(t *testing.T) {
+	l := testLoop(t)
 	var seen []string
 	s := &Server{Handler: func(ctx *RequestCtx) {
 		seen = append(seen,
@@ -99,7 +92,7 @@ func TestRequestAccessors(t *testing.T) {
 		ctx.VisitHeaders(func(n, v []byte) { names = append(names, string(n)+"="+string(v)) })
 		seen = append(seen, strings.Join(names, ","))
 	}}
-	out, _ := serveOnce(s, "PUT /a%20b/c?x=1&y=2 HTTP/1.1\r\nHost:  example.com:8080 \r\nContent-Type: text/x\r\nContent-Length: 3\r\n\r\nabc")
+	out, _ := serveOnce(t, l, s, "PUT /a%20b/c?x=1&y=2 HTTP/1.1\r\nHost:  example.com:8080 \r\nContent-Type: text/x\r\nContent-Length: 3\r\n\r\nabc")
 	want := []string{"PUT", "/a%20b/c", "x=1&y=2", "/a%20b/c?x=1&y=2", "HTTP/1.1", "example.com:8080",
 		"text/x", "", "abc", "Host=example.com:8080,Content-Type=text/x,Content-Length=3"}
 	if strings.Join(seen, "|") != strings.Join(want, "|") {
@@ -107,13 +100,14 @@ func TestRequestAccessors(t *testing.T) {
 	}
 
 	seen = nil
-	serveOnce(s, "GET http://h.example:81?q HTTP/1.1\r\nHost: other\r\n\r\n")
+	serveOnce(t, l, s, "GET http://h.example:81?q HTTP/1.1\r\nHost: other\r\n\r\n")
 	if seen[1] != "/" || seen[2] != "q" || seen[5] != "h.example:81" {
 		t.Fatalf("absolute form: %q", seen)
 	}
 }
 
 func TestResponseHeaders(t *testing.T) {
+	l := testLoop(t)
 	s := &Server{Name: "srv", Handler: func(ctx *RequestCtx) {
 		ctx.SetHeader("X-A", "1")
 		ctx.SetHeader("x-a", "2") // replaces
@@ -125,7 +119,7 @@ func TestResponseHeaders(t *testing.T) {
 		ctx.SetStatus(201)
 		ctx.WriteString("ok")
 	}}
-	out, _ := serveOnce(s, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	out, _ := serveOnce(t, l, s, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
 	for _, w := range []string{"HTTP/1.1 201 Created\r\n", "x-a: 2\r\n", "Set-Cookie: a=1\r\nSet-Cookie: b=2\r\n",
 		"Content-Length: 2\r\n", "X-Inject: v  Evil: 1\r\n", "Server: custom\r\n", "\r\n\r\nok"} {
 		if !strings.Contains(out, w) {
@@ -140,17 +134,18 @@ func TestResponseHeaders(t *testing.T) {
 }
 
 func TestHeadAndNoBodyStatuses(t *testing.T) {
+	l := testLoop(t)
 	s := &Server{Handler: func(ctx *RequestCtx) {
 		if string(ctx.Path()) == "/204" {
 			ctx.SetStatus(204)
 		}
 		ctx.WriteString("body")
 	}}
-	out, _ := serveOnce(s, "HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
+	out, _ := serveOnce(t, l, s, "HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
 	if !strings.Contains(out, "Content-Length: 4\r\n") || strings.HasSuffix(out, "body") {
 		t.Fatalf("HEAD: %q", out)
 	}
-	out, _ = serveOnce(s, "GET /204 HTTP/1.1\r\nHost: x\r\n\r\n")
+	out, _ = serveOnce(t, l, s, "GET /204 HTTP/1.1\r\nHost: x\r\n\r\n")
 	if strings.Contains(out, "Content-Length") || strings.HasSuffix(out, "body") {
 		t.Fatalf("204: %q", out)
 	}
@@ -158,24 +153,24 @@ func TestHeadAndNoBodyStatuses(t *testing.T) {
 
 func TestExpectContinue(t *testing.T) {
 	s := &Server{Handler: func(ctx *RequestCtx) { ctx.Write(ctx.Body()) }}
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
-	c.DataReceived([]byte("POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\n"))
-	if ft.String() != "HTTP/1.1 100 Continue\r\n\r\n" {
-		t.Fatalf("got %q", ft.String())
+	h := newHarness(t, testLoop(t), s)
+	h.sendString("POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\n")
+	if out := h.out(); out != "HTTP/1.1 100 Continue\r\n\r\n" {
+		t.Fatalf("got %q", out)
 	}
-	c.DataReceived([]byte("abc"))
-	if !strings.HasSuffix(ft.String(), "\r\n\r\nabc") || strings.Count(ft.String(), "100 Continue") != 1 {
-		t.Fatalf("got %q", ft.String())
+	h.sendString("abc")
+	if out := h.out(); !strings.HasSuffix(out, "\r\n\r\nabc") || strings.Count(out, "100 Continue") != 1 {
+		t.Fatalf("got %q", out)
 	}
 }
 
 func TestHandlerPanic500(t *testing.T) {
+	l := testLoop(t)
 	s := &Server{Logger: discardLogger(), Handler: func(ctx *RequestCtx) {
 		ctx.WriteString("partial")
 		panic("boom")
 	}}
-	out, closed := serveOnce(s, "GET / HTTP/1.1\r\nHost: x\r\n\r\nGET /next HTTP/1.1\r\nHost: x\r\n\r\n")
+	out, closed := serveOnce(t, l, s, "GET / HTTP/1.1\r\nHost: x\r\n\r\nGET /next HTTP/1.1\r\nHost: x\r\n\r\n")
 	if !strings.HasPrefix(out, "HTTP/1.1 500 ") || !closed || strings.Contains(out, "partial") {
 		t.Fatalf("closed=%v out=%q", closed, out)
 	}
@@ -190,15 +185,14 @@ func TestByteAtATime(t *testing.T) {
 	raw := "POST /one HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc" +
 		"POST /two HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\ndef\r\n2\r\ngh\r\n0\r\n\r\n" +
 		"GET /three HTTP/1.1\r\nHost: x\r\n\r\n"
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
+	h := newHarness(t, testLoop(t), s)
 	for i := 0; i < len(raw); i++ {
-		c.DataReceived([]byte{raw[i]})
+		h.send([]byte{raw[i]})
 	}
 	if got := strings.Join(bodies, ","); got != "/one:abc,/two:defgh,/three:" {
 		t.Fatalf("got %q", got)
 	}
-	if ft.closing || strings.Count(ft.String(), "200 OK") != 3 {
-		t.Fatalf("out %q", ft.String())
+	if out := h.out(); h.closing() || strings.Count(out, "200 OK") != 3 {
+		t.Fatalf("out %q", out)
 	}
 }

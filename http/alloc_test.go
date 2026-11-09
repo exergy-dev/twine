@@ -1,11 +1,8 @@
 package http
 
 import (
-	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/exergy-dev/twine"
 )
 
 // allocCase feeds chunks through one connection repeatedly and measures
@@ -70,11 +67,28 @@ var allocCases = []allocCase{
 		want:    []string{"\r\n\r\nhello world"},
 		nresp:   1,
 	},
+	{
+		name:    "header lookup",
+		chunks:  []string{"GET / HTTP/1.1\r\nHost: x\r\nX-Custom-Header: abc\r\n\r\n"},
+		handler: headerLookupHandler,
+		want:    []string{"\r\n\r\nabc"},
+		nresp:   1,
+	},
 }
 
+// headerLookupHandler exercises the case-insensitive lookup and
+// VisitHeaders with a non-capturing callback.
+func headerLookupHandler(ctx *RequestCtx) {
+	ctx.Write(ctx.Header("x-custom-header"))
+	ctx.VisitHeaders(countHeader)
+}
+
+var headerBytesSeen int // written only on the test loop
+
+func countHeader(name, value []byte) { headerBytesSeen += len(name) + len(value) }
+
 func TestParseRespondZeroAlloc(t *testing.T) {
-	e := startEngine(t, twine.Loops(1), twine.Watchdog(0))
-	l := e.Loops()[0]
+	l := testLoop(t)
 	for _, tc := range allocCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var allocs float64
@@ -120,42 +134,22 @@ func TestParseRespondZeroAlloc(t *testing.T) {
 	}
 }
 
-// TestHeaderLookupZeroAlloc checks the case-insensitive lookup and
-// VisitHeaders with a non-capturing callback.
-func TestHeaderLookupZeroAlloc(t *testing.T) {
-	s := &Server{}
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
-	var got []byte
-	n := 0
-	visit := func(name, value []byte) { n += len(name) + len(value) }
-	s.Handler = func(ctx *RequestCtx) {
-		got = ctx.Header("x-custom-header")
-		ctx.VisitHeaders(visit)
-	}
-	req := []byte("GET / HTTP/1.1\r\nHost: x\r\nX-Custom-Header: abc\r\n\r\n")
-	c.DataReceived(req)
-	if !bytes.Equal(got, []byte("abc")) {
-		t.Fatalf("Header = %q", got)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		ft.reset()
-		c.DataReceived(req)
-	})
-	if allocs != 0 {
-		t.Errorf("lookup allocates: %v", allocs)
-	}
-}
-
+// BenchmarkParseRespond serves one GET per iteration on a real loop.
 func BenchmarkParseRespond(b *testing.B) {
+	l := testLoop(b)
 	s := &Server{Name: "twine", Handler: helloHandler}
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
 	req := []byte(allocCases[0].chunks[0])
-	b.ReportAllocs()
-	b.SetBytes(int64(len(req)))
-	for i := 0; i < b.N; i++ {
-		ft.reset()
-		c.DataReceived(req)
-	}
+	onLoop(b, l, func() {
+		ft := &fakeTransport{loop: l}
+		c := newFakeConn(s, ft)
+		b.ReportAllocs()
+		b.SetBytes(int64(len(req)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			ft.reset()
+			c.DataReceived(req)
+		}
+		b.StopTimer()
+		c.ConnectionLost(nil)
+	})
 }

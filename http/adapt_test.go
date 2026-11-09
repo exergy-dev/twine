@@ -72,16 +72,23 @@ func TestAdaptAllocs(t *testing.T) {
 		io.WriteString(w, "hello")
 	}))
 	s := &Server{Handler: h}
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
+	l := testLoop(t)
 	req := []byte("GET /hello?x=1 HTTP/1.1\r\nHost: example.com\r\nUser-Agent: bench\r\nAccept: */*\r\n\r\n")
-	c.DataReceived(req)
-	allocs := testing.AllocsPerRun(200, func() {
-		ft.reset()
+	var allocs float64
+	var out string
+	onLoop(t, l, func() {
+		ft := &fakeTransport{loop: l}
+		c := newFakeConn(s, ft)
 		c.DataReceived(req)
+		allocs = testing.AllocsPerRun(200, func() {
+			ft.reset()
+			c.DataReceived(req)
+		})
+		out = ft.String()
+		c.ConnectionLost(nil)
 	})
 	t.Logf("Adapt: %v allocs per request (3 request headers)", allocs)
-	if !strings.HasSuffix(ft.String(), "hello") {
-		t.Fatalf("out %q", ft.String())
+	if !strings.HasSuffix(out, "hello") {
+		t.Fatalf("out %q", out)
 	}
 }

@@ -12,9 +12,8 @@ import (
 // and that map is used at connection setup, not per request.
 type dateState struct {
 	s      *Server
-	loop   *twine.Loop // nil for a transport without a loop (tests)
-	line   []byte
-	sec    int64
+	loop   *twine.Loop
+	line   []byte // "Date: <IMF-fixdate>\r\n"
 	conns  int
 	armed  bool
 	tickFn func()
@@ -24,11 +23,6 @@ type dateState struct {
 // once-per-second refresh timer on first use. Called from ConnectionMade on
 // l.
 func (s *Server) dateFor(l *twine.Loop) *dateState {
-	if l == nil {
-		d := &dateState{s: s, sec: -1}
-		d.refresh(time.Now())
-		return d
-	}
 	s.mu.Lock()
 	d := s.dates[l]
 	if d == nil {
@@ -59,11 +53,7 @@ func (s *Server) forgetLoops(loops []*twine.Loop) {
 }
 
 // release is called from ConnectionLost.
-func (d *dateState) release() {
-	if d.loop != nil {
-		d.conns--
-	}
-}
+func (d *dateState) release() { d.conns-- }
 
 // arm schedules the next refresh just after the next second boundary.
 func (d *dateState) arm() {
@@ -91,20 +81,7 @@ func (d *dateState) tick() {
 
 // refresh formats now into the cached line, reusing its storage.
 func (d *dateState) refresh(now time.Time) {
-	u := now.UTC()
-	d.sec = u.Unix()
 	d.line = append(d.line[:0], "Date: "...)
-	d.line = u.AppendFormat(d.line, nethttp.TimeFormat)
+	d.line = now.UTC().AppendFormat(d.line, nethttp.TimeFormat)
 	d.line = append(d.line, '\r', '\n')
-}
-
-// get returns the current line. Without a loop it regenerates lazily when
-// the second changes.
-func (d *dateState) get() []byte {
-	if d.loop == nil {
-		if now := time.Now(); now.Unix() != d.sec {
-			d.refresh(now)
-		}
-	}
-	return d.line
 }
