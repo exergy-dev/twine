@@ -3,6 +3,7 @@ package tls_test
 import (
 	"bytes"
 	"crypto/tls"
+	"math"
 	"net"
 	"testing"
 
@@ -110,6 +111,20 @@ func onLoop(l *twine.Loop, fn func()) {
 
 const recordPayload = 1 << 10
 
+// minAllocsPerRun is testing.AllocsPerRun taken as the minimum of a few
+// attempts. AllocsPerRun counts process-wide, so a background goroutine (the
+// GC, the watchdog, a runtime worker under -race on a busy CI runner) can add
+// allocations to one attempt; the minimum is the code path's own count.
+func minAllocsPerRun(runs int, fn func()) float64 {
+	best := math.Inf(1)
+	for i := 0; i < 3; i++ {
+		if a := testing.AllocsPerRun(runs, fn); a < best {
+			best = a
+		}
+	}
+	return best
+}
+
 // TestRecordWriteAllocs: encrypting and sending a record allocates nothing.
 // The measurement runs on the loop goroutine, with nothing else allocating
 // (AllocsPerRun counts process-wide).
@@ -118,7 +133,7 @@ func TestRecordWriteAllocs(t *testing.T) {
 	payload := bytes.Repeat([]byte("w"), recordPayload)
 	var allocs float64
 	onLoop(r.loop, func() {
-		allocs = testing.AllocsPerRun(50, func() { r.server.Write(payload) })
+		allocs = minAllocsPerRun(50, func() { r.server.Write(payload) })
 	})
 	if allocs != 0 {
 		t.Fatalf("Transport.Write: %v allocs per record, want 0", allocs)
@@ -136,7 +151,7 @@ func TestRecordReadAllocs(t *testing.T) {
 	var got int
 	i := 0
 	onLoop(r.loop, func() {
-		allocs = testing.AllocsPerRun(runs, func() {
+		allocs = minAllocsPerRun(runs, func() {
 			r.server.FeedCiphertext(recs[i])
 			i++
 		})

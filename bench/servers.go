@@ -349,7 +349,8 @@ func (s *GnetServer) Close() {
 	defer cancel()
 	_ = s.eng.Stop(ctx)
 	select {
-	case <-s.runErr:
+	case err := <-s.runErr:
+		_ = err // the run loop's exit status is not interesting after Stop
 	case <-ctx.Done():
 	}
 }
