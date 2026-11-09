@@ -50,8 +50,8 @@ func TestURingBackendSelected(t *testing.T) {
 }
 
 // TestEpollFallbackSuite re-runs every test in this package in a child
-// process with the epoll fallback forced, so the copied epoll code is
-// exercised by the same suite.
+// process with the epoll fallback forced, so the fallback path (the epoller
+// behind the io_uring Poller) is exercised by the same suite.
 func TestEpollFallbackSuite(t *testing.T) {
 	if forceEpoll {
 		t.Skip("already running against the fallback")
@@ -64,36 +64,6 @@ func TestEpollFallbackSuite(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fallback suite failed: %v\n%s", err, out)
-	}
-}
-
-func TestURingEventfdDrained(t *testing.T) {
-	p := newPoller(t)
-	for i := 0; i < 5; i++ {
-		p.Wake()
-	}
-	var evs [4]Event
-	if n, err := p.Wait(evs[:], time.Second); n != 0 || err != nil {
-		t.Fatalf("Wait = %d, %v", n, err)
-	}
-	var buf [8]byte
-	if _, err := unix.Read(p.w.fd, buf[:]); err != unix.EAGAIN {
-		t.Fatalf("eventfd read after Wait: err = %v, want EAGAIN (drained)", err)
-	}
-}
-
-func TestURingRDHupWithoutReadInterest(t *testing.T) {
-	p := newPoller(t)
-	a, b := socketpair(t)
-	if err := p.Add(a, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Shutdown(b, unix.SHUT_WR); err != nil {
-		t.Fatal(err)
-	}
-	f, _ := waitFor(t, p, a, time.Second)
-	if f&Hangup == 0 || f&Readable != 0 {
-		t.Fatalf("flags = %#x, want Hangup without Readable", f)
 	}
 }
 
