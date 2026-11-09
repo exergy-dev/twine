@@ -104,9 +104,7 @@ func (r *Ring) Write(b []byte) {
 // grow appends a new empty tail segment sized for need more bytes and
 // returns it.
 func (r *Ring) grow(need int) *segment {
-	if need > slab.Classes[len(slab.Classes)-1] {
-		need = slab.Classes[len(slab.Classes)-1]
-	}
+	need = min(need, slab.MaxClass)
 	if r.tail != nil {
 		if floor := nextClass(len(r.tail.buf)); need < floor {
 			need = floor
@@ -197,19 +195,6 @@ func (r *Ring) Iovecs(dst []unix.Iovec) []unix.Iovec {
 		}
 	}
 	return dst[:i]
-}
-
-// Peek returns the first contiguous readable region (nil when empty).
-func (r *Ring) Peek() []byte {
-	s := r.head
-	if s == nil || s.n == 0 {
-		return nil
-	}
-	end := s.r + s.n
-	if end > len(s.buf) {
-		end = len(s.buf)
-	}
-	return s.buf[s.r:end:end]
 }
 
 // Consume drops n bytes from the front (n <= Len). Segments that become empty
