@@ -50,13 +50,9 @@ func (l *Loop) registerUDP(c *conn) {
 		_ = unix.Close(int(c.fd))
 		return
 	}
-	batch := l.cfg.udpBatch
-	if batch <= 0 {
-		batch = 1
-	}
-	u.in = sock.NewBatch(batch, 64<<10)
-	u.out = sock.NewBatch(batch, udpSendBuf)
-	u.addrs = make([]*net.UDPAddr, batch)
+	u.in = sock.NewBatch(udpBatch, 64<<10)
+	u.out = sock.NewBatch(udpBatch, udpSendBuf)
+	u.addrs = make([]*net.UDPAddr, udpBatch)
 	for i := range u.addrs {
 		u.addrs[i] = &net.UDPAddr{IP: make(net.IP, 0, 16)}
 	}
