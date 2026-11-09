@@ -1,5 +1,5 @@
 // Command http_nethttp is the net/http plaintext hello-world server used as
-// the baseline in the HTTP benchmarks (design Section 12 http_plaintext).
+// the baseline in the HTTP benchmarks (http_plaintext in BENCHMARKS.md).
 // Drive it with bench/httpclient or wrk.
 package main
 

@@ -1,5 +1,5 @@
 // Command echo_gnet is the gnet v2 echo server used as a comparison target in
-// the benchmarks (design Section 12). Drive it with bench/echoclient.
+// the benchmarks (BENCHMARKS.md). Drive it with bench/echoclient.
 package main
 
 import (
