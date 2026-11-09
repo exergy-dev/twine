@@ -155,10 +155,7 @@ func TestURingCoalesce(t *testing.T) {
 		write(t, b, "x")
 	}
 	time.Sleep(5 * time.Millisecond)
-	n, err := p.Wait(evs[:], time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := waitEvents(t, p, evs[:], time.Second)
 	// epoll reports Readable|Writable here; io_uring reports the wakeup key
 	// (Readable) only. Either is valid edge-triggered behaviour.
 	if n != 1 || evs[0].FD != int32(a) || evs[0].Flags&Readable == 0 {
@@ -303,9 +300,11 @@ func TestURingCQOverflow(t *testing.T) {
 		t.Skipf("RLIMIT_NOFILE %d too low for %d socketpairs (%v)", rl.Cur, nfd, err)
 	}
 	sq, cq := sqEntries, cqEntries
+	restore := func() { sqEntries, cqEntries = sq, cq }
+	t.Cleanup(restore) // also if newPoller fails
 	sqEntries, cqEntries = 8, 8
 	p := newPoller(t)
-	sqEntries, cqEntries = sq, cq
+	restore()
 	requireURing(t, p)
 	if n := len(p.ring.cqes); n > 16 {
 		t.Skipf("kernel sized the CQ at %d entries; cannot force overflow", n)

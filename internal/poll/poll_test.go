@@ -56,15 +56,14 @@ func drainFD(fd int) {
 	}
 }
 
-// waitFor waits up to 1s and returns the merged flags reported for fd and
-// the total number of events returned.
+// waitFor waits up to timeout for a Wait that reports events and returns
+// the merged flags reported for fd and the total number of events returned.
+// A zero-event return before the timeout is a spurious wakeup (a signal
+// interrupted Wait) and is retried with the remaining time.
 func waitFor(t *testing.T, p *Poller, fd int, timeout time.Duration) (uint32, int) {
 	t.Helper()
 	var evs [16]Event
-	n, err := p.Wait(evs[:], timeout)
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	n := waitEvents(t, p, evs[:], timeout)
 	var f uint32
 	for _, ev := range evs[:n] {
 		if ev.FD == int32(fd) {
@@ -72,6 +71,27 @@ func waitFor(t *testing.T, p *Poller, fd int, timeout time.Duration) (uint32, in
 		}
 	}
 	return f, n
+}
+
+// waitEvents calls Wait until it reports events or timeout has elapsed,
+// retrying zero-event returns (spurious wakeups). timeout 0 polls once.
+func waitEvents(t *testing.T, p *Poller, evs []Event, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		n, err := p.Wait(evs, timeout)
+		if err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+		if n > 0 || timeout == 0 {
+			return n
+		}
+		if timeout > 0 {
+			if timeout = time.Until(deadline); timeout <= 0 {
+				return 0
+			}
+		}
+	}
 }
 
 func TestReadable(t *testing.T) {
@@ -224,19 +244,29 @@ func TestWakeUnblocksWait(t *testing.T) {
 		}
 	}()
 	var evs [8]Event
-	n, err := p.Wait(evs[:], 5*time.Second)
-	returned := time.Now()
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	if n != 0 {
-		t.Fatalf("Wait after Wake = %d events, want 0", n)
-	}
-	mu.Lock()
-	lat := returned.Sub(woke)
-	mu.Unlock()
-	if woke.IsZero() {
-		t.Fatalf("Wait returned before Wake")
+	deadline := time.Now().Add(5 * time.Second)
+	var lat time.Duration
+	for {
+		n, err := p.Wait(evs[:], time.Until(deadline))
+		returned := time.Now()
+		if err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("Wait after Wake = %d events, want 0", n)
+		}
+		mu.Lock()
+		w := woke
+		mu.Unlock()
+		if !w.IsZero() {
+			lat = returned.Sub(w)
+			break
+		}
+		// Returned before the Wake: a spurious wakeup (signal), or the
+		// Wake never came.
+		if returned.After(deadline) {
+			t.Fatal("Wait timed out without the Wake")
+		}
 	}
 	if lat > 10*time.Millisecond {
 		t.Fatalf("Wait returned %v after Wake, want <= 10ms", lat)
@@ -310,10 +340,7 @@ func TestWakeWithEvents(t *testing.T) {
 	write(t, b, "x")
 	p.Wake()
 	var evs [8]Event
-	n, err := p.Wait(evs[:], time.Second)
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	n := waitEvents(t, p, evs[:], time.Second)
 	if n != 1 || evs[0].FD != int32(a) || evs[0].Flags&Readable == 0 {
 		t.Fatalf("Wait = %d %+v; want exactly fd %d Readable", n, evs[:n], a)
 	}
@@ -323,10 +350,10 @@ func TestWaitTimeout(t *testing.T) {
 	p := newPoller(t)
 	var evs [8]Event
 	start := time.Now()
-	n, err := p.Wait(evs[:], 30*time.Millisecond)
+	n := waitEvents(t, p, evs[:], 30*time.Millisecond) // retries spurious wakeups
 	d := time.Since(start)
-	if n != 0 || err != nil {
-		t.Fatalf("Wait = %d, %v; want 0, nil", n, err)
+	if n != 0 {
+		t.Fatalf("Wait = %d, want 0", n)
 	}
 	if d < 25*time.Millisecond {
 		t.Fatalf("Wait(30ms) returned after %v", d)

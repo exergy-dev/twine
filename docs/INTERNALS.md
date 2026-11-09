@@ -127,7 +127,8 @@ func (p *Poller) Backend() string
 Semantics:
 
 - **EINTR.** Wait never returns EINTR. A Wait interrupted by a signal
-  returns `(0, nil)` early, and on io_uring a timed Wait woken by a
+  returns `(0, nil)` early (io_uring with a negative timeout waits again
+  instead), and on io_uring a timed Wait woken by a
   completion that carries no event (a stale-generation or internal CQE) also
   returns `(0, nil)` early. The loop already treats a zero-event return as a
   spurious wakeup and recomputes its timeout, so there is no remaining-time
