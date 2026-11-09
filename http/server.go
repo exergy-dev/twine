@@ -637,10 +637,10 @@ func (c *conn) writeResponse() {
 // sendError answers a request that could not be parsed with a canned
 // response and closes.
 func (c *conn) sendError(code int) {
-	w := append(c.wbuf, statusLines[code]...)
-	w = append(w, c.s.serverLine...)
-	w = append(w, c.date.line...)
-	c.wbuf = append(w, errorTail(code)...)
+	c.wbuf = append(c.wbuf, statusLines[code]...)
+	c.wbuf = append(c.wbuf, c.s.serverLine...)
+	c.wbuf = append(c.wbuf, c.date.line...)
+	c.wbuf = append(c.wbuf, errorTail(code)...)
 	c.closeConn()
 }
 
