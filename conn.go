@@ -36,10 +36,9 @@ const (
 	flagLostCalled                        // ConnectionLost delivered
 	flagRecycled                          // finishClose done
 	flagProducerPaused                    // PauseProducing has been delivered
-	flagNoDelay
-	flagLinger // idle timer is acting as the half-close linger deadline
-	flagPooled // allocated by getConn; may be returned to the free list
-	flagHangup // a poll event carried a hangup: read to EOF, even after a short read
+	flagLinger                            // idle timer is acting as the half-close linger deadline
+	flagPooled                            // allocated by getConn; may be returned to the free list
+	flagHangup                            // a poll event carried a hangup: read to EOF, even after a short read
 )
 
 // conn is the per-connection state. It implements Transport directly so that
@@ -124,14 +123,11 @@ func (c *conn) queueReady() {
 // --- lifecycle -------------------------------------------------------------
 
 // attachTCP initialises an accepted or connected socket and registers it.
-func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory, noDelay bool) *conn {
+func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory) *conn {
 	c := l.getConn()
 	c.fd = int32(fd)
 	c.kind = kindTCP
 	c.peer, c.host = peer, host
-	if noDelay {
-		c.flags |= flagNoDelay
-	}
 	l.register(c)
 	l.metrics.Connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
@@ -469,8 +465,8 @@ func (c *conn) flush() {
 			return
 		}
 	} else {
+		// Edge-triggered: Writable arrives when the socket drains.
 		c.armWrite()
-		c.markDirtyIfWritable(n)
 	}
 	// Producer resume below the low-water mark; pull producers are poked
 	// whenever the ring drains.
@@ -485,15 +481,6 @@ func (c *conn) flush() {
 		}
 	}
 	c.flags &^= flagFlushing
-}
-
-// markDirtyIfWritable re-queues c for another flush this iteration when the
-// socket accepted a full writev (so more may fit), bounded by the iovec
-// count so one conn cannot monopolise the loop.
-func (c *conn) markDirtyIfWritable(n int) {
-	_ = n
-	// Edge-triggered: we will get Writable when the socket drains. Nothing
-	// to do; flagDirty was already cleared by flushDirty.
 }
 
 // touchIdle resets the idle timer after activity.
