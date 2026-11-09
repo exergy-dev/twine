@@ -2,6 +2,7 @@ package proto
 
 import (
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net"
 	"sync/atomic"
@@ -10,30 +11,31 @@ import (
 	"github.com/exergy-dev/twine"
 )
 
-// Default ReconnectingClient backoff parameters (Twisted's
-// ReconnectingClientFactory uses the same factor and maximum).
+// Default ReconnectingClient backoff parameters. Twisted's
+// ReconnectingClientFactory grows the delay by a factor of e up to 3600 s;
+// Twine's defaults (1.6 and 60 s) reconnect sooner after an outage.
 const (
 	DefaultInitialDelay = time.Second
 	DefaultMaxDelay     = 60 * time.Second
 	DefaultFactor       = 1.6
 )
 
-// Option configures a ReconnectingClient.
-type Option func(*ReconnectingClient)
+// ReconnectOption configures a ReconnectingClient.
+type ReconnectOption func(*ReconnectingClient)
 
 // InitialDelay sets the backoff ceiling for the first retry. Default 1s.
-func InitialDelay(d time.Duration) Option {
+func InitialDelay(d time.Duration) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.initial = d }
 }
 
 // MaxDelay caps the backoff ceiling. Default 60s.
-func MaxDelay(d time.Duration) Option {
+func MaxDelay(d time.Duration) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.max = d }
 }
 
 // Factor sets the backoff growth factor. Default 1.6. Values below 1 are
 // treated as 1.
-func Factor(f float64) Option {
+func Factor(f float64) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.factor = f }
 }
 
@@ -41,19 +43,26 @@ func Factor(f float64) Option {
 // errors or connection losses with no successful connect in between), i.e.
 // it gives up after n+1 consecutive failed attempts. 0, the default, retries
 // forever.
-func MaxRetries(n int) Option {
+func MaxRetries(n int) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.maxRetries = n }
 }
 
-// OnStateChange registers fn to be called on the client's loop with true
-// after each successful connect (before the protocol's ConnectionMade) and
-// false after each connection loss (after the protocol's ConnectionLost).
-func OnStateChange(fn func(connected bool)) Option {
+// OnStateChange registers fn to be called on the client's loop with
+// (true, nil) after each successful connect (before the protocol's
+// ConnectionMade) and with (false, err) after each connection loss (after
+// the protocol's ConnectionLost), err being the loss error.
+//
+// When the client gives up (see GaveUp) fn is called once more with false
+// and an error that wraps ErrGaveUp and the cause: the last connect error
+// after MaxRetries, or the loss error (twine.ErrEngineStopped for a clean
+// close) when the engine stops. If a connection was open at that moment,
+// this one call also reports its loss.
+func OnStateChange(fn func(connected bool, err error)) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.onState = fn }
 }
 
 // DialOptions passes options to every ConnectTCP attempt.
-func DialOptions(opts ...twine.DialOption) Option {
+func DialOptions(opts ...twine.DialOption) ReconnectOption {
 	return func(rc *ReconnectingClient) { rc.dialOpts = opts }
 }
 
@@ -63,7 +72,10 @@ func DialOptions(opts ...twine.DialOption) Option {
 // consecutive retry waits a uniformly random time in [0, min(MaxDelay,
 // InitialDelay*Factor^(n-1))].
 //
-// The wrapped Factory builds the protocol for every successful connect; the
+// Pass eng.NextLoop() as the loop unless the connection must share a loop
+// with other state. The wrapped Factory builds the protocol for every
+// successful connect; wrap it with tls.Client (package
+// github.com/exergy-dev/twine/tls) to get a reconnecting TLS client. The
 // client interposes a thin wrapper protocol to observe the connection's
 // life. A successful connect resets the backoff automatically (Twisted's
 // convention is for the protocol to call resetDelay once connected; Twine
@@ -71,9 +83,11 @@ func DialOptions(opts ...twine.DialOption) Option {
 // retry waits at most InitialDelay. ResetDelay is also exposed for callers
 // that want to restart the backoff at other times.
 //
-// All state lives on the loop; every method is safe from any goroutine and
-// is routed there with CallFromThread. Retrying stops on StopTrying, after
-// MaxRetries consecutive failures, or when the engine stops.
+// State lives on the loop. Start, StopTrying and ResetDelay may be called
+// from any goroutine and are routed there with CallFromThread; Connected,
+// Attempts, GaveUp and LastError may also be read from any goroutine.
+// Transport is loop-affine. Retrying stops on StopTrying, after MaxRetries
+// consecutive failures, or when the engine stops.
 type ReconnectingClient struct {
 	loop    *twine.Loop
 	addr    string
@@ -82,26 +96,28 @@ type ReconnectingClient struct {
 	initial, max time.Duration
 	factor       float64
 	maxRetries   int
-	onState      func(bool)
+	onState      func(bool, error)
 	dialOpts     []twine.DialOption
 
 	// Loop-affine state.
 	started  bool
 	stopped  bool
+	hooked   bool // OnShutdown hook registered
+	stopping bool // the engine is shutting down
 	inFlight bool
 	failures int
 	timer    *twine.Timer
 	t        twine.Transport
-	lastErr  error
 
 	connected atomic.Bool
 	attempts  atomic.Int64
 	giveUp    atomic.Bool
+	lastErr   atomic.Pointer[error]
 }
 
 // NewReconnectingClient returns a client that will connect to addr on l
 // using f. Call Start to begin.
-func NewReconnectingClient(l *twine.Loop, addr string, f twine.Factory, opts ...Option) *ReconnectingClient {
+func NewReconnectingClient(l *twine.Loop, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient {
 	rc := &ReconnectingClient{
 		loop:    l,
 		addr:    addr,
@@ -139,7 +155,16 @@ func (rc *ReconnectingClient) onLoop(fn func()) {
 // trying is a no-op.
 func (rc *ReconnectingClient) Start() {
 	rc.onLoop(func() {
-		if rc.started && !rc.stopped {
+		if !rc.hooked {
+			rc.hooked = true
+			if e := rc.loop.Engine(); e != nil {
+				// Hooks run on the Run goroutine before the loops are told
+				// to shut down, so this task runs before any connection is
+				// closed.
+				e.OnShutdown(func() { rc.loop.CallFromThread(rc.engineStopping) })
+			}
+		}
+		if rc.stopping || (rc.started && !rc.stopped) {
 			return
 		}
 		rc.started, rc.stopped = true, false
@@ -159,10 +184,7 @@ func (rc *ReconnectingClient) Start() {
 func (rc *ReconnectingClient) StopTrying() {
 	rc.onLoop(func() {
 		rc.stopped = true
-		if rc.timer != nil {
-			rc.timer.Stop()
-			rc.timer = nil
-		}
+		rc.stopTimer()
 	})
 }
 
@@ -186,9 +208,16 @@ func (rc *ReconnectingClient) GaveUp() bool { return rc.giveUp.Load() }
 // loop-affine: call it on the client's loop.
 func (rc *ReconnectingClient) Transport() twine.Transport { return rc.t }
 
-// LastError returns the most recent connect or connection-loss error. It is
-// loop-affine: call it on the client's loop.
-func (rc *ReconnectingClient) LastError() error { return rc.lastErr }
+// LastError returns the most recent connect or connection-loss error (nil
+// after a clean loss).
+func (rc *ReconnectingClient) LastError() error {
+	if p := rc.lastErr.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+func (rc *ReconnectingClient) setLastErr(err error) { rc.lastErr.Store(&err) }
 
 // attempt tracks one ConnectTCP call so that its Future rejection and its
 // ConnectionLost (both possible when the protocol aborts inside
@@ -208,13 +237,12 @@ func (rc *ReconnectingClient) connect() {
 			return // ConnectionLost handles the retry
 		}
 		rc.inFlight = false
-		rc.lastErr = err
-		if errors.Is(err, twine.ErrEngineStopped) || errors.Is(err, twine.ErrLoopStopped) {
-			rc.stopped = true
-			rc.giveUp.Store(true)
+		rc.setLastErr(err)
+		if rc.stopping || errors.Is(err, twine.ErrEngineStopped) || errors.Is(err, twine.ErrLoopStopped) {
+			rc.giveUpWith(err)
 			return
 		}
-		rc.retry()
+		rc.retry(err)
 	})
 }
 
@@ -226,18 +254,53 @@ func (a *attempt) build(peer net.Addr) twine.Protocol {
 	return &reconnectProto{a: a, inner: p}
 }
 
-// retry schedules the next attempt with full-jitter backoff.
-func (rc *ReconnectingClient) retry() {
+// retry schedules the next attempt with full-jitter backoff, or gives up
+// after MaxRetries consecutive failures; err is the latest failure.
+func (rc *ReconnectingClient) retry(err error) {
 	if rc.stopped {
 		return
 	}
 	rc.failures++
 	if rc.maxRetries > 0 && rc.failures > rc.maxRetries {
-		rc.stopped = true
-		rc.giveUp.Store(true)
+		rc.giveUpWith(err)
 		return
 	}
 	rc.timer = rc.loop.CallLater(rc.jitter(rc.ceiling(rc.failures)), rc.fire)
+}
+
+// giveUpWith stops the client until the next Start and reports it once
+// through OnStateChange with an error wrapping ErrGaveUp and cause. It does
+// nothing when the client is not trying (StopTrying, or already given up).
+func (rc *ReconnectingClient) giveUpWith(cause error) {
+	if rc.stopped {
+		return
+	}
+	rc.stopped = true
+	rc.stopTimer()
+	if cause == nil {
+		cause = twine.ErrEngineStopped
+	}
+	rc.giveUp.Store(true)
+	rc.setConnected(false, fmt.Errorf("%w: %w", ErrGaveUp, cause))
+}
+
+// engineStopping runs on the loop when the engine begins shutting down. A
+// clean shutdown loses connections with a nil error, which would otherwise
+// schedule a retry on a loop that is about to exit.
+func (rc *ReconnectingClient) engineStopping() {
+	rc.stopping = true
+	rc.stopTimer()
+	if rc.t == nil {
+		rc.giveUpWith(twine.ErrEngineStopped)
+	}
+	// Otherwise the connection's ConnectionLost reports the give-up.
+}
+
+func (rc *ReconnectingClient) stopTimer() {
+	if rc.timer != nil {
+		rc.timer.Stop()
+		rc.timer = nil
+	}
 }
 
 // ceiling returns the backoff ceiling for the n-th consecutive retry:
@@ -256,17 +319,17 @@ func (rc *ReconnectingClient) jitter(ceil time.Duration) time.Duration {
 }
 
 func (rc *ReconnectingClient) fire() {
-	rc.timer = nil // the handle is recycled once fired
+	rc.timer = nil // a fired timer handle is spent
 	if rc.stopped {
 		return
 	}
 	rc.connect()
 }
 
-func (rc *ReconnectingClient) setConnected(on bool) {
+func (rc *ReconnectingClient) setConnected(on bool, err error) {
 	rc.connected.Store(on)
 	if rc.onState != nil {
-		rc.onState(on)
+		rc.onState(on, err)
 	}
 }
 
@@ -283,7 +346,7 @@ func (p *reconnectProto) ConnectionMade(t twine.Transport) {
 	rc.inFlight = false
 	rc.t = t
 	rc.failures = 0 // ResetDelay
-	rc.setConnected(true)
+	rc.setConnected(true, nil)
 	p.inner.ConnectionMade(t)
 }
 
@@ -293,14 +356,13 @@ func (p *reconnectProto) ConnectionLost(err error) {
 	rc := p.a.rc
 	p.inner.ConnectionLost(err)
 	rc.t = nil
-	rc.lastErr = err
-	rc.setConnected(false)
-	if errors.Is(err, twine.ErrShutdown) {
-		rc.stopped = true
-		rc.giveUp.Store(true)
+	rc.setLastErr(err)
+	if (rc.stopping || errors.Is(err, twine.ErrShutdown)) && !rc.stopped {
+		rc.giveUpWith(err) // reports the loss and the give-up in one call
 		return
 	}
-	rc.retry()
+	rc.setConnected(false, err)
+	rc.retry(err)
 }
 
 type nopProto struct{}

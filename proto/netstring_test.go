@@ -97,8 +97,8 @@ func TestNetstringRandomSplits(t *testing.T) {
 func TestNetstringSendString(t *testing.T) {
 	ns := &NetstringReceiver{}
 	ft, _ := newNS(ns)
-	ns.SendString(nil, []byte("hello"))
-	ns.SendString(ft, nil)
+	ns.SendString([]byte("hello"))
+	ns.SendString(nil)
 	if string(ft.out) != "5:hello,0:," || ft.writes != 2 {
 		t.Fatalf("out %q writes %d", ft.out, ft.writes)
 	}
