@@ -34,7 +34,6 @@ func newHarness(t *testing.T, n int, base int64, strict bool) *harness {
 		now: base, strict: strict,
 	}
 	for i := range h.timers {
-		i := i
 		h.timers[i].Fn = func() { h.onFire(i) }
 	}
 	return h
@@ -243,7 +242,6 @@ func TestCascadeBoundariesStepping(t *testing.T) {
 	firedAt := make([]int64, len(ds))
 	var cur int64
 	for i, d := range ds {
-		i := i
 		timers[i].Fn = func() { firedAt[i] = cur }
 		w.Add(&timers[i], d*ms)
 	}
@@ -300,7 +298,6 @@ func TestFIFOWithinSlotAndExpiryOrder(t *testing.T) {
 	var order []int
 	timers := make([]Timer, 6)
 	for i := range timers {
-		i := i
 		timers[i].Fn = func() { order = append(order, i) }
 	}
 	// Ticks: 0->5, 1->3, 2->5, 3->300 (level 1), 4->3, 5->5

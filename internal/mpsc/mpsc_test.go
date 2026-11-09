@@ -65,7 +65,6 @@ func TestWraparoundFIFO(t *testing.T) {
 		var got int
 		fns := make([]func(), 4096)
 		for i := range fns {
-			i := i
 			fns[i] = func() { got = i }
 		}
 		var ref []int
