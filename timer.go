@@ -11,13 +11,22 @@ import (
 // are carved from a per-loop slab (one allocation per 256 timers) and never
 // reused, so a handle kept after the timer fired can never cancel or move a
 // later timer. Stop and Reset on a fired or stopped Timer are harmless
-// no-ops.
+// no-ops; unlike time.Timer.Reset, Reset does not re-arm a timer that has
+// already fired or been stopped (call CallLater again for that).
 type Timer struct {
 	w    wheel.Timer // must stay the first field: fireNode converts back from it
 	loop *Loop
 	fn   func()
 	due  bool // queued in Loop.due (zero delay) rather than the wheel
 }
+
+// Compile-time checks for fireNode, which converts a *wheel.Timer back to
+// its *Timer: valid only while w is Timer's first field. A non-zero offset
+// makes the first constant negative, which overflows uintptr.
+const (
+	_ = -unsafe.Offsetof(Timer{}.w)
+	_ = unsafe.Sizeof(Timer{}) - unsafe.Sizeof(wheel.Timer{})
+)
 
 // fireNode is the wheel callback (wheel.Timer.FnT); storing a package-level
 // function instead of a method value keeps CallLater at one allocation.
