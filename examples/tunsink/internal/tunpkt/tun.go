@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package tunpkt holds the TUN helpers and packet builder shared by the
 // tunsink server, the baseline server and the load generator.
 package tunpkt

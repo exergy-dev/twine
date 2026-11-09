@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command baseline is the goroutine-per-connection net.Conn equivalent of
 // tunsink, used as the comparison point in the benchmark. Same framing, same
 // sink goroutine, same Kafka settings, same -aes decryption (into the sink
@@ -62,7 +64,7 @@ func main() {
 	if *iface != "" {
 		fd, err := tunpkt.OpenTUN(*iface)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal(err) //nolint:gocritic // stop only releases the signal handler
 		}
 		tunFD = fd
 	}
@@ -122,7 +124,7 @@ func main() {
 	log.Printf("baseline: tcp%s -> tun=%q kafka=%q mode=%s aes=%v", ln.Addr(), *iface, *brokers, *mode, *useAES)
 	go func() {
 		<-ctx.Done()
-		ln.Close()
+		_ = ln.Close()
 	}()
 	go func() {
 		tick := time.NewTicker(*statsEvery)
@@ -152,7 +154,7 @@ func main() {
 		conns.Add(1)
 		go func() {
 			defer conns.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			r := bufio.NewReaderSize(c, 64<<10)
 			var hdr [4]byte
 			buf := make([]byte, maxFrame)

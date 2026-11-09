@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command aesbench measures the standalone cost of one AES-256-GCM Open of a
 // -size byte frame (nonce || ciphertext || tag), single thread, into a
 // preallocated buffer: the per-frame decrypt cost the -aes servers pay.

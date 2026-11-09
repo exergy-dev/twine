@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command tunsink accepts TCP clients and writes every length-prefixed frame
 // they send into a TUN device and onto a Kafka topic.
 //
@@ -87,7 +89,7 @@ func main() {
 	if *iface != "" {
 		fd, err := tunpkt.OpenTUN(*iface)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal(err) //nolint:gocritic // stop only releases the signal handler
 		}
 		tunFD = fd
 		defer unix.Close(fd)
