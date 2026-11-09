@@ -110,18 +110,16 @@ host with a real NIC and wrk; nothing in twine was found to be the limit.
 
 ## Fixes after the Section 13 close-out
 
-- 2026-11-07, found by the `examples/tunsink` Go-vs-Rust comparison: with
+- 2026-11-07, found by the `examples/tunsink` benchmark harness: with
   edge-triggered polling a hangup is reported once; when the event carrying it
   also carried more data than `MaxReadsPerEvent` allows, the read re-armed next
   iteration stopped at the final short read and never saw EOF, leaving the
   connection open until the shutdown timeout. The hangup now sticks to the conn
-  (`flagHangup`), `TestHangupSurvivesReadCap`. The Rust port had the same bug
-  and the same fix.
+  (`flagHangup`), `TestHangupSurvivesReadCap`.
 - 2026-11-08, `examples/tunsink` gained optional AES-256-GCM decryption on the
   loop (`-aes`, Go `crypto/aes` + `cipher.NewGCM`, decrypt into the buffer the
   frame was already copied to). Cost at one core, TUN only, direct mode: 17%
-  (1.91 → 1.57 M frames/s), equal to the standalone 87 ns/frame; the Rust
-  server loses the same 17% with ring, so the Rust/Go ratio is unchanged.
+  (1.91 → 1.57 M frames/s), equal to the standalone 87 ns/frame.
   `bench.sh` gained the `aes` cell dimension, a `decrypt_err` check, a wrong-key
   negative check (`LOADGEN_KEY`) and a fix for a leaked fake broker per run
   (54 strays once held 28 GB and skewed a run). Table in
