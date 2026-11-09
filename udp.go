@@ -46,8 +46,12 @@ func (e *Engine) newUDPListener(addr string, p DatagramProtocol, lc listenConfig
 
 func (l *Loop) registerUDP(c *conn) {
 	u := c.udp
+	if c.fd < 0 {
+		return // closed before the loop started
+	}
 	if l.stopping || u.lst.closed.Load() {
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
 	u.in = sock.NewBatch(udpBatch, 64<<10)
@@ -61,6 +65,7 @@ func (l *Loop) registerUDP(c *conn) {
 		l.cfg.logger.Error("twine: registering UDP socket", "loop", l.id, "err", err)
 		l.unregister(c)
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
 	l.safeCall(c, func() { u.proto.StartProtocol(c) })
