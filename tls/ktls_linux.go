@@ -10,13 +10,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// KTLSSupported reports whether this package can install kernel TLS (kTLS)
-// offload on a connection: true on Linux. Whether a particular connection is
-// offloaded also depends on the kernel (KTLSAvailable), the negotiated
-// protocol and cipher, and the state of the connection; see the package
-// documentation. Transport.KernelOffloaded reports the outcome.
-func KTLSSupported() bool { return true }
-
 // loopbackConn returns one end of a connected loopback TCP pair and a
 // function that closes both ends.
 func loopbackConn() (fd int, closeFn func(), err error) {
@@ -71,6 +64,19 @@ func probeKTLS() bool {
 	return err == nil || errors.Is(err, unix.ENOTCONN)
 }
 
+// warmKTLS runs the capability probes (KTLSAvailable and the per-cipher key
+// probes) now, so that they do not run on a loop thread at the first
+// handshake, where the sync.Once would also block every other loop
+// finishing a handshake at the same time. Called when a factory is built
+// with KernelOffload(true); later calls return at once.
+func warmKTLS() {
+	if KTLSAvailable() {
+		for k := ktlsKind(0); k < numKinds; k++ {
+			cipherUsable(k)
+		}
+	}
+}
+
 // setCryptoInfo calls setsockopt(SOL_TLS, opt, info). unix has no helper for
 // an arbitrary byte buffer at an arbitrary level.
 func setCryptoInfo(fd, opt int, info []byte) error {
@@ -123,8 +129,10 @@ func installKTLS(t *Transport) bool {
 		return false
 	}
 	// Ciphertext still queued for the socket would be encrypted a second
-	// time (or reordered against the first kernel record).
-	if t.under.PendingWrite() != 0 || t.bio.hasOutbound() {
+	// time (or reordered against the first kernel record). The last
+	// handshake flight has already been handed to the core (flushOut before
+	// the mode switch), so the core's ring is the only place it can wait.
+	if t.under.PendingWrite() != 0 {
 		return false
 	}
 	snap, ok := snapshot(t.tc, st.CipherSuite, ctls.VersionTLS13)
@@ -174,4 +182,15 @@ func sendCloseNotify(fd int) error {
 	hdr.SetLen(unix.CmsgLen(1))
 	oob[unix.CmsgSpace(0)] = recordTypeAlert
 	return unix.Sendmsg(fd, []byte{1, 0}, oob, nil, unix.MSG_DONTWAIT) // warning, close_notify
+}
+
+// hasInbound reports whether received ciphertext is queued or borrowed.
+// Loop-only, loop mode.
+func (b *bio) hasInbound() bool { return b.r < len(b.in) || len(b.borrowed) > 0 }
+
+// blockWrites makes every later Write fail with errOffloadWrite. Loop-only.
+func (b *bio) blockWrites() {
+	b.mu.Lock()
+	b.noWrite = true
+	b.mu.Unlock()
 }
