@@ -67,7 +67,7 @@ func (b *Batch) RecvMmsg(fd int) (int, error) {
 			continue
 		}
 		if e != 0 {
-			return 0, errnoErr(e)
+			return 0, e
 		}
 		n := int(r)
 		for i := 0; i < n; i++ {
@@ -113,7 +113,7 @@ func (b *Batch) SendMmsg(fd int, n int) (int, error) {
 			continue
 		}
 		if e != 0 {
-			return 0, errnoErr(e)
+			return 0, e
 		}
 		sent := int(r)
 		for i := 0; i < sent; i++ {

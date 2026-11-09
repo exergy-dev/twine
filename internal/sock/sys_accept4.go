@@ -23,7 +23,9 @@ func accept(lfd int) (int, unix.Sockaddr, error) {
 		uintptr(unsafe.Pointer(&rsa)), uintptr(unsafe.Pointer(&l)),
 		unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, 0, 0)
 	if e != 0 {
-		return -1, nil, errnoErr(e)
+		// Converting an Errno to error does not allocate: the runtime
+		// boxes integer values below 256 from a static table.
+		return -1, nil, e
 	}
 	fd := int(r)
 	sa := rawToSockaddr(&rsa)
@@ -32,29 +34,6 @@ func accept(lfd int) (int, unix.Sockaddr, error) {
 		return -1, nil, unix.EAFNOSUPPORT
 	}
 	return fd, sa, nil
-}
-
-// Preallocated errors so the error path never boxes an Errno.
-var (
-	errEAGAIN error = unix.EAGAIN
-	errEINVAL error = unix.EINVAL
-	errENOENT error = unix.ENOENT
-)
-
-// errnoErr converts a raw errno to an error without allocating for the
-// common cases.
-func errnoErr(e unix.Errno) error {
-	switch e {
-	case 0:
-		return nil
-	case unix.EAGAIN:
-		return errEAGAIN
-	case unix.EINVAL:
-		return errEINVAL
-	case unix.ENOENT:
-		return errENOENT
-	}
-	return e
 }
 
 // rawToSockaddr converts an IPv4/IPv6 raw sockaddr to a unix.Sockaddr (it

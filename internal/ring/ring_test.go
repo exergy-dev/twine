@@ -3,6 +3,8 @@ package ring
 import (
 	"bytes"
 	"math/rand"
+	"slices"
+	"strconv"
 	"testing"
 	"testing/quick"
 	"unsafe"
@@ -48,27 +50,8 @@ func segSizes(r *Ring) []int {
 // checkInvariants verifies internal consistency of r.
 func checkInvariants(t *testing.T, r *Ring) {
 	t.Helper()
-	total := 0
-	for s := r.head; s != nil; s = s.next {
-		if s.n < 0 || s.n > len(s.buf) || s.r < 0 || s.r >= len(s.buf) {
-			t.Fatalf("bad segment r=%d n=%d size=%d", s.r, s.n, len(s.buf))
-		}
-		if s != r.head && s.r != 0 {
-			t.Fatalf("non-head segment has read offset %d", s.r)
-		}
-		if s != r.tail && s.n != len(s.buf) && s != r.head {
-			t.Fatalf("middle segment not full: n=%d size=%d", s.n, len(s.buf))
-		}
-		if s.n == 0 && (s != r.head || s.next != nil) {
-			t.Fatal("empty segment that is not the sole kept segment")
-		}
-		if s.next == nil && s != r.tail {
-			t.Fatal("tail pointer mismatch")
-		}
-		total += s.n
-	}
-	if total != r.Len() {
-		t.Fatalf("segment bytes %d != Len %d", total, r.Len())
+	if msg := r.verify(); msg != "" {
+		t.Fatalf("%s (segments %v, Len %d)", msg, segSizes(r), r.Len())
 	}
 }
 
@@ -122,8 +105,17 @@ func TestNoSegmentUntilWrite(t *testing.T) {
 func TestSmallStaysInOneSlab(t *testing.T) {
 	r, a := newRing()
 	msg := pattern(0, 100)
+	var slab0 *byte
 	for i := 0; i < 10000; i++ {
 		r.Write(msg)
+		if got := segSizes(r); len(got) != 1 || got[0] != k4 {
+			t.Fatalf("iteration %d: segments %v", i, got)
+		}
+		if i == 0 {
+			slab0 = &r.head.buf[0]
+		} else if &r.head.buf[0] != slab0 {
+			t.Fatalf("iteration %d: not the same 4K slab", i)
+		}
 		if i%3 == 0 {
 			var iovs [4]unix.Iovec
 			if got := iovBytes(r.Iovecs(iovs[:])); !bytes.Equal(got, msg) {
@@ -131,20 +123,15 @@ func TestSmallStaysInOneSlab(t *testing.T) {
 			}
 		}
 		r.Consume(100)
+		if r.head != nil || r.tail != nil {
+			t.Fatalf("iteration %d: drained ring still holds a segment", i)
+		}
 	}
+	// One make(); every later cycle takes the same slab from the free list
+	// and returns it when the ring drains.
 	s := a.Stats()
-	if s.Gets != 1 || s.Misses != 1 || s.Puts != 0 || s.InUse != k4 {
+	if s.Misses != 1 || s.Gets != 10000 || s.Puts != 10000 || s.InUse != 0 || s.Free != k4 {
 		t.Fatalf("stats after 10000 small cycles: %+v", s)
-	}
-	if got := segSizes(r); len(got) != 1 || got[0] != k4 {
-		t.Fatalf("segments %v", got)
-	}
-	r.Reset()
-	if s := a.Stats(); s.InUse != 0 || s.Puts != 1 {
-		t.Fatalf("after Reset: %+v", s)
-	}
-	if r.head != nil || r.tail != nil || r.Len() != 0 {
-		t.Fatal("Reset left segments")
 	}
 }
 
@@ -203,10 +190,10 @@ func TestWrapInsideSegment(t *testing.T) {
 	contentCheck(t, r, ref)
 	checkInvariants(t, r)
 	r.Consume(r.Len())
-	if got := segSizes(r); len(got) != 1 || got[0] != k16 {
-		t.Fatalf("after drain kept %v, want the 16K tail", got)
+	if got := segSizes(r); len(got) != 0 {
+		t.Fatalf("after drain kept %v, want no segment", got)
 	}
-	if s := a.Stats(); s.InUse != k16 || s.Free != k4 {
+	if s := a.Stats(); s.InUse != 0 || s.Free != k4+k16 {
 		t.Fatalf("after drain: %+v", s)
 	}
 }
@@ -244,19 +231,24 @@ func TestConsumeToSegmentBoundary(t *testing.T) {
 	}
 	contentCheck(t, r, ref[k4:])
 	checkInvariants(t, r)
-	// Consume exactly to the end of the last segment keeps it, empty, at r=0.
+	// Consuming exactly to the end of the last segment releases it too.
 	r.Consume(100)
-	if r.head == nil || r.head != r.tail || r.head.n != 0 || r.head.r != 0 {
-		t.Fatal("last segment not kept empty")
+	if r.head != nil || r.tail != nil {
+		t.Fatal("drained ring still holds its last segment")
+	}
+	if s := a.Stats(); s.InUse != 0 || s.Free != k4+k16 {
+		t.Fatalf("last slab not returned: %+v", s)
 	}
 	if r.Peek() != nil {
 		t.Fatal("Peek on drained ring not nil")
 	}
-	gets := a.Stats().Gets
+	// The next write takes a pooled slab: no new make().
+	misses := a.Stats().Misses
 	r.Write(pattern(0, 1000))
-	if a.Stats().Gets != gets {
-		t.Fatal("write into kept segment called the allocator")
+	if s := a.Stats(); s.Misses != misses || s.InUse != k4 {
+		t.Fatalf("write after drain: %+v", s)
 	}
+	checkInvariants(t, r)
 }
 
 func TestConsumeZeroAndPanics(t *testing.T) {
@@ -292,7 +284,7 @@ func TestGrowthClasses(t *testing.T) {
 		{"remainder above floor", []int{100, k4 + k64}, []int{k4, k256}},
 		{"geometric floor", []int{k4, 1, k16, 1, k64, 1}, []int{k4, k16, k64, k256}},
 		{"all four classes", []int{k4, k16, k64, k256}, []int{k4, k16, k64, k256}},
-		{"small backlog", repeat(100, 3000), []int{k4, k16, k64, k256}},
+		{"small backlog", slices.Repeat([]int{100}, 3000), []int{k4, k16, k64, k256}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -304,7 +296,7 @@ func TestGrowthClasses(t *testing.T) {
 				ref = append(ref, p...)
 			}
 			got := segSizes(r)
-			if !equalInts(got, c.want) {
+			if !slices.Equal(got, c.want) {
 				t.Fatalf("segments %v, want %v", got, c.want)
 			}
 			checkInvariants(t, r)
@@ -317,42 +309,16 @@ func TestGrowthClasses(t *testing.T) {
 	}
 }
 
-func repeat(n, times int) []int {
-	out := make([]int, times)
-	for i := range out {
-		out[i] = n
-	}
-	return out
-}
-
-func equalInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestResetThenReuse(t *testing.T) {
 	a := slab.New()
 	var r Ring
 	for round := 0; round < 3; round++ {
 		r.Init(a)
-		if r.HighWater() != 0 {
-			t.Fatal("Init did not reset HighWater")
-		}
 		ref := pattern(round, 300<<10)
 		r.Write(ref)
 		r.Consume(1000)
 		contentCheck(t, &r, ref[1000:])
 		r.Reset()
-		if r.HighWater() != 300<<10 {
-			t.Fatalf("Reset changed HighWater to %d", r.HighWater())
-		}
 		if s := a.Stats(); s.InUse != 0 {
 			t.Fatalf("round %d: InUse %d after Reset", round, s.InUse)
 		}
@@ -376,24 +342,6 @@ func TestResetThenReuse(t *testing.T) {
 	r.Init(a)
 	if s := a.Stats(); s.InUse != 0 || r.Len() != 0 {
 		t.Fatalf("Init without Reset leaked: %+v", s)
-	}
-}
-
-func TestHighWater(t *testing.T) {
-	r, _ := newRing()
-	r.Write(make([]byte, 500))
-	r.Consume(400)
-	r.Write(make([]byte, 200))
-	if r.HighWater() != 500 {
-		t.Fatalf("HighWater %d, want 500", r.HighWater())
-	}
-	r.ResetHighWater()
-	if r.HighWater() != 300 {
-		t.Fatalf("after ResetHighWater: %d, want current Len 300", r.HighWater())
-	}
-	r.Write(make([]byte, 50))
-	if r.HighWater() != 350 {
-		t.Fatalf("HighWater %d, want 350", r.HighWater())
 	}
 }
 
@@ -433,7 +381,6 @@ func TestQuick(t *testing.T) {
 		r.Init(a)
 		var ref []byte
 		written := 0
-		hw := 0
 		var iovs [16]unix.Iovec
 		for _, op := range ops {
 			switch op % 4 {
@@ -481,10 +428,10 @@ func TestQuick(t *testing.T) {
 					ref = ref[:0]
 				}
 			}
-			if len(ref) > hw {
-				hw = len(ref)
+			if r.Len() != len(ref) || (len(ref) == 0) != (r.head == nil) {
+				return false
 			}
-			if r.Len() != len(ref) || r.HighWater() != hw {
+			if r.verify() != "" {
 				return false
 			}
 			v := r.Iovecs(iovs[:])
@@ -620,22 +567,8 @@ func BenchmarkIovecs(b *testing.B) {
 func byteSize(n int) string {
 	switch {
 	case n >= 1<<10 && n%(1<<10) == 0:
-		return itoa(n>>10) + "KiB"
+		return strconv.Itoa(n>>10) + "KiB"
 	default:
-		return itoa(n) + "B"
+		return strconv.Itoa(n) + "B"
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }

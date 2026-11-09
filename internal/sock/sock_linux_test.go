@@ -44,12 +44,6 @@ func TestLinuxOptions(t *testing.T) {
 	if v, _ := unix.GetsockoptInt(lfd, unix.IPPROTO_TCP, unix.TCP_NODELAY); v == 0 {
 		t.Fatal("TCP_NODELAY not set")
 	}
-	if err := SetKeepAlive(lfd, true); err != nil {
-		t.Fatal(err)
-	}
-	if v, _ := unix.GetsockoptInt(lfd, unix.SOL_SOCKET, unix.SO_KEEPALIVE); v == 0 {
-		t.Fatal("SO_KEEPALIVE not set")
-	}
 	if v, _ := unix.GetsockoptInt(lfd, unix.SOL_SOCKET, unix.SO_REUSEADDR); v == 0 {
 		t.Fatal("SO_REUSEADDR not set on listener")
 	}

@@ -13,9 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// maxEvents is the size of the stack-resident event array handed to Wait.
-const maxEvents = 256
-
 // maxTasksPerIteration bounds task-queue draining so I/O is never starved.
 const maxTasksPerIteration = 1024
 
@@ -63,7 +60,7 @@ type Loop struct {
 	nowNs  int64 // monotonic ns since epoch at iteration start; timers use it
 
 	rdbuf  []byte
-	events [maxEvents]poll.Event
+	events [poll.MaxEvents]poll.Event
 	iovecs [64]unix.Iovec
 
 	conns     []*conn // indexed by fd

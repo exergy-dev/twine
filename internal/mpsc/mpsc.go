@@ -97,20 +97,13 @@ func (q *Queue) Pop() (func(), bool) {
 }
 
 // Len returns the approximate number of queued items (tail - head), clamped
-// to [0, Cap()]. It is safe to call from any goroutine. Items whose push is
-// still in progress are counted.
+// to the queue's capacity. It is safe to call from any goroutine. Items whose
+// push is still in progress are counted.
 func (q *Queue) Len() int {
 	h := q.head.Load()
 	t := q.tail.Load()
 	if t <= h {
 		return 0
 	}
-	n := t - h
-	if n > q.mask+1 {
-		n = q.mask + 1
-	}
-	return int(n)
+	return int(min(t-h, q.mask+1))
 }
-
-// Cap returns the queue's capacity (the rounded value passed to New).
-func (q *Queue) Cap() int { return int(q.mask + 1) }

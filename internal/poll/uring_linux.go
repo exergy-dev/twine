@@ -6,11 +6,11 @@
 // one multishot IORING_OP_POLL_ADD (IORING_POLL_ADD_MULTI, edge-triggered,
 // the io_uring default); Wait reaps the resulting CQEs and translates their
 // poll masks into the same Event flags as the epoll backend. Batched
-// accept/read/write submissions (the io_uring completion model, design
-// Section 13 Phase 6) were NOT implemented: the Poller contract is
-// readiness-based and the root package performs its own non-blocking
-// syscalls, so a completion backend would need a different Poller API
-// (design Section 14 open question on io_uring). What io_uring buys here is
+// accept/read/write submissions (the io_uring completion model) were NOT
+// implemented: the Poller contract is readiness-based and the root package
+// performs its own non-blocking syscalls, so a completion backend would need
+// a different Poller API (whether io_uring should ever become the default is
+// an open question in docs/history/design.md). What io_uring buys here is
 // syscall batching: Add and Mod only write SQEs into the shared ring and are
 // submitted together by the next Wait (one io_uring_enter per loop
 // iteration instead of one epoll_ctl per change), and Wait(0) with nothing
@@ -68,16 +68,18 @@
 //     readiness that has already been posted to the CQ; a wakeup whose
 //     task_work is still pending on another thread shows up on a later Wait.
 //
-// New falls back to an embedded copy of the epoll backend when io_uring is
-// unusable (any setup or mmap failure, e.g. ENOSYS/EPERM/EINVAL, the kernel lacks
-// IORING_FEAT_NODROP or IORING_FEAT_EXT_ARG, or multishot poll (Linux 5.13)
-// is rejected), so a -tags twine_uring binary still runs everywhere.
+// New falls back to the epoll backend (the epoller the default build uses)
+// when io_uring is unusable (any setup or mmap failure, e.g.
+// ENOSYS/EPERM/EINVAL, the kernel lacks IORING_FEAT_NODROP or
+// IORING_FEAT_EXT_ARG, or multishot poll (Linux 5.13) is rejected), so a
+// -tags twine_uring binary still runs everywhere.
 
 package poll
 
 import (
 	"encoding/binary"
 	"math"
+	"runtime"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -116,14 +118,16 @@ const (
 // Ring sizes. Add/Mod only write SQEs, so the SQ is flushed early if a loop
 // iteration queues more than sqEntries changes. The CQ is larger so that a
 // burst of readiness on many fds rarely overflows (overflow is still
-// correct, via IORING_FEAT_NODROP and re-arming, just slower).
-const (
-	sqEntries = 512
-	cqEntries = 4096
-	// initialFDs is the initial size of the fd table; it doubles on demand
-	// (the only allocation after New, and only in Add).
-	initialFDs = 1024
+// correct, via IORING_FEAT_NODROP and re-arming, just slower). They are
+// variables only so that tests can force an overflow with tiny rings.
+var (
+	sqEntries uint32 = 512
+	cqEntries uint32 = 4096
 )
+
+// initialFDs is the initial size of the fd table; it doubles on demand (the
+// only allocation after New, and only in Add).
+const initialFDs = 1024
 
 // user_data layout: bits 32..62 hold the generation and bits 0..31 the fd.
 // Bit 63 marks internal requests: a POLL_REMOVE carries udInternal|target so
@@ -239,8 +243,8 @@ var forceEpoll bool
 type Poller struct {
 	w      waker
 	closed bool
-	ring   *uring         // nil when running on the epoll fallback
-	ep     *epollFallback // non-nil iff ring == nil
+	ring   *uring   // nil when running on the epoll fallback
+	ep     *epoller // non-nil iff ring == nil
 	// uringErr records why io_uring was not used (nil when ring != nil or
 	// when forceEpoll is set). Diagnostics only.
 	uringErr error
@@ -267,9 +271,9 @@ func open(useURing bool) (*Poller, error) {
 		}
 		p.uringErr = err
 	}
-	ep, err := newEpollFallback(p.w.fd)
-	if err != nil {
-		p.w.close()
+	ep := &epoller{}
+	if err := ep.open(p.w.fd); err != nil {
+		_ = p.w.close()
 		return nil, err
 	}
 	p.ep = ep
@@ -283,9 +287,6 @@ func open(useURing bool) (*Poller, error) {
 // kernel-side failure (such as a closed fd) is then reported by Wait as
 // Error|Hangup for fd instead of being returned here.
 func (p *Poller) Add(fd int, flags uint32) error {
-	if p.closed {
-		return unix.EBADF
-	}
 	if p.ring == nil {
 		return p.ep.add(fd, flags)
 	}
@@ -295,9 +296,6 @@ func (p *Poller) Add(fd int, flags uint32) error {
 // Mod replaces fd's interest set. If fd is already ready for a requested
 // direction, the next Wait reports it.
 func (p *Poller) Mod(fd int, flags uint32) error {
-	if p.closed {
-		return unix.EBADF
-	}
 	if p.ring == nil {
 		return p.ep.mod(fd, flags)
 	}
@@ -306,9 +304,6 @@ func (p *Poller) Mod(fd int, flags uint32) error {
 
 // Del removes fd. Callers close the fd themselves, after Del.
 func (p *Poller) Del(fd int) error {
-	if p.closed {
-		return unix.EBADF
-	}
 	if p.ring == nil {
 		return p.ep.del(fd)
 	}
@@ -316,28 +311,22 @@ func (p *Poller) Del(fd int) error {
 }
 
 // Wait blocks up to timeout (negative = forever, 0 = poll) and fills evs,
-// returning the number of events written. At most min(len(evs), 256) events
-// are returned per call and each fd appears at most once; an empty evs is
-// rejected with EINVAL.
+// returning the number of events written. At most min(len(evs), MaxEvents)
+// events are returned per call and, on io_uring, each fd appears at most
+// once; an empty evs is rejected with EINVAL.
 //
 // The wake eventfd is drained internally and never reported, so a Wait woken
-// only by Wake returns (0, nil). EINTR is retried internally (with the
-// remaining timeout) and never returned. Wait does not allocate.
+// only by Wake returns (0, nil). EINTR is never returned: a Wait interrupted
+// by a signal, or woken by completions that carry no event (a stale or
+// internal CQE), may return (0, nil) before timeout. Wait does not allocate.
 func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
-	max := len(evs)
-	if max == 0 {
-		return 0, errNoEvents
-	}
-	if p.closed {
-		return 0, unix.EBADF
-	}
-	if max > maxEvents {
-		max = maxEvents
-	}
 	if p.ring == nil {
-		return p.ep.wait(evs[:max], timeout, &p.w)
+		return p.ep.wait(evs, timeout, &p.w)
 	}
-	return p.ring.wait(evs[:max], timeout, &p.w)
+	if len(evs) == 0 {
+		return 0, unix.EINVAL
+	}
+	return p.ring.wait(evs[:min(len(evs), MaxEvents)], timeout, &p.w)
 }
 
 // Wake makes a blocked or future Wait return promptly. It is safe to call
@@ -365,6 +354,19 @@ func (p *Poller) Close() error {
 		err = err2
 	}
 	return err
+}
+
+// Backend names the kernel interface in use: "io_uring", or "epoll
+// (io_uring unavailable)" when New fell back because io_uring could not be
+// set up (the reason is not exposed; the fallback is fully functional).
+func (p *Poller) Backend() string {
+	switch {
+	case p.ring != nil:
+		return "io_uring"
+	case p.uringErr != nil:
+		return "epoll (io_uring unavailable)"
+	}
+	return "epoll" // fallback forced by a test
 }
 
 // ---------------------------------------------------------------------------
@@ -411,8 +413,9 @@ type uring struct {
 	fds []fdState
 	seq uint32 // Wait sequence number for per-fd coalescing
 
-	arg getEventsArg
+	arg getEventsArg // arg.ts holds &ts, set once by newURing
 	ts  kernelTimespec
+	pin runtime.Pinner // pins ts while arg refers to it
 }
 
 // sysSetup wraps io_uring_setup(2).
@@ -433,9 +436,13 @@ func newURing(wakeFD int) (r *uring, err error) {
 		return nil, err
 	}
 	r = &uring{fd: fd}
+	// The kernel reads the timeout through the uintptr in r.arg, which the
+	// GC cannot see: pin r.ts for the ring's lifetime (close unpins it).
+	r.pin.Pin(&r.ts)
+	r.arg = getEventsArg{sigmaskSz: 8, ts: uint64(uintptr(unsafe.Pointer(&r.ts)))}
 	defer func() {
 		if err != nil {
-			r.close()
+			_ = r.close()
 			r = nil
 		}
 	}()
@@ -528,6 +535,7 @@ func (r *uring) close() error {
 		_ = unix.Munmap(r.sqRing)
 	}
 	r.sqesMem, r.cqRing, r.sqRing, r.sqes, r.cqes = nil, nil, nil, nil, nil
+	r.pin.Unpin()
 	return unix.Close(r.fd)
 }
 
@@ -795,34 +803,30 @@ func (r *uring) resync() {
 	}
 }
 
+// wait is Poller.Wait for io_uring; evs is non-empty and at most MaxEvents
+// long. With a timeout it makes one pass (enter, then reap), so completions
+// that carry no event end it early with (0, nil); without one it waits again
+// until something is reported.
 func (r *uring) wait(evs []Event, timeout time.Duration, w *waker) (int, error) {
-	var deadline time.Time
-	if timeout > 0 {
-		deadline = time.Now().Add(timeout)
-	}
-	rem := timeout
 	for {
 		pending := r.sqLocal != atomic.LoadUint32(r.sqHead)
 		ready := atomic.LoadUint32(r.cqTail) != r.cqLocal
 		overflow := atomic.LoadUint32(r.sqFlags)&ioringSQCQOverflow != 0
-		timedOut := false
 		if pending || overflow || (!ready && timeout != 0) {
 			var e unix.Errno
 			switch {
 			case ready || timeout == 0:
 				e = r.enter(0, ioringEnterGetEvents, nil, 0)
-			case rem < 0:
+			case timeout < 0:
 				e = r.enter(1, ioringEnterGetEvents, nil, 0)
 			default:
-				r.ts = kernelTimespec{sec: int64(rem / time.Second), nsec: int64(rem % time.Second)}
-				r.arg = getEventsArg{sigmaskSz: 8, ts: uint64(uintptr(unsafe.Pointer(&r.ts)))}
+				// r.arg points at r.ts, which newURing pinned.
+				r.ts = kernelTimespec{sec: int64(timeout / time.Second), nsec: int64(timeout % time.Second)}
 				e = r.enter(1, ioringEnterGetEvents|ioringEnterExtArg,
 					unsafe.Pointer(&r.arg), unsafe.Sizeof(r.arg))
 			}
 			switch e {
-			case 0, unix.EINTR, unix.EAGAIN, unix.EBUSY:
-			case unix.ETIME:
-				timedOut = true
+			case 0, unix.EINTR, unix.EAGAIN, unix.EBUSY, unix.ETIME:
 			case unix.EBADR:
 				r.resync()
 			default:
@@ -830,13 +834,8 @@ func (r *uring) wait(evs []Event, timeout time.Duration, w *waker) (int, error) 
 			}
 		}
 		n, woke, err := r.drain(evs, w)
-		if n > 0 || woke || err != nil || timeout == 0 || timedOut {
+		if n > 0 || woke || err != nil || timeout >= 0 {
 			return n, err
-		}
-		if timeout > 0 {
-			if rem = time.Until(deadline); rem <= 0 {
-				return 0, nil
-			}
 		}
 	}
 }
@@ -920,132 +919,4 @@ func (r *uring) drain(evs []Event, w *waker) (n int, woke bool, err error) {
 		w.drain()
 	}
 	return n, woke, err
-}
-
-// ---------------------------------------------------------------------------
-// epoll fallback.
-//
-// COPY of the logic in epoll_linux.go, which is excluded by the twine_uring
-// build tag. Used only when io_uring is unusable at New time. Keep the two in
-// sync.
-// ---------------------------------------------------------------------------
-
-// epollFallback is an epoll instance with an embedded event buffer.
-type epollFallback struct {
-	epfd int
-	kevs [maxEvents]unix.EpollEvent
-}
-
-// newEpollFallback creates the epoll instance and registers the wake fd.
-func newEpollFallback(wakeFD int) (*epollFallback, error) {
-	epfd, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
-	if err != nil {
-		return nil, err
-	}
-	ev := unix.EpollEvent{Events: unix.EPOLLIN | unix.EPOLLET, Fd: int32(wakeFD)}
-	if err := unix.EpollCtl(epfd, unix.EPOLL_CTL_ADD, wakeFD, &ev); err != nil {
-		unix.Close(epfd)
-		return nil, err
-	}
-	return &epollFallback{epfd: epfd}, nil
-}
-
-// epollInterest is a copy of interest in epoll_linux.go.
-func epollInterest(flags uint32) uint32 {
-	ev := uint32(unix.EPOLLRDHUP | unix.EPOLLET)
-	if flags&Readable != 0 {
-		ev |= unix.EPOLLIN
-	}
-	if flags&Writable != 0 {
-		ev |= unix.EPOLLOUT
-	}
-	return ev
-}
-
-func (e *epollFallback) add(fd int, flags uint32) error {
-	ev := unix.EpollEvent{Events: epollInterest(flags), Fd: int32(fd)}
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_ADD, fd, &ev)
-}
-
-func (e *epollFallback) mod(fd int, flags uint32) error {
-	ev := unix.EpollEvent{Events: epollInterest(flags), Fd: int32(fd)}
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_MOD, fd, &ev)
-}
-
-func (e *epollFallback) del(fd int) error {
-	var ev unix.EpollEvent // non-nil for kernels < 2.6.9
-	return unix.EpollCtl(e.epfd, unix.EPOLL_CTL_DEL, fd, &ev)
-}
-
-func (e *epollFallback) close() error {
-	return unix.Close(e.epfd)
-}
-
-// wait is a copy of Poller.Wait in epoll_linux.go; evs is already capped.
-func (e *epollFallback) wait(evs []Event, timeout time.Duration, w *waker) (int, error) {
-	msec := epollMs(timeout)
-	var deadline time.Time
-	if timeout > 0 {
-		deadline = time.Now().Add(timeout)
-	}
-	var n int
-	for {
-		var err error
-		n, err = unix.EpollWait(e.epfd, e.kevs[:len(evs)], msec)
-		if err == nil {
-			break
-		}
-		if err != unix.EINTR {
-			return 0, err
-		}
-		if timeout > 0 {
-			rem := time.Until(deadline)
-			if rem <= 0 {
-				return 0, nil
-			}
-			msec = epollMs(rem)
-		}
-	}
-	out := 0
-	wfd := int32(w.fd)
-	for i := 0; i < n; i++ {
-		kev := &e.kevs[i]
-		if kev.Fd == wfd {
-			w.drain()
-			continue
-		}
-		var f uint32
-		if kev.Events&(unix.EPOLLIN|unix.EPOLLPRI) != 0 {
-			f |= Readable
-		}
-		if kev.Events&unix.EPOLLOUT != 0 {
-			f |= Writable
-		}
-		if kev.Events&(unix.EPOLLHUP|unix.EPOLLRDHUP) != 0 {
-			f |= Hangup
-		}
-		if kev.Events&unix.EPOLLERR != 0 {
-			f |= Error
-		}
-		evs[out] = Event{FD: kev.Fd, Flags: f}
-		out++
-	}
-	return out, nil
-}
-
-// epollMs is a copy of durationToMs in epoll_linux.go: negative means block
-// forever (-1); positive durations round up to a whole millisecond, capped
-// at math.MaxInt32.
-func epollMs(d time.Duration) int {
-	if d < 0 {
-		return -1
-	}
-	ms := d / time.Millisecond
-	if d%time.Millisecond != 0 {
-		ms++
-	}
-	if ms > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int(ms)
 }
