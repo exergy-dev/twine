@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // recProto records DataReceived calls and optionally aborts on the first.

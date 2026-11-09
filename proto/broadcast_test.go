@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // member joins the group on connect and leaves it in ConnectionLost, as

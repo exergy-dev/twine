@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/robert-malhotra/twine"
-	"github.com/robert-malhotra/twine/proto"
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/proto"
 )
 
 // lineClient prints every line it receives and greets the server.

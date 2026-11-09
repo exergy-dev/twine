@@ -23,8 +23,8 @@ import (
 	"runtime/trace"
 	"syscall"
 
-	"github.com/robert-malhotra/twine"
-	"github.com/robert-malhotra/twine/proto"
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/proto"
 )
 
 // client is one chat participant.

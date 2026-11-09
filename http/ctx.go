@@ -3,7 +3,7 @@ package http
 import (
 	"net"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // RequestCtx carries one request and its response. There is one RequestCtx

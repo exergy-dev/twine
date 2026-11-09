@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // startEngine runs an engine with n loops and stops it when the test ends.

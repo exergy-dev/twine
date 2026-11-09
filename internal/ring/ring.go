@@ -22,7 +22,7 @@
 package ring
 
 import (
-	"github.com/robert-malhotra/twine/internal/slab"
+	"github.com/exergy-dev/twine/internal/slab"
 	"golang.org/x/sys/unix"
 )
 

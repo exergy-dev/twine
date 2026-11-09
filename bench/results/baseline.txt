@@ -6,7 +6,7 @@
 # 2026-11-06T17:32:43-05:00 load: 8.03 11.45 12.44 1/781 579006
 goos: linux
 goarch: amd64
-pkg: github.com/robert-malhotra/twine
+pkg: github.com/exergy-dev/twine
 cpu: Intel(R) Core(TM) i9-14900KF
 BenchmarkTimers1M/insert+cancel-32         	32468624	        36.15 ns/op	      80 B/op	       1 allocs/op
 BenchmarkTimers1M/insert+cancel-32         	35175958	        33.83 ns/op	      80 B/op	       1 allocs/op
@@ -69,14 +69,14 @@ BenchmarkFutureResolve/offloop-32          	 4410649	       268.5 ns/op	     176
 BenchmarkFutureResolve/offloop-32          	 4408809	       266.7 ns/op	     176 B/op	       3 allocs/op
 BenchmarkFutureResolve/offloop-32          	 4392772	       268.9 ns/op	     176 B/op	       3 allocs/op
 PASS
-ok  	github.com/robert-malhotra/twine	100.379s
+ok  	github.com/exergy-dev/twine	100.379s
 # end load: 6.84 10.28 11.93 1/775 585095
 
 ########## 2. Root micro-benchmarks, 17:20 snapshot of the core (pooled Timers) + the lost-wakeup fix, -count=5
  17:24:36 up 16:17,  1 user,  load average: 12.47, 27.67, 16.09
 goos: linux
 goarch: amd64
-pkg: github.com/robert-malhotra/twine
+pkg: github.com/exergy-dev/twine
 cpu: Intel(R) Core(TM) i9-14900KF
 BenchmarkTimers1M/insert+cancel-32         	121175343	         9.647 ns/op	       0 B/op	       0 allocs/op
 BenchmarkTimers1M/insert+cancel-32         	121746475	         9.734 ns/op	       0 B/op	       0 allocs/op
@@ -139,14 +139,14 @@ BenchmarkFutureResolve/offloop-32          	 4005345	       275.2 ns/op	     176
 BenchmarkFutureResolve/offloop-32          	 4364216	       272.7 ns/op	     176 B/op	       3 allocs/op
 BenchmarkFutureResolve/offloop-32          	 4325902	       272.5 ns/op	     176 B/op	       3 allocs/op
 PASS
-ok  	github.com/robert-malhotra/twine	99.894s
+ok  	github.com/exergy-dev/twine	99.894s
  17:26:17 up 16:19,  1 user,  load average: 9.82, 22.75, 15.52
 
 ########## 3. bench/ harness, live tree, -benchmem -count=1 (EchoIdle 50K rows in this block were slowed by client TIME_WAIT; superseded by block 4)
 # 2026-11-06T17:43:02-05:00 load: 0.10 5.00 9.36 1/753 595531
 goos: linux
 goarch: amd64
-pkg: github.com/robert-malhotra/twine/bench
+pkg: github.com/exergy-dev/twine/bench
 cpu: Intel(R) Core(TM) i9-14900KF
 BenchmarkEchoSmall/twine-32    	    2127	    534713 ns/op	         0.6231 cpu-util	   1871317 msgs/s	    233915 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    4620 B/op	       2 allocs/op
 BenchmarkEchoSmall/goroutine-32         	    1345	    854952 ns/op	         0.5371 cpu-util	   1170296 msgs/s	       819.2 p50-µs	      2032 p99-µs	    7257 B/op	       3 allocs/op
@@ -171,14 +171,14 @@ BenchmarkEchoIdle/goroutine-32                    	       1	2461201715 ns/op	   
 BenchmarkEchoIdle/gnet-32                         	       1	1975515461 ns/op	       387.5 go-B/conn	       420.2 heap-B/conn	       361.3 rss-B/conn	         0.3613 rss-GB@1M	       -32.77 stack-B/conn	 6573632 B/op	   70691 allocs/op
 BenchmarkEchoIdle/raw-baseline-32                 	       1	1479036490 ns/op	       -79.46 go-B/conn	        18.84 heap-B/conn	       -81.92 rss-B/conn	        -0.08192 rss-GB@1M	       -98.30 stack-B/conn	 2269864 B/op	   30234 allocs/op
 PASS
-ok  	github.com/robert-malhotra/twine/bench	54.405s
+ok  	github.com/exergy-dev/twine/bench	54.405s
 # end load: 8.51 6.49 9.61 1/751 595897
 # EchoIdle at 50000 connections
 BenchmarkEchoIdle/twine-32         	       1	70186925106 ns/op	       762.0 go-B/conn	       672.9 heap-B/conn	       694.1 rss-B/conn	         0.6941 rss-GB@1M	        89.13 stack-B/conn	54264048 B/op	  401760 allocs/op
 BenchmarkEchoIdle/goroutine-32     	       1	79555352481 ns/op	     19277 go-B/conn	     17215 heap-B/conn	     11503 rss-B/conn	        11.50 rss-GB@1M	      2062 stack-B/conn	865862784 B/op	  500912 allocs/op
 BenchmarkEchoIdle/gnet-32          	       1	2441515805 ns/op	       396.2 go-B/conn	       398.8 heap-B/conn	       397.6 rss-B/conn	         0.3976 rss-GB@1M	        -2.621 stack-B/conn	29786800 B/op	  350906 allocs/op
 BenchmarkEchoIdle/raw-baseline-32  	       1	2859854970 ns/op	         1.966 go-B/conn	        17.04 heap-B/conn	         2.294 rss-B/conn	         0.002294 rss-GB@1M	       -15.07 stack-B/conn	11226824 B/op	  150242 allocs/op
-ok  	github.com/robert-malhotra/twine/bench	155.082s
+ok  	github.com/exergy-dev/twine/bench	155.082s
 # end load: 0.71 3.95 8.17 1/756 596572
 
 ########## 4. EchoIdle with linger-0 client close, 10000 and 50000 connections
@@ -187,12 +187,12 @@ BenchmarkEchoIdle/twine-32         	       1	1735936255 ns/op	       844.6 go-B/
 BenchmarkEchoIdle/goroutine-32     	       1	3473371415 ns/op	     19715 go-B/conn	     17257 heap-B/conn	      9803 rss-B/conn	         9.803 rss-GB@1M	      2458 stack-B/conn	175121824 B/op	  121395 allocs/op
 BenchmarkEchoIdle/gnet-32          	       1	1987128806 ns/op	       418.6 go-B/conn	       461.2 heap-B/conn	       404.7 rss-B/conn	         0.4047 rss-GB@1M	       -42.60 stack-B/conn	 6574192 B/op	   70699 allocs/op
 BenchmarkEchoIdle/raw-baseline-32  	       1	2421256717 ns/op	         9.011 go-B/conn	        18.84 heap-B/conn	         3.686 rss-B/conn	         0.003686 rss-GB@1M	        -9.830 stack-B/conn	 2269880 B/op	   30235 allocs/op
-ok  	github.com/robert-malhotra/twine/bench	9.634s
+ok  	github.com/exergy-dev/twine/bench	9.634s
 BenchmarkEchoIdle/twine-32         	       1	3172627006 ns/op	       770.0 go-B/conn	       677.0 heap-B/conn	       712.9 rss-B/conn	         0.7129 rss-GB@1M	        93.06 stack-B/conn	53698240 B/op	  401749 allocs/op
 BenchmarkEchoIdle/goroutine-32     	       1	14861256363 ns/op	     19273 go-B/conn	     17213 heap-B/conn	     10536 rss-B/conn	        10.54 rss-GB@1M	      2060 stack-B/conn	871492784 B/op	  601241 allocs/op
 BenchmarkEchoIdle/gnet-32          	       1	15864236745 ns/op	       404.0 go-B/conn	       413.2 heap-B/conn	       406.8 rss-B/conn	         0.4068 rss-GB@1M	        -9.175 stack-B/conn	29792768 B/op	  350916 allocs/op
 BenchmarkEchoIdle/raw-baseline-32  	       1	2681841933 ns/op	         9.830 go-B/conn	        17.04 heap-B/conn	        18.84 rss-B/conn	         0.01884 rss-GB@1M	        -7.209 stack-B/conn	11226792 B/op	  150240 allocs/op
-ok  	github.com/robert-malhotra/twine/bench	36.623s
+ok  	github.com/exergy-dev/twine/bench	36.623s
 # end load: 0.14 2.62 7.14 1/741 597512
 
 ########## 5. Separate processes, server pinned to cpus 0-15, client to 16-31 (bench/echoclient, bench/httpclient, 5 s each)
@@ -239,7 +239,7 @@ STUCK after 143 calls: task not run in 2s (Wakeups=11 Coalesced=132 TasksRun=127
 ########## 9. bench/ harness, -benchmem -count=5 after the linger-0 client close fix (this is the make bench configuration), 2026-11-06
 goos: linux
 goarch: amd64
-pkg: github.com/robert-malhotra/twine/bench
+pkg: github.com/exergy-dev/twine/bench
 cpu: Intel(R) Core(TM) i9-14900KF
 BenchmarkEchoSmall/twine-32    	    1964	    531582 ns/op	         0.6265 cpu-util	   1882453 msgs/s	    235307 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    5004 B/op	       2 allocs/op
 BenchmarkEchoSmall/twine-32    	    2085	    542708 ns/op	         0.6179 cpu-util	   1843793 msgs/s	    230474 msgs/s/loop	       491.5 p50-µs	      1311 p99-µs	    4692 B/op	       2 allocs/op
@@ -352,14 +352,14 @@ BenchmarkEchoIdle/raw-baseline-32                 	       1	2418632971 ns/op	   
 BenchmarkEchoIdle/raw-baseline-32                 	       1	2447999774 ns/op	       -36.86 go-B/conn	        18.84 heap-B/conn	       -37.27 rss-B/conn	        -0.03727 rss-GB@1M	       -55.71 stack-B/conn	 2269864 B/op	   30234 allocs/op
 BenchmarkEchoIdle/raw-baseline-32                 	       1	2459337558 ns/op	        12.29 go-B/conn	        18.84 heap-B/conn	        12.70 rss-B/conn	         0.01270 rss-GB@1M	        -6.554 stack-B/conn	 2269864 B/op	   30234 allocs/op
 PASS
-ok  	github.com/robert-malhotra/twine/bench	264.813s
-?   	github.com/robert-malhotra/twine/bench/echo_gnet	[no test files]
-?   	github.com/robert-malhotra/twine/bench/echo_goroutine	[no test files]
-?   	github.com/robert-malhotra/twine/bench/echo_twine	[no test files]
-?   	github.com/robert-malhotra/twine/bench/echoclient	[no test files]
-?   	github.com/robert-malhotra/twine/bench/http_nethttp	[no test files]
-?   	github.com/robert-malhotra/twine/bench/http_twine	[no test files]
-?   	github.com/robert-malhotra/twine/bench/httpclient	[no test files]
+ok  	github.com/exergy-dev/twine/bench	264.813s
+?   	github.com/exergy-dev/twine/bench/echo_gnet	[no test files]
+?   	github.com/exergy-dev/twine/bench/echo_goroutine	[no test files]
+?   	github.com/exergy-dev/twine/bench/echo_twine	[no test files]
+?   	github.com/exergy-dev/twine/bench/echoclient	[no test files]
+?   	github.com/exergy-dev/twine/bench/http_nethttp	[no test files]
+?   	github.com/exergy-dev/twine/bench/http_twine	[no test files]
+?   	github.com/exergy-dev/twine/bench/httpclient	[no test files]
 
 real	4m25.115s
 user	9m45.730s

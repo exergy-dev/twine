@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/robert-malhotra/twine/bench"
+	"github.com/exergy-dev/twine/bench"
 	"golang.org/x/sys/unix"
 )
 

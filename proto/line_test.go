@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 func newLR(t *testing.T, lr *LineReceiver) (*fakeTransport, *collector) {

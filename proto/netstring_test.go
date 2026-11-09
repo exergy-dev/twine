@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 func newNS(ns *NetstringReceiver) (*fakeTransport, *collector) {

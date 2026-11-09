@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // wouldBlockError is the type of errWouldBlock. It is a net.Error whose

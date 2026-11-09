@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
-	twtls "github.com/robert-malhotra/twine/tls"
+	"github.com/exergy-dev/twine"
+	twtls "github.com/exergy-dev/twine/tls"
 )
 
 // kinfo is what a server-side protocol reports about its connection.

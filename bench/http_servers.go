@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/robert-malhotra/twine"
-	twhttp "github.com/robert-malhotra/twine/http"
+	"github.com/exergy-dev/twine"
+	twhttp "github.com/exergy-dev/twine/http"
 )
 
 // HelloBody is the plaintext response body (the TechEmpower "plaintext"

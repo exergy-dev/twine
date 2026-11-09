@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // lineEcho replies to each line with "echo: <line>".

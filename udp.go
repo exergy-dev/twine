@@ -3,8 +3,8 @@ package twine
 import (
 	"net"
 
-	"github.com/robert-malhotra/twine/internal/poll"
-	"github.com/robert-malhotra/twine/internal/sock"
+	"github.com/exergy-dev/twine/internal/poll"
+	"github.com/exergy-dev/twine/internal/sock"
 	"golang.org/x/sys/unix"
 )
 

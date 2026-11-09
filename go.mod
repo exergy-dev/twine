@@ -1,4 +1,4 @@
-module github.com/robert-malhotra/twine
+module github.com/exergy-dev/twine
 
 go 1.24
 

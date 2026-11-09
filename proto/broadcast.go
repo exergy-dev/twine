@@ -3,7 +3,7 @@ package proto
 import (
 	"sync"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // Broadcast is a loop-aware fan-out group (design Section 8 rule 4). Members

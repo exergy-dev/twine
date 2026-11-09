@@ -4,7 +4,7 @@ import (
 	nethttp "net/http"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // dateState is the per-loop cached "Date: ...\r\n" header line. It is

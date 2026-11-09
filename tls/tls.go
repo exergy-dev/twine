@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // ErrHandshakeTimeout is the handshake error when HandshakeTimeout expires

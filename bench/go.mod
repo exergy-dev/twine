@@ -1,10 +1,10 @@
-module github.com/robert-malhotra/twine/bench
+module github.com/exergy-dev/twine/bench
 
 go 1.24
 
 require (
 	github.com/panjf2000/gnet/v2 v2.10.0
-	github.com/robert-malhotra/twine v0.0.0
+	github.com/exergy-dev/twine v0.0.0
 	golang.org/x/sys v0.30.0
 )
 
@@ -17,4 +17,4 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
-replace github.com/robert-malhotra/twine => ../
+replace github.com/exergy-dev/twine => ../

@@ -4,7 +4,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // fakeTransport is an in-memory twine.Transport for parser unit tests. It

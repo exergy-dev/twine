@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // Default limits.

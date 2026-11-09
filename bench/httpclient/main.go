@@ -14,7 +14,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/robert-malhotra/twine/bench"
+	"github.com/exergy-dev/twine/bench"
 )
 
 func main() {

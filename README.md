@@ -72,9 +72,11 @@ func main() {
 
 Build tags: `twine_debug` (assertions, buffer poisoning, Future stacks) and
 `twine_uring` (Linux io_uring readiness backend; falls back to epoll when
-io_uring is unavailable). kTLS data-path offload is not available because
-`crypto/tls` does not export record-layer keys; `tls.KernelOffload(true)`
-probes the kernel and falls back to the memory BIO.
+io_uring is unavailable). `tls.KernelOffload(true)` enables kTLS data-path
+offload for TLS 1.3 AES-GCM connections on Linux (the record keys are read
+from `crypto/tls` by reflection, checked at runtime on every access); any
+mismatch, TLS 1.2, ChaCha20 or a kernel refusal falls back silently to the
+memory BIO. See `tls/doc.go` for the exact scope (server TX+RX, client TX).
 
 ## Ownership rules (short form)
 
