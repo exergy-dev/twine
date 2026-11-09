@@ -149,7 +149,10 @@ func (ctx *RequestCtx) UserValue() any { return ctx.user }
 // --- response --------------------------------------------------------------
 
 // SetStatus sets the response status code (default 200). Codes outside
-// 100..599 are sent as 500.
+// 200..599 are sent as 500: the response a Handler builds is always the
+// final one, and a 1xx interim response (100 Continue, 103 Early Hints)
+// cannot be sent from a Handler. The server answers Expect: 100-continue
+// itself.
 func (ctx *RequestCtx) SetStatus(code int) { ctx.status = code }
 
 // Status returns the response status code set so far.

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -62,6 +63,34 @@ func TestAdaptMux(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("404: %d", resp.StatusCode)
+	}
+}
+
+// TestAdaptEarlyHints runs the net/http Early Hints idiom: the 103 is
+// dropped and the final response is sent, without desynchronising a
+// pipelined request.
+func TestAdaptEarlyHints(t *testing.T) {
+	h := Adapt(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		w.Header().Add("Link", "</style.css>; rel=preload; as=style")
+		w.WriteHeader(nethttp.StatusEarlyHints)
+		w.WriteHeader(nethttp.StatusContinue)
+		io.WriteString(w, "page "+r.URL.Path)
+	}))
+	out, closed := serveOnce(t, testLoop(t), &Server{Handler: h},
+		"GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n")
+	br := bufio.NewReader(strings.NewReader(out))
+	for _, path := range []string{"/a", "/b"} {
+		resp, err := nethttp.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatalf("%s: %v\n%q", path, err, out)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 || string(body) != "page "+path || resp.Header.Get("Link") == "" {
+			t.Fatalf("%s: %d %q %v", path, resp.StatusCode, body, resp.Header)
+		}
+	}
+	if closed || strings.Contains(out, "103") {
+		t.Fatalf("closed=%v out=%q", closed, out)
 	}
 }
 

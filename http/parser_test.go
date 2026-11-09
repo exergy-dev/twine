@@ -136,6 +136,33 @@ func TestResponseHeaders(t *testing.T) {
 	}
 }
 
+// TestInterimStatusIs500 checks that a Handler setting a 1xx status gets a
+// 500 instead of an interim response that would leave the client waiting
+// and shift every later pipelined response.
+func TestInterimStatusIs500(t *testing.T) {
+	l := testLoop(t)
+	for _, code := range []int{99, 100, 103, 199, 600} {
+		s := &Server{Handler: func(ctx *RequestCtx) {
+			if ctx.IsMethod("POST") {
+				ctx.SetStatus(code)
+			}
+			ctx.WriteString("x")
+		}}
+		out, _ := serveOnce(t, l, s, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n")
+		br := bufio.NewReader(strings.NewReader(out))
+		for _, want := range []int{500, 200} {
+			resp, err := nethttp.ReadResponse(br, nil)
+			if err != nil {
+				t.Fatalf("status %d: %v\n%q", code, err, out)
+			}
+			io.Copy(io.Discard, resp.Body)
+			if resp.StatusCode != want {
+				t.Fatalf("status %d: got %d, want %d\n%q", code, resp.StatusCode, want, out)
+			}
+		}
+	}
+}
+
 // TestInvalidHeaderNamesDropped checks that a response header with an
 // empty or non-token name is dropped instead of corrupting the response.
 func TestInvalidHeaderNamesDropped(t *testing.T) {
