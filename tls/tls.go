@@ -12,6 +12,31 @@ import (
 // before the handshake completes.
 var ErrHandshakeTimeout = errors.New("tls: handshake timeout")
 
+// HandshakeError is the error passed to the OnHandshakeError hook, and the
+// rejection of a Connect Future, when a handshake fails: a certificate that
+// does not verify, no shared version or cipher suite, an alert from the
+// peer, a connection lost mid-handshake, or HandshakeTimeout expiring (Err
+// is then ErrHandshakeTimeout). errors.Is and errors.As see through it to
+// Err.
+type HandshakeError struct {
+	// Peer is the remote address of the connection.
+	Peer net.Addr
+	// Err is the cause: crypto/tls's handshake error, ErrHandshakeTimeout,
+	// io.EOF or the connection's error when it was lost mid-handshake.
+	Err error
+}
+
+// Error implements error.
+func (e *HandshakeError) Error() string {
+	if e.Peer == nil {
+		return "tls: handshake failed: " + e.Err.Error()
+	}
+	return "tls: handshake with " + e.Peer.String() + " failed: " + e.Err.Error()
+}
+
+// Unwrap returns Err.
+func (e *HandshakeError) Unwrap() error { return e.Err }
+
 // errNoCertificate is crypto/tls.Listen's error for a Config that cannot
 // serve a handshake.
 var errNoCertificate = errors.New("tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config")
@@ -39,7 +64,7 @@ func (f *factory) BuildProtocol(peer net.Addr) twine.Protocol {
 	if inner == nil {
 		inner = nopProtocol{}
 	}
-	t := &Transport{f: f, inner: inner}
+	t := &Transport{f: f, inner: inner, peer: peer}
 	return (*wrapper)(t)
 }
 
@@ -97,7 +122,8 @@ func Listen(e *twine.Engine, addr string, cfg *ctls.Config, inner twine.Factory,
 // Connect dials addr from loop l and runs a TLS client handshake. The Future
 // resolves with the *Transport (as a twine.Transport) after the handshake has
 // completed and inner.ConnectionMade has returned; it rejects with the dial
-// error, the handshake error, or ErrHandshakeTimeout. A nil cfg means a zero
+// error or a *HandshakeError (whose Err is ErrHandshakeTimeout when
+// HandshakeTimeout expired). A nil cfg means a zero
 // Config. When cfg.ServerName is empty and verification is enabled, a clone
 // of cfg is used with ServerName set to the host part of addr. Core dial
 // options are passed with WithDialOptions. Safe to call from any goroutine.

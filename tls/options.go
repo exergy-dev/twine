@@ -40,8 +40,11 @@ func KernelOffload(on bool) Option { return func(o *options) { o.kernelOffload =
 
 // OnHandshakeError registers fn to be called, on the connection's loop, when
 // a handshake fails (including timeouts and connections lost mid-handshake).
-// The inner protocol never sees such a connection: its ConnectionMade and
-// ConnectionLost are not called, and the underlying transport is aborted.
+// err is a *HandshakeError carrying the peer address. The inner protocol
+// never sees such a connection: its ConnectionMade and ConnectionLost are
+// not called, and the underlying transport is aborted. Without a hook each
+// failure is logged once at Warn level through the engine's logger, with the
+// peer address.
 func OnHandshakeError(fn func(err error)) Option {
 	return func(o *options) { o.onHandshakeError = fn }
 }
