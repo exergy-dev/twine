@@ -70,6 +70,8 @@ func (t *Timer) Scheduled() bool { return t.loc != locNone }
 // Wheel is a hierarchical timing wheel of 4 levels × 256 slots. Create one
 // with New. A Wheel must not be copied after first use.
 type Wheel struct {
+	dbg debugState // zero-size in release builds; first, so a trailing zero-size field is not padded
+
 	// Slot list sentinels: circular doubly-linked lists, FIFO by insertion.
 	wheel [levels][slots]Timer
 	// Occupancy bitmaps, one bit per slot, kept exact on every link/unlink.
