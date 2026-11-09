@@ -1,13 +1,20 @@
 // Package poll is a thin, allocation-free abstraction over the kernel
-// readiness APIs used by twine's event loops: epoll on Linux and kqueue on
-// darwin, dragonfly, freebsd, netbsd and openbsd.
+// readiness APIs used by twine's event loops: epoll on Linux (or io_uring
+// multishot poll with -tags twine_uring) and kqueue on darwin, dragonfly,
+// freebsd, netbsd and openbsd. Poller.Backend names the one in use.
 //
-// Both backends are edge-triggered (EPOLLET on Linux, EV_CLEAR on kqueue): a
+// Every backend is edge-triggered (EPOLLET on Linux, EV_CLEAR on kqueue): a
 // registered fd is reported once per readiness transition, so the caller must
 // read or write until EAGAIN before expecting another event for that fd.
 //
 // A Poller is owned by a single goroutine (the loop). Only Wake may be called
-// from other goroutines.
+// from other goroutines. A Poller must not be used after Close; only Close
+// itself may be repeated.
+//
+// Wait may return (0, nil) before its timeout without a Wake: a Wait
+// interrupted by a signal returns zero events (EINTR is never returned), and
+// on io_uring a completion that carries no event can end a timed Wait early.
+// Callers already tolerate such spurious wakeups by recomputing the timeout.
 //
 // Backend differences the caller must tolerate:
 //

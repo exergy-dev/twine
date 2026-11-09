@@ -127,47 +127,29 @@ func (p *Poller) Del(fd int) error {
 }
 
 // Wait blocks up to timeout (negative = forever, 0 = poll) and fills evs,
-// returning the number of events written. At most min(len(evs), 256) events
-// are returned per call; an empty evs is rejected with EINVAL.
+// returning the number of events written. At most min(len(evs), MaxEvents)
+// events are returned per call; an empty evs is rejected with EINVAL.
 //
 // The wakeup channel is consumed internally and never reported, so a Wait
-// woken only by Wake returns (0, nil). EINTR is retried internally (with the
-// remaining timeout) and never returned. READ and WRITE kevents for the same
-// fd are merged into one Event when adjacent. Wait does not allocate.
+// woken only by Wake returns (0, nil). A Wait interrupted by a signal returns
+// (0, nil) early; EINTR is never returned. READ and WRITE kevents for the
+// same fd are merged into one Event when adjacent. Wait does not allocate.
 func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
-	max := len(evs)
-	if max == 0 {
+	if len(evs) == 0 {
 		return 0, unix.EINVAL
 	}
-	if max > MaxEvents {
-		max = MaxEvents
-	}
+	evs = evs[:min(len(evs), MaxEvents)]
 	var ts *unix.Timespec
-	var deadline time.Time
 	if timeout >= 0 {
 		p.ts = unix.NsecToTimespec(int64(timeout))
 		ts = &p.ts
-		if timeout > 0 {
-			deadline = time.Now().Add(timeout)
-		}
 	}
-	var n int
-	for {
-		var err error
-		n, err = unix.Kevent(p.kq, nil, p.kevs[:max], ts)
-		if err == nil {
-			break
+	n, err := unix.Kevent(p.kq, nil, p.kevs[:len(evs)], ts)
+	if err != nil {
+		if err == unix.EINTR {
+			return 0, nil // interrupted by a signal: a spurious wakeup
 		}
-		if err != unix.EINTR {
-			return 0, err
-		}
-		if timeout > 0 {
-			rem := time.Until(deadline)
-			if rem <= 0 {
-				return 0, nil
-			}
-			p.ts = unix.NsecToTimespec(int64(rem))
-		}
+		return 0, err
 	}
 	out := 0
 	for i := 0; i < n; i++ {
@@ -224,3 +206,6 @@ func (p *Poller) Close() error {
 	}
 	return err
 }
+
+// Backend names the kernel interface in use: "kqueue".
+func (p *Poller) Backend() string { return "kqueue" }
