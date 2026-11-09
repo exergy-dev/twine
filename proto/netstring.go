@@ -14,7 +14,7 @@ const DefaultMaxNetstring = 1 << 20
 // "len:data," framing (http://cr.yp.to/proto/netstrings.txt) and calls
 // StringReceived for each payload. Embed it and set the callback fields.
 //
-// A declared length above MaxLength aborts with twine.ErrFrameTooLarge as
+// A declared length above MaxLength aborts with ErrFrameTooLarge as
 // soon as the length digits exceed it. Malformed input (an empty length, a
 // non-digit before ':', a leading zero in a multi-digit length, or a byte
 // other than ',' after the payload) aborts with ErrMalformedNetstring. In
@@ -101,7 +101,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 				ns.n = ns.n*10 + int(c-'0')
 				ns.digits++
 				if ns.n > max {
-					ns.fail(twine.ErrFrameTooLarge)
+					ns.fail(ErrFrameTooLarge)
 					return
 				}
 			case c == ':' && ns.digits > 0:

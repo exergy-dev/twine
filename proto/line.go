@@ -23,7 +23,7 @@ const DefaultMaxLineLength = 16 << 10
 // (a trailing '\r' then stays in the line).
 //
 // A line longer than MaxLineLength (excluding the delimiter) aborts the
-// connection and ConnectionLost reports twine.ErrLineTooLong. The check is
+// connection and ConnectionLost reports ErrLineTooLong. The check is
 // applied to complete lines and to a pending partial line once it is longer
 // than MaxLineLength+len(Delimiter)-1 bytes, so an endless line is caught
 // without waiting for its delimiter.
@@ -147,7 +147,7 @@ func (lr *LineReceiver) DataReceived(b []byte) {
 			if i < 0 {
 				lr.buf = append(lr.buf, b...)
 				if len(lr.buf) > max+len(d)-1 {
-					lr.fail(twine.ErrLineTooLong)
+					lr.fail(ErrLineTooLong)
 				}
 				return
 			}
@@ -156,7 +156,7 @@ func (lr *LineReceiver) DataReceived(b []byte) {
 			pos = i + len(d)
 		}
 		if len(line) > max {
-			lr.fail(twine.ErrLineTooLong)
+			lr.fail(ErrLineTooLong)
 			return
 		}
 		// Detach the buffer before the callback so a re-entrant
@@ -199,14 +199,14 @@ func (lr *LineReceiver) parse(b, d []byte, max int) {
 		i := bytes.Index(b, d)
 		if i < 0 {
 			if len(b) > max+len(d)-1 {
-				lr.fail(twine.ErrLineTooLong)
+				lr.fail(ErrLineTooLong)
 				return
 			}
 			lr.buf = append(lr.buf, b...)
 			return
 		}
 		if i > max {
-			lr.fail(twine.ErrLineTooLong)
+			lr.fail(ErrLineTooLong)
 			return
 		}
 		line := b[:i]
