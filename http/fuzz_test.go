@@ -8,8 +8,11 @@ import (
 	"net/textproto"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/exergy-dev/twine"
 )
 
 // validCorpus are requests both parsers must accept with identical results.
@@ -43,13 +46,15 @@ func FuzzParseRequest(f *testing.F) {
 		{validCorpus[7], 10}, // absolute form
 		{"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999\r\n\r\n", 0},
 		{"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nhi", 70},
+		{strings.Repeat(validCorpus[0], 5) + validCorpus[3], 50}, // pipelined past the yield
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s.raw), s.split)
 	}
+	l := testLoop(f)
 	f.Fuzz(func(t *testing.T, data []byte, split uint16) {
 		checkParse(t, data, true)
-		checkSplitInvariance(t, data, int(split))
+		checkSplitInvariance(t, l, data, int(split))
 	})
 }
 
@@ -189,33 +194,67 @@ func fuzzHandler(ctx *RequestCtx) {
 	ctx.Write(ctx.Body())
 }
 
-// feed runs data through a connection in up to two chunks.
-func feed(data []byte, split int) (string, bool) {
-	s := &Server{Handler: fuzzHandler}
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
-	if split <= 0 || split >= len(data) {
-		c.DataReceived(data)
+// feedMode selects how feed delivers its input.
+type feedMode struct {
+	name    string
+	maxPipe int  // Server.MaxPipelinedRequests (0 = default)
+	split   bool // deliver in two reads
+	eager   bool // deliver the second read without waiting for a pending continuation
+}
+
+// feed runs data through a fresh connection on l in up to two chunks and
+// returns the responses (without 100 Continue and Date lines, which depend
+// on timing) and whether the server closed.
+func feed(t *testing.T, l *twine.Loop, m feedMode, data []byte, split int) (string, bool) {
+	t.Helper()
+	h := newHarness(t, l, &Server{Handler: fuzzHandler, MaxPipelinedRequests: m.maxPipe})
+	if !m.split || split <= 0 || split >= len(data) {
+		h.send(data)
 	} else {
 		// Copy each chunk so the protocol cannot depend on adjacency.
-		c.DataReceived(append([]byte(nil), data[:split]...))
-		c.DataReceived(append([]byte(nil), data[split:]...))
+		a := append([]byte(nil), data[:split]...)
+		b := append([]byte(nil), data[split:]...)
+		if m.eager {
+			onLoop(t, l, func() {
+				h.c.DataReceived(a)
+				h.c.DataReceived(b)
+			})
+			h.settle()
+		} else {
+			h.send(a, b)
+		}
 	}
-	out := strings.ReplaceAll(ft.String(), "HTTP/1.1 100 Continue\r\n\r\n", "")
-	return out, ft.closing
+	out := strings.ReplaceAll(h.out(), "HTTP/1.1 100 Continue\r\n\r\n", "")
+	out = dateLine.ReplaceAllString(out, "")
+	closing := h.closing()
+	h.lose()
+	return out, closing
+}
+
+var dateLine = regexp.MustCompile(`\r\nDate: [^\r]*`)
+
+// splitModes are compared against one read with the default limits. A
+// pipelining limit of 2 makes most multi-request inputs yield to the loop.
+var splitModes = []feedMode{
+	{name: "whole, pipeline limit 2", maxPipe: 2},
+	{name: "split", split: true},
+	{name: "split, pipeline limit 2", maxPipe: 2, split: true},
+	{name: "split, pipeline limit 2, read while yielding", maxPipe: 2, split: true, eager: true},
 }
 
 // checkSplitInvariance requires the same responses however the bytes are
-// split across reads.
-func checkSplitInvariance(t *testing.T, data []byte, split int) {
+// split across reads and however often the connection yields.
+func checkSplitInvariance(t *testing.T, l *twine.Loop, data []byte, split int) {
 	t.Helper()
-	whole, wc := feed(data, -1)
+	whole, wc := feed(t, l, feedMode{}, data, -1)
 	if len(data) > 0 {
 		split %= len(data) + 1
 	}
-	parts, pc := feed(data, split)
-	if whole != parts || wc != pc {
-		t.Fatalf("split at %d changes output:\nwhole (close=%v) %q\nsplit (close=%v) %q", split, wc, whole, pc, parts)
+	for _, m := range splitModes {
+		parts, pc := feed(t, l, m, data, split)
+		if whole != parts || wc != pc {
+			t.Fatalf("%s at %d changes output:\nwhole (close=%v) %q\nthis  (close=%v) %q", m.name, split, wc, whole, pc, parts)
+		}
 	}
 	for _, line := range strings.Split(whole, "\r\n") {
 		if strings.HasPrefix(line, "HTTP/1.1 ") && len(line) < 12 {

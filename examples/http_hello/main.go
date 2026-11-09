@@ -2,9 +2,6 @@
 //
 //	go run ./examples/http_hello -addr :8080 -loops 4
 //	curl -i localhost:8080/
-//
-// With --trace=out.trace it records a runtime/trace until it is stopped
-// with Ctrl-C (view with `go tool trace out.trace`).
 package main
 
 import (
@@ -13,36 +10,21 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"runtime/trace"
 	"syscall"
 
 	"github.com/exergy-dev/twine"
-	"github.com/exergy-dev/twine/http"
+	twhttp "github.com/exergy-dev/twine/http"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	loops := flag.Int("loops", 0, "event loops (0 = GOMAXPROCS)")
-	traceFile := flag.String("trace", "", "write a runtime/trace to this file")
 	flag.Parse()
 
-	if *traceFile != "" {
-		f, err := os.Create(*traceFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer func() { _ = f.Close() }()
-		if err := trace.Start(f); err != nil {
-			_ = f.Close()
-			log.Fatal(err) //nolint:gocritic // deferred close already handled above
-		}
-		defer trace.Stop()
-	}
-
 	hello := []byte("Hello, World!")
-	srv := &http.Server{
+	srv := &twhttp.Server{
 		Name: "twine",
-		Handler: func(ctx *http.RequestCtx) {
+		Handler: func(ctx *twhttp.RequestCtx) {
 			ctx.SetContentType("text/plain")
 			_, _ = ctx.Write(hello)
 		},

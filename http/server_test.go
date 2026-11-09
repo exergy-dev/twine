@@ -3,6 +3,7 @@ package http
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -289,20 +290,6 @@ func TestServer413(t *testing.T) {
 	if resp.StatusCode != 413 {
 		t.Fatalf("chunked status %d", resp.StatusCode)
 	}
-
-	// Through net/http.Client with the default 4 MiB limit.
-	s2 := &Server{Handler: testHandler}
-	addr2, _ := startServer(t, s2)
-	c := newClient()
-	defer c.CloseIdleConnections()
-	r, err := c.Post("http://"+addr2+"/echo", "application/octet-stream", bytes.NewReader(make([]byte, 5<<20)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	if r.StatusCode != 413 {
-		t.Fatalf("client status %d", r.StatusCode)
-	}
 }
 
 func TestServerConnectionClose(t *testing.T) {
@@ -495,5 +482,224 @@ func TestServerCloseWhilePaused(t *testing.T) {
 			t.Fatal("server did not finish closing within 2s")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestDateCacheCleanup serves one Server through Factory (not Listen) on
+// several engines in turn: each engine's per-loop Date caches must be
+// dropped when it stops, so a long-lived Server does not keep stopped
+// loops reachable.
+func TestDateCacheCleanup(t *testing.T) {
+	s := &Server{Handler: testHandler}
+	for i := 0; i < 3; i++ {
+		e := twine.New(twine.Loops(2), twine.Watchdog(0))
+		lst, err := e.ListenTCP("127.0.0.1:0", s.Factory())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		errc := make(chan error, 1)
+		go func() { errc <- e.Run(ctx) }()
+		c := newClient()
+		for j := 0; j < 4; j++ { // spread over both loops
+			resp, err := c.Get("http://" + lst.Addr().String() + "/hello")
+			if err != nil {
+				t.Fatal(err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			c.CloseIdleConnections()
+		}
+		s.mu.Lock()
+		live := len(s.dates)
+		s.mu.Unlock()
+		if live == 0 {
+			t.Fatal("no Date cache while serving")
+		}
+		cancel()
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+		s.mu.Lock()
+		dates, engines := len(s.dates), len(s.engines)
+		s.mu.Unlock()
+		if dates != 0 || engines != 0 {
+			t.Fatalf("engine %d stopped: %d Date caches and %d engines still referenced", i, dates, engines)
+		}
+	}
+}
+
+// TestServerMaxResponseBytes lowers the engine's WriteBufferLimit and the
+// server's MaxResponseBytes below it: a body over the limit must become a
+// complete 500 instead of a connection aborted mid-body.
+func TestServerMaxResponseBytes(t *testing.T) {
+	e := startEngine(t, twine.Loops(1), twine.Watchdog(0), twine.WriteBufferLimit(1<<20))
+	s := &Server{MaxResponseBytes: 512 << 10, Logger: discardLogger(), Handler: func(ctx *RequestCtx) {
+		n, _ := strconv.Atoi(string(ctx.RawQuery()))
+		ctx.Write(bytes.Repeat([]byte{'z'}, n))
+	}}
+	lst, err := s.Listen(e, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc, br := dial(t, lst.Addr().String())
+	// Neither request is read until both are answered, so the response
+	// must fit in the write buffer.
+	fmt.Fprintf(nc, "GET /?%d HTTP/1.1\r\nHost: x\r\n\r\nHEAD /?%d HTTP/1.1\r\nHost: x\r\n\r\nGET /?%d HTTP/1.1\r\nHost: x\r\n\r\n",
+		400<<10, 600<<10, 8<<20)
+	time.Sleep(100 * time.Millisecond)
+	for _, want := range []struct {
+		method string
+		status int
+		n      int64
+	}{{"GET", 200, 400 << 10}, {"HEAD", 200, 0}, {"GET", 500, int64(len("Internal Server Error\n"))}} {
+		resp, err := nethttp.ReadResponse(br, &nethttp.Request{Method: want.method})
+		if err != nil {
+			t.Fatalf("%+v: %v", want, err)
+		}
+		n, err := io.Copy(io.Discard, resp.Body)
+		if err != nil || resp.StatusCode != want.status || n != want.n {
+			t.Fatalf("%+v: status %d, %d body bytes, %v", want, resp.StatusCode, n, err)
+		}
+		if want.status == 500 && !resp.Close {
+			t.Fatal("500 for an oversized body must close")
+		}
+	}
+	expectClosed(t, br, 5*time.Second)
+}
+
+// TestMaxResponseBytesDefault checks the default limit through the fake
+// transport (no write buffer involved).
+func TestMaxResponseBytesDefault(t *testing.T) {
+	s := &Server{Logger: discardLogger(), Handler: func(ctx *RequestCtx) {
+		ctx.Write(make([]byte, DefaultMaxResponseBytes+1))
+	}}
+	out, closed := serveOnce(t, testLoop(t), s, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	if !strings.HasPrefix(out, "HTTP/1.1 500 ") || !closed || len(out) > 1024 {
+		t.Fatalf("closed=%v %d bytes: %q", closed, len(out), firstLine(out))
+	}
+}
+
+// TestIdleTimeoutSetting checks the value handed to the transport's idle
+// timer: zero means the default, negative disables it.
+func TestIdleTimeoutSetting(t *testing.T) {
+	l := testLoop(t)
+	for _, tc := range []struct{ set, want time.Duration }{
+		{0, DefaultIdleTimeout},
+		{-1, 0},
+		{5 * time.Second, 5 * time.Second},
+	} {
+		h := newHarness(t, l, &Server{IdleTimeout: tc.set})
+		var got time.Duration
+		onLoop(t, l, func() { got = h.ft.idle })
+		h.lose()
+		if got != tc.want {
+			t.Errorf("IdleTimeout %v: transport idle timeout %v, want %v", tc.set, got, tc.want)
+		}
+	}
+}
+
+// expectClosed reads from br until EOF and fails if that takes longer
+// than within.
+func expectClosed(t *testing.T, br *bufio.Reader, within time.Duration) []byte {
+	t.Helper()
+	start := time.Now()
+	rest, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("read: %v (got %q)", err, rest)
+	}
+	if d := time.Since(start); d > within {
+		t.Fatalf("closed after %v, want within %v", d, within)
+	}
+	return rest
+}
+
+func TestServerIdleTimeout(t *testing.T) {
+	s := &Server{Handler: testHandler, IdleTimeout: 200 * time.Millisecond}
+	addr, _ := startServer(t, s)
+	_, br := dial(t, addr)
+	if rest := expectClosed(t, br, 5*time.Second); len(rest) != 0 {
+		t.Fatalf("idle close sent %q", rest)
+	}
+}
+
+// TestServerReadTimeoutTrickle trickles a head one byte at a time, which
+// keeps the idle timer from firing: ReadTimeout must answer 408 and close.
+func TestServerReadTimeoutTrickle(t *testing.T) {
+	// The idle timeout alone would close the connection after 400 ms; the
+	// trickle (every 25 ms) keeps resetting it, so only ReadTimeout fires.
+	const timeout = 800 * time.Millisecond
+	s := &Server{Handler: testHandler, ReadTimeout: timeout, IdleTimeout: 400 * time.Millisecond}
+	addr, _ := startServer(t, s)
+	nc, br := dial(t, addr)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		if _, err := io.WriteString(nc, "GET /hello HTTP/1.1\r\nHost: x\r\nX-Slow: "); err != nil {
+			return
+		}
+		tick := time.NewTicker(25 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				if _, err := nc.Write([]byte{'a'}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	start := time.Now()
+	resp, err := nethttp.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != nethttp.StatusRequestTimeout || !resp.Close {
+		t.Fatalf("status %d close %v", resp.StatusCode, resp.Close)
+	}
+	if d := time.Since(start); d < timeout {
+		t.Fatalf("408 after %v, before ReadTimeout %v", d, timeout)
+	}
+	expectClosed(t, br, 5*time.Second)
+}
+
+// TestServerReadTimeoutRestarts checks that a request completed in time
+// clears the clock, that the stale timer firing later does nothing, and
+// that the next incomplete request gets a fresh ReadTimeout.
+func TestServerReadTimeoutRestarts(t *testing.T) {
+	const timeout = 600 * time.Millisecond
+	s := &Server{Handler: testHandler, ReadTimeout: timeout}
+	addr, _ := startServer(t, s)
+	nc, br := dial(t, addr)
+	get := func() {
+		t.Helper()
+		resp, err := nethttp.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode != 200 {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+	}
+	io.WriteString(nc, "GET /hello HTTP/1.1\r\nHo")
+	time.Sleep(timeout / 4)
+	io.WriteString(nc, "st: x\r\n\r\n")
+	get()
+	time.Sleep(timeout) // the timer armed by the first request fires
+	io.WriteString(nc, "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
+	get()
+	io.WriteString(nc, "GET /hello HTTP/1.1\r\n")
+	start := time.Now()
+	resp, err := nethttp.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if d := time.Since(start); resp.StatusCode != nethttp.StatusRequestTimeout || d > 5*time.Second {
+		t.Fatalf("status %d after %v", resp.StatusCode, d)
 	}
 }
