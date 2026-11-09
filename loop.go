@@ -97,7 +97,7 @@ func newLoop(e *Engine, id int) *Loop {
 		id:     id,
 		eng:    e,
 		cfg:    &e.cfg,
-		tasks:  mpsc.New(e.cfg.taskQueueSize),
+		tasks:  mpsc.New(taskQueueSize),
 		exitCh: make(chan struct{}),
 		epoch:  time.Now(),
 	}
@@ -139,8 +139,8 @@ func (l *Loop) InLoop() bool {
 }
 
 // CallFromThread schedules fn to run on the loop. It is safe from any
-// goroutine and never blocks: overflow beyond TaskQueueSize spills into a
-// mutex-guarded slice. Wakeups are coalesced so N concurrent calls cost at
+// goroutine and never blocks: when the lock-free ring is full, tasks spill
+// into a mutex-guarded slice. Wakeups are coalesced so N concurrent calls cost at
 // most one eventfd write. A call made from the loop itself appends to a local
 // slice and skips the atomics. After the loop has exited fn is dropped.
 func (l *Loop) CallFromThread(fn func()) {

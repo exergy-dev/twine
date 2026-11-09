@@ -204,6 +204,9 @@ func (e *Engine) ListenTCP(addr string, f Factory, opts ...ListenOption) (Listen
 	for _, o := range opts {
 		o(&lc)
 	}
+	if lc.backlog <= 0 {
+		lc.backlog = defaultBacklog
+	}
 	lst, err := e.newTCPListener(addr, f, lc)
 	if err != nil {
 		return nil, err

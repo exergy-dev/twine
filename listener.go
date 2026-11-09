@@ -129,14 +129,14 @@ func (c *conn) closeListenerFD() {
 	c.fd = -1
 }
 
-// handleAccept accepts until EAGAIN or MaxAcceptsPerEvent.
+// handleAccept accepts until EAGAIN or maxAcceptsPerEvent.
 func (l *Loop) handleAccept(c *conn) {
 	lst := c.lst
 	lfd := int(c.fd)
 	if lfd < 0 {
 		return
 	}
-	for i := 0; i < l.cfg.maxAcceptsPerEv; i++ {
+	for i := 0; i < maxAcceptsPerEvent; i++ {
 		fd, sa, err := sock.Accept(lfd)
 		if err != nil {
 			if err == unix.EAGAIN {
@@ -183,7 +183,7 @@ func (l *Loop) setupAccepted(fd int, lst *listener) {
 	if lst.lc.rcvBuf > 0 || lst.lc.sndBuf > 0 {
 		_ = sock.SetBuffers(fd, lst.lc.rcvBuf, lst.lc.sndBuf)
 	}
-	if l.cfg.busyPoll > 0 {
-		_ = sock.SetBusyPoll(fd, l.cfg.busyPoll)
+	if lst.lc.busyPoll > 0 {
+		_ = sock.SetBusyPoll(fd, lst.lc.busyPoll)
 	}
 }
