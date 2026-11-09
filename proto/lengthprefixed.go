@@ -3,7 +3,7 @@ package proto
 import (
 	"encoding/binary"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // DefaultMaxFrame is the LengthPrefixed limit used when MaxFrame is zero.

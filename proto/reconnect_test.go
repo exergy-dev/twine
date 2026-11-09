@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // freeAddr returns a loopback address with nothing listening on it.

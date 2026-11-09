@@ -20,8 +20,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/robert-malhotra/twine"
-	"github.com/robert-malhotra/twine/bench"
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/bench"
 )
 
 // echo is the same protocol object as the bench echo server (an 16 B struct

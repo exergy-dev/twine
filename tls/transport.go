@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // plainBufSize is the per-connection plaintext buffer handed to

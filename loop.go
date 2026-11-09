@@ -6,10 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/robert-malhotra/twine/internal/mpsc"
-	"github.com/robert-malhotra/twine/internal/poll"
-	"github.com/robert-malhotra/twine/internal/slab"
-	"github.com/robert-malhotra/twine/internal/wheel"
+	"github.com/exergy-dev/twine/internal/mpsc"
+	"github.com/exergy-dev/twine/internal/poll"
+	"github.com/exergy-dev/twine/internal/slab"
+	"github.com/exergy-dev/twine/internal/wheel"
 	"golang.org/x/sys/unix"
 )
 

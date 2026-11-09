@@ -16,8 +16,8 @@ import (
 	"runtime/trace"
 	"syscall"
 
-	"github.com/robert-malhotra/twine"
-	"github.com/robert-malhotra/twine/http"
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/http"
 )
 
 func main() {

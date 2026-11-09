@@ -3,7 +3,7 @@ package tls
 import (
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // DefaultHandshakeTimeout bounds a handshake when HandshakeTimeout is not

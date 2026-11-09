@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/robert-malhotra/twine/bench"
+	"github.com/exergy-dev/twine/bench"
 )
 
 func main() {

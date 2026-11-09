@@ -19,7 +19,7 @@ import (
 
 	"github.com/panjf2000/gnet/v2"
 	"github.com/panjf2000/gnet/v2/pkg/logging"
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 	"golang.org/x/sys/unix"
 )
 

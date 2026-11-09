@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/robert-malhotra/twine/examples/tunsink/internal/tunpkt"
+	"github.com/exergy-dev/twine/examples/tunsink/internal/tunpkt"
 )
 
 func main() {

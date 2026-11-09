@@ -3,7 +3,7 @@ package proto
 import (
 	"bytes"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // defaultDelimiter is the LineReceiver delimiter used when Delimiter is

@@ -15,7 +15,7 @@ change here is a change to the core. Design rules that apply to every package:
 - Doc comment on every exported identifier. `go vet` and `staticcheck` clean.
 - Package doc comment (`// Package xxx ...`) in a `doc.go` or the main file.
 
-Module path: `github.com/robert-malhotra/twine`. Go 1.24.
+Module path: `github.com/exergy-dev/twine`. Go 1.24.
 
 ---
 

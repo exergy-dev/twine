@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // allocCase feeds chunks through one connection repeatedly and measures

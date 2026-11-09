@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/robert-malhotra/twine"
-	"github.com/robert-malhotra/twine/bench"
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/bench"
 )
 
 // loopState is touched only by its own loop, except count (read by main).

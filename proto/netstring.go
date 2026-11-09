@@ -3,7 +3,7 @@ package proto
 import (
 	"strconv"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // DefaultMaxNetstring is the NetstringReceiver limit used when MaxLength is

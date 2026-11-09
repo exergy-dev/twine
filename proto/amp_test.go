@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // twistedBox encodes pairs exactly as twisted.protocols.amp.AmpBox.serialize

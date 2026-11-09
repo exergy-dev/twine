@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // fakeTransport is an in-memory twine.Transport. It records written bytes

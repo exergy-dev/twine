@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robert-malhotra/twine"
+	"github.com/exergy-dev/twine"
 )
 
 // countingFactory counts connections built by the server.

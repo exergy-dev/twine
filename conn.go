@@ -8,9 +8,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/robert-malhotra/twine/internal/poll"
-	"github.com/robert-malhotra/twine/internal/ring"
-	"github.com/robert-malhotra/twine/internal/wheel"
+	"github.com/exergy-dev/twine/internal/poll"
+	"github.com/exergy-dev/twine/internal/ring"
+	"github.com/exergy-dev/twine/internal/wheel"
 	"golang.org/x/sys/unix"
 )
 

@@ -39,9 +39,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/robert-malhotra/twine"
-	"github.com/robert-malhotra/twine/examples/tunsink/internal/tunpkt"
-	"github.com/robert-malhotra/twine/proto"
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/examples/tunsink/internal/tunpkt"
+	"github.com/exergy-dev/twine/proto"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"golang.org/x/sys/unix"
 )
