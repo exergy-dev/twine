@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"runtime/debug"
 	"syscall"
@@ -12,10 +13,6 @@ import (
 
 	"github.com/exergy-dev/twine"
 )
-
-// plainBufSize is the per-connection plaintext buffer handed to
-// tls.Conn.Read: one maximum-size TLS record (2^14 bytes of plaintext).
-const plainBufSize = 16 << 10
 
 // Connection states.
 const (
@@ -30,16 +27,22 @@ const (
 // underlying transport; DataReceived on the inner protocol carries plaintext.
 // Like every twine.Transport it is loop-affine: all methods except Loop must
 // be called on the owning loop. Inner protocols reach the TLS-specific
-// methods with a type assertion: t.(*tls.Transport).ConnectionState().
+// methods with a type assertion: t.(*twtls.Transport).ConnectionState(),
+// with this package imported as twtls (see the package documentation).
 type Transport struct {
 	f     *factory
 	inner twine.Protocol
+	peer  net.Addr // from BuildProtocol; immutable
 
 	under twine.Transport
 	loop  *twine.Loop
 	bio   *bio
 	tc    *ctls.Conn
-	plain []byte // per-connection plaintext buffer, allocated after the handshake
+	// scratch is the loop's shared plaintext buffer (set when the handshake
+	// completes); plain is this connection's own, allocated only if a drain
+	// ever finds scratch in use (TLS nested in TLS). See loopScratch.
+	scratch *loopScratch
+	plain   []byte
 
 	state     uint8
 	made      bool // inner.ConnectionMade has been called
@@ -72,7 +75,7 @@ var (
 // that Transport's exported API does not include the Protocol methods.
 type wrapper Transport
 
-// ConnectionMade starts the handshake on a worker goroutine.
+// ConnectionMade starts the handshake on its own goroutine.
 func (w *wrapper) ConnectionMade(under twine.Transport) {
 	t := (*Transport)(w)
 	t.under = under
@@ -84,30 +87,21 @@ func (w *wrapper) ConnectionMade(under twine.Transport) {
 	} else {
 		t.tc = ctls.Server(t.bio, t.f.cfg)
 	}
-	if d := t.f.opts.handshakeTimeout; d > 0 {
-		t.hsTimer = t.loop.CallLater(d, t.onHandshakeTimeout)
-	}
-	// From here until the Future settles, only the worker touches t.tc.
+	t.hsTimer = t.loop.CallLater(t.f.opts.handshakeTimeout, t.onHandshakeTimeout) // always > 0
+	// From here until the Future settles, only the handshake goroutine
+	// touches t.tc.
 	t.startHandshake().Then(t.onHandshakeDone).Catch(t.onHandshakeError)
 }
 
-// handshakeOnPool selects where the blocking handshake runs. Design Section
-// 10 puts it on the engine worker pool (twine.DeferToThread). It runs on a
-// dedicated goroutine instead because a handshake blocks for whole network
-// round trips: on a bounded pool, as many silent peers as there are workers
-// (4*GOMAXPROCS by default) would hold every worker for HandshakeTimeout,
-// stalling all other handshakes and every other DeferToThread user. Either
-// way the Future settles on the loop through CallFromThread, which is the
-// happens-before edge the concurrency rule relies on. Setting this to true
-// restores the design's DeferToThread path unchanged.
-const handshakeOnPool = false
-
-// startHandshake runs t.tc.Handshake off the loop and returns a Future that
-// settles on the loop.
+// startHandshake runs t.tc.Handshake on a goroutine of its own and returns
+// a Future that settles on the loop. A handshake blocks for whole network
+// round trips while it waits for the peer, so it does not run on the
+// engine's bounded DeferToThread pool: there, as many silent peers as there
+// are workers would hold every worker for HandshakeTimeout and stall all
+// other handshakes and DeferToThread users. The Future settles through
+// CallFromThread, which is the happens-before edge the concurrency rule
+// relies on. Until then the goroutine is the only code touching t.tc.
 func (t *Transport) startHandshake() *twine.Future[struct{}] {
-	if handshakeOnPool {
-		return twine.DeferToThread(t.loop, t.runHandshake)
-	}
 	fut, res := twine.NewFuture[struct{}](t.loop)
 	go func() {
 		defer func() {
@@ -115,14 +109,17 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 				res.Reject(&twine.PanicError{Value: r, Stack: debug.Stack()})
 			}
 		}()
-		if _, err := t.runHandshake(); err != nil {
-			// Settle the user's Connect Future from here as well (Reject is
-			// idempotent and thread-safe): the loop callback that normally
-			// does it is dropped if the loop exits mid-handshake.
+		if err := t.tc.Handshake(); err != nil {
+			// Build the HandshakeError here so that the Connect Future and
+			// the OnHandshakeError hook receive the same value, and settle
+			// the Future from here as well (Reject is idempotent and
+			// thread-safe): the loop callback that normally does it is
+			// dropped if the loop exits mid-handshake.
+			herr := t.handshakeError(err)
 			if t.f.res != nil {
-				t.f.res.Reject(err)
+				t.f.res.Reject(herr)
 			}
-			res.Reject(err)
+			res.Reject(herr)
 			return
 		}
 		res.Resolve(struct{}{})
@@ -130,13 +127,13 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 	return fut
 }
 
-// DataReceived feeds ciphertext to the handshake worker or, after the
+// DataReceived feeds ciphertext to the handshake goroutine or, after the
 // handshake, decrypts it on the loop and delivers plaintext to inner.
 func (w *wrapper) DataReceived(b []byte) {
 	t := (*Transport)(w)
 	switch t.state {
 	case stHandshaking:
-		t.bio.feed(b) // copies: b dies when we return, the worker reads later
+		t.bio.feed(b) // copies: b dies when we return, the handshake reads later
 	case stReady:
 		if t.peerEOF || t.aborted {
 			return
@@ -151,7 +148,7 @@ func (w *wrapper) DataReceived(b []byte) {
 	}
 }
 
-// ConnectionLost tears down the bio (waking a blocked handshake worker) and
+// ConnectionLost tears down the bio (waking a blocked handshake goroutine) and
 // tells inner, exactly once, if it had been told about the connection.
 func (w *wrapper) ConnectionLost(err error) {
 	t := (*Transport)(w)
@@ -166,10 +163,11 @@ func (w *wrapper) ConnectionLost(err error) {
 	t.bio.shutdown(eofOr(err))
 	if prev == stHandshaking || prev == stFailed {
 		t.stopTimer()
-		// The worker's callback reports the failure with crypto/tls's own
-		// error (e.g. the peer's alert), which is more useful than EOF. The
-		// worker also rejects the Connect Future directly, so the Future
-		// settles even if the loop exits before that callback runs.
+		// The handshake goroutine's callback reports the failure with
+		// crypto/tls's own error (e.g. the peer's alert), which is more
+		// useful than EOF. The goroutine also rejects the Connect Future
+		// directly, so it settles even if the loop exits before that
+		// callback runs.
 		return
 	}
 	if t.made {
@@ -189,12 +187,6 @@ func (w *wrapper) ConnectionLost(err error) {
 	}
 }
 
-// runHandshake runs on a worker goroutine. It is the only code that touches
-// t.tc before the handshake Future settles.
-func (t *Transport) runHandshake() (struct{}, error) {
-	return struct{}{}, t.tc.Handshake()
-}
-
 func (t *Transport) stopTimer() {
 	if t.hsTimer != nil {
 		t.hsTimer.Stop()
@@ -212,11 +204,11 @@ func (t *Transport) onHandshakeTimeout() {
 	t.under.Abort()
 }
 
-// onHandshakeDone runs on the loop once the worker's Handshake returned nil.
+// onHandshakeDone runs on the loop once the handshake goroutine's Handshake returned nil.
 func (t *Transport) onHandshakeDone(struct{}) {
 	t.stopTimer()
 	if t.state != stHandshaking {
-		// Lost (or timed out) after the worker finished but before this
+		// Lost (or timed out) after the handshake finished but before this
 		// callback ran: the inner protocol is never involved.
 		t.handshakeFailed(eofOr(t.bio.err))
 		return
@@ -225,7 +217,7 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	t.bio.flushOut()
 	t.bio.switchToLoopMode()
 	t.state = stReady
-	t.plain = make([]byte, plainBufSize)
+	t.scratch = scratchFor(t.loop)
 	if t.f.opts.kernelOffload {
 		t.offloaded = installKTLS(t)
 	}
@@ -249,7 +241,8 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	}
 }
 
-// onHandshakeError runs on the loop when the worker's Handshake failed.
+// onHandshakeError runs on the loop when the handshake goroutine's
+// Handshake failed (err is then a *HandshakeError) or panicked.
 func (t *Transport) onHandshakeError(err error) {
 	t.stopTimer()
 	if t.state == stHandshaking {
@@ -258,39 +251,104 @@ func (t *Transport) onHandshakeError(err error) {
 		t.bio.shutdown(err)
 		t.under.Abort()
 	}
-	if t.bio.err == ErrHandshakeTimeout {
-		err = ErrHandshakeTimeout
-	}
 	t.handshakeFailed(err)
 }
 
+// handshakeError wraps err with the peer address. When HandshakeTimeout
+// expired, the handshake failed on the read error the timeout caused, and
+// ErrHandshakeTimeout is reported instead. Safe from the handshake goroutine.
+func (t *Transport) handshakeError(err error) *HandshakeError {
+	var he *HandshakeError
+	if errors.As(err, &he) {
+		return he
+	}
+	if t.bio != nil {
+		t.bio.mu.Lock()
+		if t.bio.err == ErrHandshakeTimeout {
+			err = ErrHandshakeTimeout
+		}
+		t.bio.mu.Unlock()
+	}
+	return &HandshakeError{Peer: t.peer, Err: err}
+}
+
+// handshakeFailed reports a failed handshake exactly once: to the
+// OnHandshakeError hook, or to the engine's log when there is no hook, and
+// to the Connect Future.
 func (t *Transport) handshakeFailed(err error) {
 	if t.hsDone {
 		return
 	}
 	t.hsDone = true
+	he := t.handshakeError(err)
 	if fn := t.f.opts.onHandshakeError; fn != nil {
-		fn(err)
+		fn(he)
+	} else {
+		loggerOf(t.loop).Warn("twine/tls: handshake failed", "peer", t.peer, "err", he.Err)
 	}
 	if t.f.res != nil {
-		t.f.res.Reject(err)
+		t.f.res.Reject(he)
 	}
 }
 
+// loggerOf returns the engine's logger when the core exposes one (a Logger
+// method on the Loop or the Engine), and slog.Default() otherwise.
+func loggerOf(l *twine.Loop) *slog.Logger {
+	type loggerer interface{ Logger() *slog.Logger }
+	if l != nil {
+		for _, v := range []any{l, l.Engine()} {
+			if lg, ok := v.(loggerer); ok {
+				if x := lg.Logger(); x != nil {
+					return x
+				}
+			}
+		}
+	}
+	return slog.Default()
+}
+
 // drain reads plaintext until crypto/tls would block and delivers each chunk
-// to inner. Loop-only, loop mode.
+// to inner. Loop-only, loop mode. It decrypts into the loop's shared buffer
+// unless a drain further up the stack is using it (see loopScratch).
 func (t *Transport) drain() {
 	if t.draining {
 		return
 	}
 	t.draining = true
-	defer func() { t.draining = false }()
+	sc := t.scratch
+	shared := !sc.busy
+	var buf []byte
+	if shared {
+		sc.busy = true
+		buf = sc.buf
+	} else {
+		if t.plain == nil {
+			t.plain = make([]byte, plainBufSize)
+		}
+		buf = t.plain
+	}
+	defer func() {
+		t.draining = false
+		if shared {
+			sc.busy = false
+		}
+	}()
 	for t.state == stReady && !t.paused && !t.peerEOF && !t.aborted && t.lostErr == nil {
 		t.inTLS = true
-		n, err := t.tc.Read(t.plain) // may write alerts or KeyUpdate replies
+		n, err := t.tc.Read(buf) // may write alerts or KeyUpdate replies
 		t.leaveTLS(nil)
 		if n > 0 {
-			t.inner.DataReceived(t.plain[:n])
+			t.inner.DataReceived(buf[:n])
+		}
+		if t.offloaded && t.bio.refused && (err == nil || errors.Is(err, errWouldBlock)) {
+			// Under kTLS TX crypto/tls tried to write without failing the
+			// read: that is its reply to a peer KeyUpdate that requests one.
+			// It keeps the write error to itself until its next Write, which
+			// never comes (Write goes to the kernel), and carries on reading
+			// (Read then usually returns errWouldBlock), so the peer would
+			// wait for the KeyUpdate RFC 8446 section 4.6.3 requires. Abort.
+			// A real read error (whose alert was refused) is reported as is.
+			err = errOffloadWrite
 		}
 		if err != nil {
 			t.readError(err)
@@ -374,10 +432,18 @@ func (t *Transport) ConnectionState() ctls.ConnectionState {
 	return t.tc.ConnectionState()
 }
 
-// KernelOffloaded reports whether record protection of outgoing data has
-// been offloaded to the kernel (kTLS TX). On a server it normally covers
-// incoming data too; see the package documentation. The mode is fixed when
-// inner.ConnectionMade is called.
+// KernelOffload reports which directions of record protection run in the
+// kernel (kTLS): tx for data this side sends, rx for data it receives. A
+// server normally gets both, a client tx only, and rx is never set without
+// tx; see the package documentation. With rx, any non-data record from the
+// peer, close_notify included, ends the connection with an error wrapping
+// syscall.EIO. The mode is fixed when inner.ConnectionMade is called.
+func (t *Transport) KernelOffload() (tx, rx bool) { return t.offloaded, t.rxOffloaded }
+
+// KernelOffloaded reports whether kTLS offload of outgoing data (tx) is in
+// use.
+//
+// Deprecated: Use KernelOffload, which also reports the receive direction.
 func (t *Transport) KernelOffloaded() bool { return t.offloaded }
 
 // Underlying returns the raw (ciphertext) transport. Writing to it directly
@@ -430,8 +496,14 @@ func (t *Transport) leaveTLS(err error) {
 	}
 }
 
-// Writev encrypts each slice in turn, as Write.
+// Writev writes the slices in order. On the memory BIO each slice is
+// encrypted into its own record(s), as by Write. Under kTLS TX offload they
+// reach the socket in one writev and the kernel builds the records.
 func (t *Transport) Writev(bs ...[]byte) {
+	if t.offloaded && t.state == stReady && !t.closeSent {
+		t.under.Writev(bs...)
+		return
+	}
 	for _, b := range bs {
 		t.Write(b)
 	}
