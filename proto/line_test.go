@@ -213,7 +213,7 @@ func TestLineReceiverReleasesLargeBuffer(t *testing.T) {
 }
 
 func TestErrorAliases(t *testing.T) {
-	if !errors.Is(ErrLineTooLong, twine.ErrLineTooLong) || !errors.Is(twine.ErrFrameTooLarge, ErrFrameTooLarge) {
+	if !errors.Is(ErrLineTooLong, twine.ErrLineTooLong) || !errors.Is(ErrFrameTooLarge, twine.ErrFrameTooLarge) {
 		t.Fatal("proto framing errors are not the twine ones")
 	}
 }
