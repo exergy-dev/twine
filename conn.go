@@ -170,11 +170,8 @@ func (c *conn) eof() {
 	if c.flags&(flagClosed|flagEOF) != 0 {
 		return
 	}
-	c.flags |= flagEOF
 	// Stop reading; the socket will not deliver more data.
-	if c.flags&flagReadPaused == 0 {
-		c.flags |= flagReadPaused
-	}
+	c.flags |= flagEOF | flagReadPaused
 	if c.ring.Len() == 0 {
 		// Nothing left to send: close now. ConnectionLost(nil) is a clean
 		// close; a pending LoseConnection also ends here.

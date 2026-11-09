@@ -98,7 +98,6 @@ func (e *Engine) newTCPListener(addr string, f Factory, lc listenConfig) (*liste
 		lst.fds = append(lst.fds, fd)
 		lp := e.loops[i]
 		c := &conn{loop: lp, fd: int32(fd), kind: kindListener, lst: lst}
-		c.idle.Fn = c.onIdle
 		lst.conns = append(lst.conns, c)
 		lp.CallFromThread(func() { lp.registerListener(c) })
 	}

@@ -60,7 +60,7 @@ type Loop struct {
 	wheel  *wheel.Wheel
 	epoch  time.Time
 	now    time.Time
-	nowNs  int64
+	nowNs  int64 // monotonic ns since epoch at iteration start; timers use it
 
 	rdbuf  []byte
 	events [maxEvents]poll.Event
@@ -192,7 +192,7 @@ func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 		l.due = append(l.due, t)
 		return t
 	}
-	l.wheel.Add(&t.w, l.monoNow()+int64(d))
+	l.wheel.Add(&t.w, l.nowNs+int64(d))
 	return t
 }
 
@@ -231,11 +231,6 @@ func (l *Loop) fireDue() {
 	}
 	l.dueNext = l.dueNext[:0]
 }
-
-// monoNow returns the cached monotonic nanoseconds since the loop epoch.
-// Loop-affine callers use it so that timers are relative to the iteration's
-// clock, matching Now().
-func (l *Loop) monoNow() int64 { return l.nowNs }
 
 // refreshNow updates the cached clock.
 func (l *Loop) refreshNow() {
@@ -407,10 +402,8 @@ func (l *Loop) hasImmediateWork() bool {
 	// A wakeup that arrived during the zero-timeout spin was already
 	// consumed by Wait, so the queue itself must be checked before blocking.
 	return l.moreTasks || len(l.local) > 0 || len(l.due) > 0 || len(l.ready) > 0 ||
-		len(l.dirty) > 0 || len(l.closing) > 0 || l.tasks.Len() > 0 || l.hasOverflow()
+		len(l.dirty) > 0 || len(l.closing) > 0 || l.tasks.Len() > 0 || l.overflowActive.Load()
 }
-
-func (l *Loop) hasOverflow() bool { return l.overflowActive.Load() }
 
 // pollTimeout returns how long the loop may block: until the next timer, or
 // forever.
@@ -651,9 +644,7 @@ func (l *Loop) handleRead(c *conn, hangup bool) {
 		if n > 0 {
 			l.metrics.readBytes.Add(uint64(n))
 			l.metrics.reads.Add(1)
-			if c.idleTimeout > 0 {
-				l.wheel.Add(&c.idle, l.nowNs+int64(c.idleTimeout))
-			}
+			c.touchIdle()
 			l.callDataReceived(c, buf[:n])
 			if c.flags&(flagClosed|flagReadPaused) != 0 {
 				return
