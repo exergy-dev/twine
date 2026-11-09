@@ -455,7 +455,9 @@ func (c *conn) writeResponse() {
 	ctx := &c.ctx
 	w := c.wbuf
 	st := ctx.status
-	if st < 100 || st > 599 {
+	if st < 200 || st > 599 {
+		// 1xx is an interim response: sending one as the only response
+		// would leave the client waiting for the final one.
 		st = 500
 	}
 	w = append(w, statusLines[st]...)
@@ -466,7 +468,7 @@ func (c *conn) writeResponse() {
 		w = append(w, c.date.line...)
 	}
 	body := ctx.out
-	if st >= 200 && st != 204 && st != 304 {
+	if st != 204 && st != 304 {
 		if len(ctx.ct) > 0 {
 			w = append(w, "Content-Type: "...)
 			w = append(w, ctx.ct...)

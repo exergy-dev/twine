@@ -21,7 +21,9 @@ import (
 //
 // The handler runs on the loop like any Handler and must not block. The
 // response is buffered and sent when ServeHTTP returns: Flusher, Hijacker
-// and Pusher are not implemented, and an unset Content-Type is sniffed with
+// and Pusher are not implemented, interim responses (WriteHeader with a
+// 1xx code, such as 103 Early Hints) are dropped while the final response
+// is still sent, and an unset Content-Type is sniffed with
 // net/http.DetectContentType as net/http does. The request's Context is
 // context.Background.
 func Adapt(h nethttp.Handler) func(*RequestCtx) {
@@ -82,9 +84,12 @@ type responseWriter struct {
 // Header returns the header map sent at WriteHeader.
 func (w *responseWriter) Header() nethttp.Header { return w.header }
 
-// WriteHeader copies the header map into the RequestCtx once.
+// WriteHeader copies the header map into the RequestCtx once. Interim
+// (1xx) codes are dropped: net/http would send them as extra responses
+// before the final one, which the buffered RequestCtx cannot do, and
+// recording one as the status would lose the final response.
 func (w *responseWriter) WriteHeader(code int) {
-	if w.wroteHeader {
+	if w.wroteHeader || code >= 100 && code <= 199 {
 		return
 	}
 	w.wroteHeader = true
