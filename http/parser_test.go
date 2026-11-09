@@ -197,14 +197,27 @@ func TestInvalidHeaderNamesDropped(t *testing.T) {
 func TestHeadAndNoBodyStatuses(t *testing.T) {
 	l := testLoop(t)
 	s := &Server{Handler: func(ctx *RequestCtx) {
-		if string(ctx.Path()) == "/204" {
+		switch string(ctx.Path()) {
+		case "/204":
 			ctx.SetStatus(204)
+		case "/empty":
+			return
 		}
 		ctx.WriteString("body")
 	}}
 	out, _ := serveOnce(t, l, s, "HEAD / HTTP/1.1\r\nHost: x\r\n\r\n")
 	if !strings.Contains(out, "Content-Length: 4\r\n") || strings.HasSuffix(out, "body") {
 		t.Fatalf("HEAD: %q", out)
+	}
+	// A HEAD Handler that writes nothing gets no Content-Length (net/http
+	// behaviour); GET still gets "Content-Length: 0".
+	out, _ = serveOnce(t, l, s, "HEAD /empty HTTP/1.1\r\nHost: x\r\n\r\n")
+	if !strings.HasPrefix(out, "HTTP/1.1 200 ") || strings.Contains(out, "Content-Length") || strings.Contains(out, "Content-Type") {
+		t.Fatalf("HEAD without body: %q", out)
+	}
+	out, _ = serveOnce(t, l, s, "GET /empty HTTP/1.1\r\nHost: x\r\n\r\n")
+	if !strings.Contains(out, "Content-Length: 0\r\n") {
+		t.Fatalf("GET without body: %q", out)
 	}
 	out, _ = serveOnce(t, l, s, "GET /204 HTTP/1.1\r\nHost: x\r\n\r\n")
 	if strings.Contains(out, "Content-Length") || strings.HasSuffix(out, "body") {

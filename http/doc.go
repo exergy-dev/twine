@@ -34,8 +34,10 @@
 // says "Connection: close"; HTTP/1.0 connections close after the response
 // unless the request asked for keep-alive. Expect: 100-continue is answered
 // when the head arrives without its body. HEAD responses carry the
-// Content-Length of the body the Handler wrote but not the body; 204 and
-// 304 responses carry neither. A Handler cannot send a 1xx interim
+// Content-Length of the body the Handler wrote but not the body; when the
+// Handler wrote nothing, Content-Length is omitted (as in net/http), so a
+// HEAD Handler that knows the length should write the body as for GET.
+// 204 and 304 responses carry neither. A Handler cannot send a 1xx interim
 // response: such a status is sent as 500.
 //
 // Limits: MaxHeaderBytes (8 KiB) or more than 64 header lines yields 431;

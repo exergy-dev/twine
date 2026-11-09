@@ -415,7 +415,6 @@ func (c *conn) serve(req []byte) {
 
 	r.data = nil
 	ctx.body = nil
-	ctx.user = nil
 	c.headDone = false
 	c.cont = false
 	if cap(ctx.out) > maxRetained {
@@ -468,6 +467,7 @@ func (c *conn) writeResponse() {
 		w = append(w, c.date.line...)
 	}
 	body := ctx.out
+	head := string(ctx.Method()) == "HEAD"
 	if st != 204 && st != 304 {
 		if len(ctx.ct) > 0 {
 			w = append(w, "Content-Type: "...)
@@ -476,9 +476,14 @@ func (c *conn) writeResponse() {
 		} else if len(body) > 0 {
 			w = append(w, defaultContentType...)
 		}
-		w = append(w, "Content-Length: "...)
-		w = strconv.AppendInt(w, int64(len(body)), 10)
-		w = append(w, '\r', '\n')
+		// A HEAD Handler that wrote no body has not said how long the
+		// GET body would be; "Content-Length: 0" would be a false claim,
+		// so it is omitted (as net/http does).
+		if len(body) > 0 || !head {
+			w = append(w, "Content-Length: "...)
+			w = strconv.AppendInt(w, int64(len(body)), 10)
+			w = append(w, '\r', '\n')
+		}
 	} else {
 		body = nil
 	}
@@ -489,7 +494,7 @@ func (c *conn) writeResponse() {
 		w = append(w, "Connection: keep-alive\r\n"...)
 	}
 	w = append(w, '\r', '\n')
-	if string(ctx.Method()) == "HEAD" {
+	if head {
 		body = nil
 	}
 	if len(body) > largeBody {

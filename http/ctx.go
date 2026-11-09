@@ -18,7 +18,6 @@ type RequestCtx struct {
 	req  request
 	body []byte
 	c    *conn
-	user any
 
 	// Response.
 	status   int
@@ -139,13 +138,6 @@ func (ctx *RequestCtx) LocalAddr() net.Addr { return ctx.c.t.GetHost() }
 // there is no asynchronous response API.
 func (ctx *RequestCtx) Loop() *twine.Loop { return ctx.c.loop }
 
-// SetUserValue stores a per-request value; it is cleared before the next
-// request. Storing a non-pointer value allocates.
-func (ctx *RequestCtx) SetUserValue(v any) { ctx.user = v }
-
-// UserValue returns the value stored with SetUserValue.
-func (ctx *RequestCtx) UserValue() any { return ctx.user }
-
 // --- response --------------------------------------------------------------
 
 // SetStatus sets the response status code (default 200). Codes outside
@@ -230,7 +222,6 @@ func (ctx *RequestCtx) resetResponse() {
 	ctx.close = false
 	ctx.noServer = false
 	ctx.noDate = false
-	ctx.user = nil
 }
 
 // setHeader implements SetHeader (replace set) and AddHeader.
