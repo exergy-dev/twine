@@ -33,11 +33,11 @@ func waitFD(t *testing.T, fd int, events int16, timeout time.Duration) int16 {
 	}
 }
 
-func closeFD(t *testing.T, fd int) {
+func closeFD(t testing.TB, fd int) {
 	t.Cleanup(func() { unix.Close(fd) })
 }
 
-func listen(t *testing.T, network, addr string) (int, *net.TCPAddr) {
+func listen(t testing.TB, network, addr string) (int, *net.TCPAddr) {
 	t.Helper()
 	fd, laddr, err := Listen(network, addr, false, 128)
 	if err != nil {
@@ -47,7 +47,7 @@ func listen(t *testing.T, network, addr string) (int, *net.TCPAddr) {
 	return fd, laddr
 }
 
-func checkNonblockCloexec(t *testing.T, fd int) {
+func checkNonblockCloexec(t testing.TB, fd int) {
 	t.Helper()
 	fl, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
@@ -358,7 +358,7 @@ func TestNewBatch(t *testing.T) {
 	}
 }
 
-func listenUDP(t *testing.T) (int, *net.UDPAddr) {
+func listenUDP(t testing.TB) (int, *net.UDPAddr) {
 	t.Helper()
 	fd, laddr, err := ListenUDP("udp4", "127.0.0.1:0", false)
 	if err != nil {

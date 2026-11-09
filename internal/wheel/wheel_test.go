@@ -652,8 +652,7 @@ func BenchmarkAddRemove1M(b *testing.B) {
 	}
 	var tm Timer
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		w.Add(&tm, ds[i&4095])
 		w.Remove(&tm)
 	}
@@ -675,8 +674,7 @@ func BenchmarkReset1M(b *testing.B) {
 	}
 	x := uint32(2463534242) // xorshift32: random timer index without a table
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		x ^= x << 13
 		x ^= x >> 17
 		x ^= x << 5

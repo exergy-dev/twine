@@ -5,7 +5,6 @@ package poll
 import (
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -337,17 +336,8 @@ func TestURingFDTableGrowth(t *testing.T) {
 }
 
 // BenchmarkWaitWake compares the io_uring backend with the epoll fallback
-// (the same code as epoll_linux.go).
-//
-//   - wait0: Wait(0) with nothing ready (the loop's spin phase).
-//   - wake+wait: Wake then Wait(-1) on one goroutine (eventfd write, one
-//     wait syscall, eventfd drain).
-//   - pingpong: two goroutines on two Pollers alternately Wake each other and
-//     block in Wait(-1); ns/op is one full round trip (two wakeups).
-//   - pingpong-locked: the same with each Poller created and waited on by a
-//     goroutine locked to its OS thread, as Loop.run does.
-//   - mod+wait: Mod(Readable) then Wait(-1) on a socket with data pending
-//     (registration change plus readiness report).
+// (the same code as epoll_linux.go); the sub-benchmarks are described at
+// benchWaitWake.
 //
 // Measured on this host (Linux 6.18 WSL2, i9-14900KF, go1.24,
 // -benchtime=1s, several runs; ranges are run-to-run spread, all variants
@@ -373,7 +363,7 @@ func BenchmarkWaitWake(b *testing.B) {
 		name  string
 		uring bool
 	}{{"uring", true}, {"epoll", false}} {
-		mk := func(b *testing.B) *Poller {
+		benchWaitWake(b, backend.name, func(b *testing.B) *Poller {
 			p, err := open(backend.uring)
 			if err != nil {
 				b.Fatal(err)
@@ -384,96 +374,7 @@ func BenchmarkWaitWake(b *testing.B) {
 			}
 			b.Cleanup(func() { p.Close() })
 			return p
-		}
-		b.Run(backend.name+"/wait0", func(b *testing.B) {
-			p := mk(b)
-			evs := make([]Event, 64)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				p.Wait(evs, 0)
-			}
-		})
-		b.Run(backend.name+"/wake+wait", func(b *testing.B) {
-			p := mk(b)
-			evs := make([]Event, 64)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				p.Wake()
-				p.Wait(evs, -1)
-			}
-		})
-		// pingpong: p1 and p2 are unlocked goroutines' Pollers, as in the
-		// tests. pingpong-locked mirrors the real loop: each Poller is
-		// created and waited on by a goroutine locked to its OS thread
-		// (Loop.run calls LockOSThread before poll.New).
-		for _, locked := range []bool{false, true} {
-			name := backend.name + "/pingpong"
-			if locked {
-				name += "-locked"
-			}
-			b.Run(name, func(b *testing.B) {
-				var p1, p2 *Poller
-				if !locked {
-					p1, p2 = mk(b), mk(b)
-				}
-				created := make(chan *Poller)
-				start := make(chan struct{})
-				done := make(chan struct{})
-				go func() {
-					defer close(done)
-					if locked {
-						runtime.LockOSThread()
-						defer runtime.UnlockOSThread()
-						created <- mk(b)
-					}
-					<-start
-					evs := make([]Event, 8)
-					for i := 0; i < b.N; i++ {
-						p1.Wait(evs, -1)
-						p2.Wake()
-					}
-				}()
-				if locked {
-					runtime.LockOSThread()
-					defer runtime.UnlockOSThread()
-					p1 = <-created
-					p2 = mk(b)
-				}
-				close(start)
-				evs := make([]Event, 8)
-				b.ReportAllocs()
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					p1.Wake()
-					p2.Wait(evs, -1)
-				}
-				<-done
-			})
-		}
-		b.Run(backend.name+"/mod+wait", func(b *testing.B) {
-			p := mk(b)
-			fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_NONBLOCK, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
-			defer unix.Close(fds[0])
-			defer unix.Close(fds[1])
-			unix.Write(fds[1], []byte("x"))
-			if err := p.Add(fds[0], Readable); err != nil {
-				b.Fatal(err)
-			}
-			evs := make([]Event, 8)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				p.Mod(fds[0], Readable)
-				if n, _ := p.Wait(evs, -1); n != 1 {
-					b.Fatalf("Wait = %d", n)
-				}
-			}
-		})
+		}, true)
 	}
 }
 
