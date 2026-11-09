@@ -94,8 +94,10 @@ func TestAdaptEarlyHints(t *testing.T) {
 	}
 }
 
-// TestAdaptAllocs documents Adapt's per-request cost.
+// TestAdaptAllocs checks Adapt's documented per-request cost: roughly 10
+// allocations plus 3 per request header (2 of slack).
 func TestAdaptAllocs(t *testing.T) {
+	const headers = 3 // Host, User-Agent, Accept
 	h := Adapt(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		io.WriteString(w, "hello")
@@ -116,8 +118,11 @@ func TestAdaptAllocs(t *testing.T) {
 		out = ft.String()
 		c.ConnectionLost(nil)
 	})
-	t.Logf("Adapt: %v allocs per request (3 request headers)", allocs)
+	t.Logf("Adapt: %v allocs per request (%d request headers)", allocs, headers)
 	if !strings.HasSuffix(out, "hello") {
 		t.Fatalf("out %q", out)
+	}
+	if limit := float64(10 + 3*headers + 2); allocs > limit {
+		t.Errorf("Adapt: %v allocs per request, documented about 10+3*%d (limit %v)", allocs, headers, limit)
 	}
 }

@@ -71,15 +71,19 @@ var allocCases = []allocCase{
 		name:    "header lookup",
 		chunks:  []string{"GET / HTTP/1.1\r\nHost: x\r\nX-Custom-Header: abc\r\n\r\n"},
 		handler: headerLookupHandler,
-		want:    []string{"\r\n\r\nabc"},
+		want:    []string{"\r\n\r\nabc|abc"},
 		nresp:   1,
 	},
 }
 
-// headerLookupHandler exercises the case-insensitive lookup and
+var customHeader = []byte("X-CUSTOM-header")
+
+// headerLookupHandler exercises the case-insensitive lookups and
 // VisitHeaders with a non-capturing callback.
 func headerLookupHandler(ctx *RequestCtx) {
 	ctx.Write(ctx.Header("x-custom-header"))
+	ctx.WriteString("|")
+	ctx.Write(ctx.HeaderBytes(customHeader))
 	ctx.VisitHeaders(countHeader)
 }
 
