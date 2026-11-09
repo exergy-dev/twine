@@ -45,13 +45,21 @@
 // as the head arrives, and against the decoded size of a chunked body as it
 // arrives; a chunked request whose raw size (framing included) passes
 // MaxHeaderBytes + 2*MaxBodyBytes + 64 KiB also yields 413, so no
-// connection buffers much more than twice MaxBodyBytes. Malformed requests yield 400, unsupported transfer
-// codings 501, unsupported versions 505. Each of these responses carries
-// "Connection: close" and the connection is half-closed after it; anything
-// the peer sends afterwards is discarded. The parser is deliberately
-// strict: bare LF line endings, obs-fold, whitespace before a header colon,
-// a request with both Content-Length and Transfer-Encoding, and an HTTP/1.1
-// request without Host are all rejected with 400.
+// connection buffers much more than twice MaxBodyBytes. Malformed requests
+// yield 400, unsupported transfer codings 501, unsupported versions 505.
+// Each of these responses carries "Connection: close" and the connection
+// is half-closed after it; anything the peer sends afterwards is
+// discarded. The parser is deliberately strict: bare LF line endings,
+// obs-fold, whitespace before a header colon, a request with both
+// Content-Length and Transfer-Encoding, and an HTTP/1.1 request without
+// Host are all rejected with 400.
+//
+// A response body larger than MaxResponseBytes (16 MiB, the engine's
+// default WriteBufferLimit) is replaced by 500 followed by a close, and
+// logged: the whole response is queued at once, and the engine would abort
+// a connection whose pending output passes WriteBufferLimit in the middle
+// of the body. Serve larger bodies from net/http, or lower the limit along
+// with twine.WriteBufferLimit.
 //
 // Timeouts: a connection with no I/O for IdleTimeout (90 s) is closed, and
 // a request still incomplete ReadTimeout (60 s) after its first bytes were
