@@ -11,6 +11,7 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -219,7 +220,7 @@ func TestIntegrationEcho(t *testing.T) {
 		msgs = 100
 	}
 	for _, loops := range []int{1, 2, runtime.GOMAXPROCS(0)} {
-		t.Run("loops="+itoa(loops), func(t *testing.T) {
+		t.Run("loops="+strconv.Itoa(loops), func(t *testing.T) {
 			e := startEngine(t, Loops(loops))
 			lst := listen(t, e, echoFactory())
 			addr := lst.Addr().String()
@@ -369,7 +370,7 @@ func dialTCPRcvBuf(t testing.TB, addr string, rcvBuf int) *net.TCPConn {
 
 func TestBackpressureProducer(t *testing.T) {
 	for _, crossings := range []int{1, 2} {
-		t.Run("crossings="+itoa(crossings), func(t *testing.T) {
+		t.Run("crossings="+strconv.Itoa(crossings), func(t *testing.T) {
 			e := startEngine(t, Loops(1))
 			sink := &errSink{}
 			prodCh := make(chan *streamProducer, 1)

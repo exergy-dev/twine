@@ -202,7 +202,6 @@ func TestOnShutdownHooks(t *testing.T) {
 	var gids []int64
 	var lostBeforeHook atomic.Bool
 	for i := 1; i <= 3; i++ {
-		i := i
 		re.e.OnShutdown(func() {
 			if lostCalled.Load() {
 				lostBeforeHook.Store(true)
