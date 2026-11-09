@@ -3,6 +3,7 @@ package twine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 )
@@ -48,6 +49,10 @@ func New(opts ...Option) *Engine {
 	e.pool = newWorkerPool(e.cfg.workerPool)
 	return e
 }
+
+// Logger returns the engine's logger: the one passed to Logger, a logger
+// that discards everything after Logger(nil), or slog.Default().
+func (e *Engine) Logger() *slog.Logger { return e.cfg.logger }
 
 // Loops returns the engine's loops.
 func (e *Engine) Loops() []*Loop { return e.loops }
