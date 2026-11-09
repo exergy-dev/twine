@@ -279,3 +279,28 @@ func TestByteAtATime(t *testing.T) {
 		t.Fatalf("out %q", out)
 	}
 }
+
+// TestChunkedRawCap sends one-byte chunks, whose framing is five times the
+// payload: the request must be refused with 413 before the reassembly
+// buffer grows far beyond twice MaxBodyBytes.
+func TestChunkedRawCap(t *testing.T) {
+	const maxBody = 1 << 20
+	s := &Server{MaxBodyBytes: maxBody, Handler: func(ctx *RequestCtx) {}}
+	h := newHarness(t, testLoop(t), s)
+	h.sendString("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n")
+	piece := []byte(strings.Repeat("1\r\nx\r\n", 256<<10/6))
+	maxCap, sent := 0, 0
+	for !h.closing() && sent < 8*maxBody {
+		h.send(piece)
+		sent += len(piece)
+		onLoop(t, h.l, func() { maxCap = max(maxCap, cap(h.c.buf)) })
+	}
+	if out := h.out(); !strings.HasPrefix(out, "HTTP/1.1 413 ") {
+		t.Fatalf("after %d raw bytes: %q", sent, firstLine(out))
+	}
+	if maxCap >= 3<<20 {
+		t.Fatalf("reassembly buffer grew to %d bytes (MaxBodyBytes %d)", maxCap, maxBody)
+	}
+	t.Logf("413 after %d raw bytes; buffer cap peaked at %d", sent, maxCap)
+	h.lose()
+}
