@@ -414,10 +414,18 @@ func (t *Transport) ConnectionState() ctls.ConnectionState {
 	return t.tc.ConnectionState()
 }
 
-// KernelOffloaded reports whether record protection of outgoing data has
-// been offloaded to the kernel (kTLS TX). On a server it normally covers
-// incoming data too; see the package documentation. The mode is fixed when
-// inner.ConnectionMade is called.
+// KernelOffload reports which directions of record protection run in the
+// kernel (kTLS): tx for data this side sends, rx for data it receives. A
+// server normally gets both, a client tx only, and rx is never set without
+// tx; see the package documentation. With rx, any non-data record from the
+// peer, close_notify included, ends the connection with an error wrapping
+// syscall.EIO. The mode is fixed when inner.ConnectionMade is called.
+func (t *Transport) KernelOffload() (tx, rx bool) { return t.offloaded, t.rxOffloaded }
+
+// KernelOffloaded reports whether kTLS offload of outgoing data (tx) is in
+// use.
+//
+// Deprecated: Use KernelOffload, which also reports the receive direction.
 func (t *Transport) KernelOffloaded() bool { return t.offloaded }
 
 // Underlying returns the raw (ciphertext) transport. Writing to it directly

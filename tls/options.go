@@ -31,10 +31,11 @@ func buildOptions(opts []Option) options {
 }
 
 // KernelOffload requests kTLS offload after the handshake (Linux 5.x+ with
-// the tls module; TLS 1.3 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305
-// only). When any precondition fails the connection silently stays on the
-// memory BIO. A server offloads both directions, a client transmit only.
-// Transport.KernelOffloaded reports the mode in use; see the package
+// the tls module; TLS 1.3 with AES-128-GCM or AES-256-GCM only:
+// ChaCha20-Poly1305 and TLS 1.2 always stay on the memory BIO). When any
+// precondition fails the connection silently stays on the memory BIO. A
+// server offloads both directions, a client transmit only.
+// Transport.KernelOffload reports the mode in use; see the package
 // documentation, "Kernel TLS", for the exact rules and limitations.
 func KernelOffload(on bool) Option { return func(o *options) { o.kernelOffload = on } }
 

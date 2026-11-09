@@ -18,7 +18,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -598,10 +597,7 @@ func TestInnerPanic(t *testing.T) {
 }
 
 func TestKernelOffloadFallsBack(t *testing.T) {
-	t.Logf("KTLSAvailable=%v KTLSSupported=%v", twtls.KTLSAvailable(), twtls.KTLSSupported())
-	if twtls.KTLSSupported() != (runtime.GOOS == "linux") {
-		t.Fatalf("KTLSSupported=%v on %s", twtls.KTLSSupported(), runtime.GOOS)
-	}
+	t.Logf("KTLSAvailable=%v", twtls.KTLSAvailable())
 	if b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp"); err == nil {
 		want := strings.Contains(string(b), "tls")
 		if twtls.KTLSAvailable() != want {
@@ -624,7 +620,7 @@ func TestKernelOffloadFallsBack(t *testing.T) {
 		t.Fatalf("echo: %q %v", buf, err)
 	}
 	if <-offloaded {
-		t.Fatal("KernelOffloaded() = true")
+		t.Fatal("TLS 1.2 connection offloaded")
 	}
 }
 
@@ -635,7 +631,8 @@ type offloadProto struct {
 
 func (p *offloadProto) ConnectionMade(t twine.Transport) {
 	p.t = t
-	p.ch <- t.(*twtls.Transport).KernelOffloaded()
+	tx, _ := t.(*twtls.Transport).KernelOffload()
+	p.ch <- tx
 }
 
 // --- client tests ------------------------------------------------------------

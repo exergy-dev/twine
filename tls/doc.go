@@ -84,8 +84,7 @@
 // SOL_TLS TLS_TX (and TLS_RX). The loop then does plain read/write, the
 // kernel encrypts and decrypts, and Transport.Write goes straight to the
 // socket. KTLSAvailable probes the ULP once on a throwaway loopback socket;
-// KTLSSupported is true on Linux; Transport.KernelOffloaded reports what a
-// connection got.
+// Transport.KernelOffload reports what a connection got (tx, rx).
 //
 // Key extraction. crypto/tls exports no record keys, so the package reads the
 // TLS 1.3 traffic secrets and sequence numbers of both directions out of the
@@ -103,11 +102,10 @@
 // Engagement rules (anything else falls back to the memory BIO):
 //
 //   - Linux, KTLSAvailable, TLS 1.3 negotiated, cipher suite
-//     TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 or
-//     TLS_CHACHA20_POLY1305_SHA256, and the kernel accepted TX and RX keys
-//     for that cipher on a one-time probe (dummy keys, loopback socket). The
-//     kernel here may lack ChaCha20-Poly1305 (ENOENT), in which case that
-//     suite falls back.
+//     TLS_AES_128_GCM_SHA256 or TLS_AES_256_GCM_SHA384 (AES-GCM only:
+//     TLS_CHACHA20_POLY1305_SHA256 always stays on the memory BIO), and the
+//     kernel accepted TX and RX keys for that cipher on a one-time probe
+//     (dummy keys, loopback socket).
 //   - No ciphertext queued for sending (core ring, handshake output).
 //   - Server: TX and RX are offloaded provided crypto/tls has consumed no
 //     application data and nothing from the peer is queued (neither inside
