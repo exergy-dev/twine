@@ -270,3 +270,41 @@ func TestAMPRoundTrip(t *testing.T) {
 		t.Fatalf("call after loss: %v", err)
 	}
 }
+
+// TestAMPCallArgsNotRetained mutates the Args map right after each Call and
+// CallNoAnswer from a goroutine that is not the loop. The request must have
+// been encoded before Call returned (README ownership rule 5), so -race
+// stays quiet and every answer reflects the value at call time.
+func TestAMPCallArgsNotRetained(t *testing.T) {
+	e := startEngine(t, 2)
+	lst, err := e.ListenTCP("127.0.0.1:0", ampFactory(sumHandler, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	made := make(chan *ampPeer, 1)
+	if _, err := e.Loops()[1].ConnectTCP(lst.Addr().String(), ampFactory(nil, made)).Await(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client := <-made
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	args := Args{"a": "0", "b": "1"}
+	futs := make([]*twine.Future[Args], 0, 200)
+	for i := range 200 {
+		args["a"] = strconv.Itoa(i)
+		futs = append(futs, client.Call("Sum", args))
+		if err := client.CallNoAnswer("Sum", args); err != nil {
+			t.Fatal(err)
+		}
+		args["a"] = "garbage"
+		args["extra"] = strconv.Itoa(i)
+		delete(args, "extra")
+	}
+	for i, f := range futs {
+		v, err := f.Await(ctx)
+		if err != nil || v["total"] != strconv.Itoa(i+1) {
+			t.Fatalf("call %d: %v, %v", i, v, err)
+		}
+	}
+}

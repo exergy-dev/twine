@@ -125,6 +125,8 @@ type AMP struct {
 	pending map[uint32]twine.Resolver[Args]
 	lost    error // non-nil once the connection is gone
 	out     []byte
+	hdr     [16]byte // _ask pair of an outgoing request
+	iov     [2][]byte
 }
 
 var _ twine.Protocol = (*AMP)(nil)
@@ -206,7 +208,8 @@ func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
 		return twine.Rejected[Args](nil, ErrNotConnected)
 	}
 	fut, res := twine.NewFuture[Args](a.t.Loop())
-	if err := validateArgs(cmd, args); err != nil {
+	body, err := encodeRequest(cmd, args)
+	if err != nil {
 		res.Reject(err)
 		return fut
 	}
@@ -234,8 +237,7 @@ func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
 			}
 		}
 		a.pending[id] = res
-		var tag [8]byte
-		a.send(ampAsk, string(strconv.AppendUint(tag[:0], uint64(id), 16)), ampCommand, cmd, args)
+		a.writeRequest(id, body)
 	})
 	return fut
 }
@@ -248,7 +250,8 @@ func (a *AMP) CallNoAnswer(cmd string, args Args) error {
 	if a.t == nil {
 		return ErrNotConnected
 	}
-	if err := validateArgs(cmd, args); err != nil {
+	body, err := encodeRequest(cmd, args)
+	if err != nil {
 		return err
 	}
 	if l := a.t.Loop(); (l == nil || l.InLoop()) && a.lost != nil {
@@ -256,29 +259,63 @@ func (a *AMP) CallNoAnswer(cmd string, args Args) error {
 	}
 	a.onLoop(func() {
 		if a.lost == nil {
-			a.send(ampCommand, cmd, "", "", args)
+			a.t.Write(body)
 		}
 	})
 	return nil
 }
 
-func validateArgs(cmd string, args Args) error {
-	if len(cmd) > ampMaxValueLen {
-		return fmt.Errorf("%w: command name too long", ErrBadArgs)
+// encodeRequest validates cmd and args and encodes the _command pair, every
+// argument and the box terminator into a new buffer. It runs on the
+// caller's goroutine, so the caller may reuse args as soon as Call returns.
+func encodeRequest(cmd string, args Args) ([]byte, error) {
+	n, err := validateArgs(cmd, args)
+	if err != nil {
+		return nil, err
 	}
+	b := make([]byte, 0, 4+len(ampCommand)+len(cmd)+n+2)
+	b = appendPair(b, ampCommand, cmd)
+	for k, v := range args {
+		b = appendPair(b, k, v)
+	}
+	return append(b, 0, 0), nil
+}
+
+// writeRequest writes the _ask pair for id and a body from encodeRequest
+// with one Writev. Loop-affine.
+func (a *AMP) writeRequest(id uint32, body []byte) {
+	h := append(a.hdr[:0], 0, byte(len(ampAsk)))
+	h = append(h, ampAsk...)
+	h = append(h, 0, 0)
+	n := len(h)
+	h = strconv.AppendUint(h, uint64(id), 16)
+	h[n-1] = byte(len(h) - n)
+	a.iov[0], a.iov[1] = h, body
+	a.t.Writev(a.iov[:]...)
+	a.iov = [2][]byte{}
+}
+
+// validateArgs checks cmd and args against the wire limits and returns the
+// encoded size of args.
+func validateArgs(cmd string, args Args) (int, error) {
+	if len(cmd) > ampMaxValueLen {
+		return 0, fmt.Errorf("%w: command name too long", ErrBadArgs)
+	}
+	n := 0
 	for k, v := range args {
 		switch {
 		case k == "":
-			return fmt.Errorf("%w: empty key", ErrBadArgs)
+			return 0, fmt.Errorf("%w: empty key", ErrBadArgs)
 		case len(k) > ampMaxKeyLen:
-			return fmt.Errorf("%w: key %.32q... longer than 255 bytes", ErrBadArgs, k)
+			return 0, fmt.Errorf("%w: key %.32q... longer than 255 bytes", ErrBadArgs, k)
 		case len(v) > ampMaxValueLen:
-			return fmt.Errorf("%w: value of %q longer than 65535 bytes", ErrBadArgs, k)
+			return 0, fmt.Errorf("%w: value of %q longer than 65535 bytes", ErrBadArgs, k)
 		case isReserved(k):
-			return fmt.Errorf("%w: reserved key %q", ErrBadArgs, k)
+			return 0, fmt.Errorf("%w: reserved key %q", ErrBadArgs, k)
 		}
+		n += 4 + len(k) + len(v)
 	}
-	return nil
+	return n, nil
 }
 
 func isReserved(k string) bool {
@@ -397,7 +434,7 @@ func (a *AMP) dispatch(box Args) {
 	}
 	fut.Then(func(res Args) {
 		a.onLoop(func() {
-			if err := validateArgs("", res); err != nil {
+			if _, err := validateArgs("", res); err != nil {
 				a.sendError(tag, &RemoteError{Code: UnknownErrorCode, Description: err.Error()})
 				return
 			}
