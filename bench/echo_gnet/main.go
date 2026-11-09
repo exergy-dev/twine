@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command echo_gnet is the gnet v2 echo server used as a comparison target in
 // the benchmarks (BENCHMARKS.md). Drive it with bench/echoclient.
 package main

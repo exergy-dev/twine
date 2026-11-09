@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package bench holds the echo servers and the load generator shared by the
 // benchmark harness (harness_test.go) and the standalone server and client
 // binaries in the subdirectories. BENCHMARKS.md interprets the results.
@@ -17,9 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/exergy-dev/twine"
 	"github.com/panjf2000/gnet/v2"
 	"github.com/panjf2000/gnet/v2/pkg/logging"
-	"github.com/exergy-dev/twine"
 	"golang.org/x/sys/unix"
 )
 
@@ -163,7 +165,7 @@ func (s *GoroutineServer) acceptLoop() {
 		s.mu.Lock()
 		if s.conns == nil { // closed
 			s.mu.Unlock()
-			c.Close()
+			_ = c.Close()
 			return
 		}
 		s.conns[c] = struct{}{}
@@ -177,7 +179,7 @@ func (s *GoroutineServer) acceptLoop() {
 func (s *GoroutineServer) serve(c net.Conn) {
 	defer s.wg.Done()
 	defer func() {
-		c.Close()
+		_ = c.Close()
 		s.mu.Lock()
 		if s.conns != nil {
 			delete(s.conns, c)
@@ -207,13 +209,13 @@ func (s *GoroutineServer) Conns() int { return int(s.n.Load()) }
 
 // Close implements Server.
 func (s *GoroutineServer) Close() {
-	s.ln.Close()
+	_ = s.ln.Close()
 	s.mu.Lock()
 	conns := s.conns
 	s.conns = nil
 	s.mu.Unlock()
 	for c := range conns {
-		c.Close()
+		_ = c.Close()
 	}
 	s.wg.Wait()
 }
@@ -272,7 +274,7 @@ func StartGnet(addr string, loops int) (*GnetServer, error) {
 			return nil, err
 		}
 		addr = ln.Addr().String()
-		ln.Close()
+		_ = ln.Close()
 	} else if host == "" {
 		addr = "0.0.0.0:" + port
 	}
@@ -305,7 +307,7 @@ func StartGnet(addr string, loops int) (*GnetServer, error) {
 				_ = c.SetReadDeadline(time.Now().Add(time.Second))
 				_, err = io.ReadFull(c, b[:])
 			}
-			c.Close()
+			_ = c.Close()
 			if err == nil {
 				break
 			}

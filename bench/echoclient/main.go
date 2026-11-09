@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command echoclient is the load generator for the echo servers. It opens
 // -conns connections, runs a -size byte ping-pong (one message in flight per
 // connection) for -duration and reports msgs/s and latency percentiles.
@@ -34,7 +36,7 @@ func main() {
 	defer bench.CloseAll(cs)
 	// One warm-up round trip per connection.
 	if _, err := bench.PingPong(cs, *size, 1, time.Time{}, false); err != nil {
-		log.Fatal(err)
+		log.Fatal(err) //nolint:gocritic // exiting closes the sockets anyway
 	}
 	srv0, _ := bench.ProcCPU(*serverPID)
 	cli0, _ := bench.ProcCPU(os.Getpid())

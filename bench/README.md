@@ -2,6 +2,8 @@
 
 Benchmark harnesses behind BENCHMARKS.md. This is a separate Go module so the
 third-party comparison targets (gnet) never enter the root module.
+Linux only: the harness pins CPUs and reads `/proc`, and every file carries
+`//go:build linux`.
 
 Run everything with `make bench` from the repository root; results land in
 `bench/results/<git-sha>.txt`. Interpreted numbers and caveats are in
