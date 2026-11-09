@@ -8,3 +8,30 @@
 !/bench/results/baseline.txt
 !/bench/results/pinned.txt
 !/bench/results/idle1m.txt
+
+# Claude Code worktrees and local state.
+/.claude/
+
+# Binaries left by a plain `go build` in a command directory.
+/bench/cpuspeed/cpuspeed
+/bench/echo_gnet/echo_gnet
+/bench/echo_goroutine/echo_goroutine
+/bench/echo_twine/echo_twine
+/bench/echoclient/echoclient
+/bench/http_nethttp/http_nethttp
+/bench/http_twine/http_twine
+/bench/httpclient/httpclient
+/bench/idle1m/idle1m
+/bench/idle1m/server/server
+/bench/scaling/scaling
+/bench/twineload/twineload
+/examples/chat/chat
+/examples/client_reconnect/client_reconnect
+/examples/echo/echo
+/examples/http_hello/http_hello
+/examples/udp_echo/udp_echo
+/examples/tunsink/tunsink
+/examples/tunsink/cmd/aesbench/aesbench
+/examples/tunsink/cmd/baseline/baseline
+/examples/tunsink/cmd/fakekafka/fakekafka
+/examples/tunsink/cmd/loadgen/loadgen
