@@ -175,3 +175,22 @@ func sendCloseNotify(fd int) error {
 	oob[unix.CmsgSpace(0)] = recordTypeAlert
 	return unix.Sendmsg(fd, []byte{1, 0}, oob, nil, unix.MSG_DONTWAIT) // warning, close_notify
 }
+
+// hasInbound reports whether received ciphertext is queued or borrowed.
+// Loop-only, loop mode.
+func (b *bio) hasInbound() bool { return b.r < len(b.in) || len(b.borrowed) > 0 }
+
+// hasOutbound reports whether handshake ciphertext is waiting to be shipped.
+// Loop-only.
+func (b *bio) hasOutbound() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.out) > 0
+}
+
+// blockWrites makes every later Write fail with errOffloadWrite. Loop-only.
+func (b *bio) blockWrites() {
+	b.mu.Lock()
+	b.noWrite = true
+	b.mu.Unlock()
+}
