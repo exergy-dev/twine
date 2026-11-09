@@ -51,7 +51,6 @@ type bio struct {
 	in          []byte // (mu) owned inbound ciphertext; unread bytes are in[r:]
 	r           int    // (mu) read offset into in
 	out         []byte // (mu) outbound ciphertext written during the handshake
-	spare       []byte // (mu) recycled out buffer
 	flushQueued bool   // (mu) a flushOut task is pending on the loop
 	err         error  // (mu) terminal error once the connection is gone
 	loopMode    bool   // (mu) written once by the loop on mode switch
@@ -206,25 +205,18 @@ func (b *bio) flushOut() {
 	b.mu.Lock()
 	b.flushQueued = false
 	data := b.out
-	if len(data) == 0 {
-		b.mu.Unlock()
-		return
+	b.out = nil
+	b.mu.Unlock()
+	if len(data) > 0 {
+		b.under.Write(data) // copies if it must buffer
 	}
-	b.out, b.spare = b.spare[:0], nil
-	b.mu.Unlock()
-
-	b.under.Write(data) // copies if it must buffer
-
-	b.mu.Lock()
-	b.spare = data[:0]
-	b.mu.Unlock()
 }
 
 // switchToLoopMode is called on the loop once the handshake has completed.
 func (b *bio) switchToLoopMode() {
 	b.mu.Lock()
 	b.loopMode = true
-	b.out, b.spare = nil, nil
+	b.out = nil
 	b.mu.Unlock()
 }
 

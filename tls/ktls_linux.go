@@ -123,8 +123,10 @@ func installKTLS(t *Transport) bool {
 		return false
 	}
 	// Ciphertext still queued for the socket would be encrypted a second
-	// time (or reordered against the first kernel record).
-	if t.under.PendingWrite() != 0 || t.bio.hasOutbound() {
+	// time (or reordered against the first kernel record). The last
+	// handshake flight has already been handed to the core (flushOut before
+	// the mode switch), so the core's ring is the only place it can wait.
+	if t.under.PendingWrite() != 0 {
 		return false
 	}
 	snap, ok := snapshot(t.tc, st.CipherSuite, ctls.VersionTLS13)
@@ -179,14 +181,6 @@ func sendCloseNotify(fd int) error {
 // hasInbound reports whether received ciphertext is queued or borrowed.
 // Loop-only, loop mode.
 func (b *bio) hasInbound() bool { return b.r < len(b.in) || len(b.borrowed) > 0 }
-
-// hasOutbound reports whether handshake ciphertext is waiting to be shipped.
-// Loop-only.
-func (b *bio) hasOutbound() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.out) > 0
-}
 
 // blockWrites makes every later Write fail with errOffloadWrite. Loop-only.
 func (b *bio) blockWrites() {

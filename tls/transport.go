@@ -72,7 +72,7 @@ var (
 // that Transport's exported API does not include the Protocol methods.
 type wrapper Transport
 
-// ConnectionMade starts the handshake on a worker goroutine.
+// ConnectionMade starts the handshake on its own goroutine.
 func (w *wrapper) ConnectionMade(under twine.Transport) {
 	t := (*Transport)(w)
 	t.under = under
@@ -87,27 +87,20 @@ func (w *wrapper) ConnectionMade(under twine.Transport) {
 	if d := t.f.opts.handshakeTimeout; d > 0 {
 		t.hsTimer = t.loop.CallLater(d, t.onHandshakeTimeout)
 	}
-	// From here until the Future settles, only the worker touches t.tc.
+	// From here until the Future settles, only the handshake goroutine
+	// touches t.tc.
 	t.startHandshake().Then(t.onHandshakeDone).Catch(t.onHandshakeError)
 }
 
-// handshakeOnPool selects where the blocking handshake runs. Design Section
-// 10 puts it on the engine worker pool (twine.DeferToThread). It runs on a
-// dedicated goroutine instead because a handshake blocks for whole network
-// round trips: on a bounded pool, as many silent peers as there are workers
-// (4*GOMAXPROCS by default) would hold every worker for HandshakeTimeout,
-// stalling all other handshakes and every other DeferToThread user. Either
-// way the Future settles on the loop through CallFromThread, which is the
-// happens-before edge the concurrency rule relies on. Setting this to true
-// restores the design's DeferToThread path unchanged.
-const handshakeOnPool = false
-
-// startHandshake runs t.tc.Handshake off the loop and returns a Future that
-// settles on the loop.
+// startHandshake runs t.tc.Handshake on a goroutine of its own and returns
+// a Future that settles on the loop. A handshake blocks for whole network
+// round trips while it waits for the peer, so it does not run on the
+// engine's bounded DeferToThread pool: there, as many silent peers as there
+// are workers would hold every worker for HandshakeTimeout and stall all
+// other handshakes and DeferToThread users. The Future settles through
+// CallFromThread, which is the happens-before edge the concurrency rule
+// relies on. Until then the goroutine is the only code touching t.tc.
 func (t *Transport) startHandshake() *twine.Future[struct{}] {
-	if handshakeOnPool {
-		return twine.DeferToThread(t.loop, t.runHandshake)
-	}
 	fut, res := twine.NewFuture[struct{}](t.loop)
 	go func() {
 		defer func() {
@@ -115,7 +108,7 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 				res.Reject(&twine.PanicError{Value: r, Stack: debug.Stack()})
 			}
 		}()
-		if _, err := t.runHandshake(); err != nil {
+		if err := t.tc.Handshake(); err != nil {
 			// Settle the user's Connect Future from here as well (Reject is
 			// idempotent and thread-safe): the loop callback that normally
 			// does it is dropped if the loop exits mid-handshake.
@@ -187,12 +180,6 @@ func (w *wrapper) ConnectionLost(err error) {
 		t.made = false
 		t.inner.ConnectionLost(err)
 	}
-}
-
-// runHandshake runs on a worker goroutine. It is the only code that touches
-// t.tc before the handshake Future settles.
-func (t *Transport) runHandshake() (struct{}, error) {
-	return struct{}{}, t.tc.Handshake()
 }
 
 func (t *Transport) stopTimer() {
