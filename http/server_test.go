@@ -626,8 +626,10 @@ func TestServerIdleTimeout(t *testing.T) {
 // TestServerReadTimeoutTrickle trickles a head one byte at a time, which
 // keeps the idle timer from firing: ReadTimeout must answer 408 and close.
 func TestServerReadTimeoutTrickle(t *testing.T) {
-	const timeout = 300 * time.Millisecond
-	s := &Server{Handler: testHandler, ReadTimeout: timeout, IdleTimeout: 150 * time.Millisecond}
+	// The idle timeout alone would close the connection after 400 ms; the
+	// trickle (every 25 ms) keeps resetting it, so only ReadTimeout fires.
+	const timeout = 800 * time.Millisecond
+	s := &Server{Handler: testHandler, ReadTimeout: timeout, IdleTimeout: 400 * time.Millisecond}
 	addr, _ := startServer(t, s)
 	nc, br := dial(t, addr)
 	done := make(chan struct{})
@@ -636,7 +638,7 @@ func TestServerReadTimeoutTrickle(t *testing.T) {
 		if _, err := io.WriteString(nc, "GET /hello HTTP/1.1\r\nHost: x\r\nX-Slow: "); err != nil {
 			return
 		}
-		tick := time.NewTicker(30 * time.Millisecond)
+		tick := time.NewTicker(25 * time.Millisecond)
 		defer tick.Stop()
 		for {
 			select {
@@ -668,7 +670,7 @@ func TestServerReadTimeoutTrickle(t *testing.T) {
 // clears the clock, that the stale timer firing later does nothing, and
 // that the next incomplete request gets a fresh ReadTimeout.
 func TestServerReadTimeoutRestarts(t *testing.T) {
-	const timeout = 200 * time.Millisecond
+	const timeout = 600 * time.Millisecond
 	s := &Server{Handler: testHandler, ReadTimeout: timeout}
 	addr, _ := startServer(t, s)
 	nc, br := dial(t, addr)
@@ -687,7 +689,7 @@ func TestServerReadTimeoutRestarts(t *testing.T) {
 	time.Sleep(timeout / 4)
 	io.WriteString(nc, "st: x\r\n\r\n")
 	get()
-	time.Sleep(2 * timeout) // the timer armed by the first request fires
+	time.Sleep(timeout) // the timer armed by the first request fires
 	io.WriteString(nc, "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
 	get()
 	io.WriteString(nc, "GET /hello HTTP/1.1\r\n")
