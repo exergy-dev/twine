@@ -48,8 +48,8 @@ type Loop struct {
 	moreTasks      bool     // drain hit the per-iteration cap
 
 	// Identity.
-	tid      atomic.Int64 // kernel thread id when locked
-	gid      atomic.Int64 // goroutine id fallback
+	tid      atomic.Int64 // kernel thread id of the locked loop thread
+	gid      atomic.Int64 // goroutine id (InLoop fallback, watchdog stack filter)
 	started  atomic.Bool
 	stopped  atomic.Bool
 	wakeBusy atomic.Int32 // CallFromThread callers inside Wake
@@ -132,7 +132,7 @@ func (l *Loop) InLoop() bool {
 	if !l.started.Load() {
 		return false
 	}
-	if haveThreadID && l.cfg.lockOSThread {
+	if haveThreadID {
 		return threadID() == l.tid.Load()
 	}
 	return goid() == l.gid.Load()
@@ -240,10 +240,11 @@ func (l *Loop) refreshNow() {
 
 // run is the loop goroutine body.
 func (l *Loop) run(ready chan<- error) {
-	if l.cfg.lockOSThread {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-	}
+	// The loop always owns its OS thread: InLoop compares kernel thread ids,
+	// and a loop that blocks in poll must not hand its thread to other
+	// goroutines.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if n := len(l.cfg.pinCPUs); n > 0 {
 		if err := pinToCPU(l.cfg.pinCPUs[l.id%n]); err != nil {
 			l.cfg.logger.Warn("twine: pinning loop", "loop", l.id, "cpu", l.cfg.pinCPUs[l.id%n], "err", err)

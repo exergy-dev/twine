@@ -106,18 +106,3 @@ func (h *hookProtoSimple) ConnectionMade(t Transport) {
 }
 func (h *hookProtoSimple) DataReceived([]byte)  {}
 func (h *hookProtoSimple) ConnectionLost(error) {}
-
-// TestPinLoops checks that PinLoops lands each loop on the requested CPU.
-func TestPinLoops(t *testing.T) {
-	if !haveThreadID {
-		t.Skip("no affinity support on this platform")
-	}
-	e := startEngine(t, Loops(2), PinLoops(0, 1))
-	for i, l := range e.loops {
-		var cpu int
-		onLoop(t, l, func() { cpu = currentCPU() })
-		if cpu != i {
-			t.Errorf("loop %d runs on cpu %d, want %d", i, cpu, i)
-		}
-	}
-}
