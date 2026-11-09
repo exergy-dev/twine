@@ -501,9 +501,7 @@ func (l *Loop) runTask(fn func()) {
 
 func (l *Loop) recoverTask() {
 	if r := recover(); r != nil {
-		pe := capturePanic(r)
-		l.metrics.panics.Add(1)
-		l.cfg.logger.Error("twine: panic in CallFromThread task", "loop", l.id, "panic", pe.Value, "stack", string(pe.Stack))
+		l.logPanic("twine: panic in CallFromThread task", capturePanic(r))
 	}
 }
 
@@ -707,8 +705,7 @@ func (l *Loop) endCallback() {
 func (l *Loop) recoverProto(c *conn) {
 	if r := recover(); r != nil {
 		pe := capturePanic(r)
-		l.metrics.panics.Add(1)
-		l.cfg.logger.Error("twine: panic in protocol", "loop", l.id, "fd", c.fd, "panic", pe.Value, "stack", string(pe.Stack))
+		l.logPanic("twine: panic in protocol", pe, "fd", c.fd)
 		switch c.kind {
 		case kindUDP:
 			c.closeUDP() // calls StopProtocol; UDP conns are not pooled
@@ -719,6 +716,23 @@ func (l *Loop) recoverProto(c *conn) {
 			c.abortNoCallback()
 		}
 	}
+}
+
+// logPanic logs a recovered panic with its stack through the engine logger
+// and counts it in MetricsSnapshot.Panics. Safe from any goroutine.
+func (l *Loop) logPanic(msg string, pe *PanicError, attrs ...any) {
+	l.metrics.panics.Add(1)
+	l.cfg.logger.Error(msg, append([]any{"loop", l.id, "panic", pe.Value, "stack", string(pe.Stack)}, attrs...)...)
+}
+
+// ReportPanic logs pe through the engine's Logger and counts it in
+// MetricsSnapshot.Panics, as the loop does for the panics it recovers
+// itself. Code that recovers panics from protocol callbacks outside the
+// loop's own recovery (a wrapper protocol such as the tls package's
+// Transport, or a goroutine serving a connection) calls it so those panics
+// are not silent. Safe from any goroutine.
+func (l *Loop) ReportPanic(pe *PanicError) {
+	l.logPanic("twine: panic in protocol", pe)
 }
 
 // capturePanic builds a PanicError with the current stack.
@@ -817,9 +831,7 @@ func (l *Loop) callConnectionLost(c *conn) {
 
 func (l *Loop) recoverLost(c *conn) {
 	if r := recover(); r != nil {
-		pe := capturePanic(r)
-		l.metrics.panics.Add(1)
-		l.cfg.logger.Error("twine: panic in ConnectionLost", "loop", l.id, "fd", c.fd, "panic", pe.Value)
+		l.logPanic("twine: panic in ConnectionLost", capturePanic(r), "fd", c.fd)
 	}
 }
 

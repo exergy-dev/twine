@@ -146,8 +146,7 @@ func (f *Future[T]) guard(fn func()) (pe *PanicError) {
 		if r := recover(); r != nil {
 			pe = capturePanic(r)
 			if f.loop != nil {
-				f.loop.metrics.panics.Add(1)
-				f.loop.cfg.logger.Error("twine: panic in Future callback", "loop", f.loop.id, "panic", pe.Value)
+				f.loop.logPanic("twine: panic in Future callback", pe)
 			}
 		}
 	}()
