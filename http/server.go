@@ -508,9 +508,13 @@ func (c *conn) writeResponse() {
 	c.wbuf = w
 }
 
-// sendError answers a request that could not be parsed and closes.
+// sendError answers a request that could not be parsed with a canned
+// response and closes.
 func (c *conn) sendError(code int) {
-	c.wbuf = append(c.wbuf, errorResponse(code)...)
+	w := append(c.wbuf, statusLines[code]...)
+	w = append(w, c.s.serverLine...)
+	w = append(w, c.date.line...)
+	c.wbuf = append(w, errorTail(code)...)
 	c.closeConn()
 }
 
@@ -553,25 +557,34 @@ var statusLines = func() (t [600][]byte) {
 	return t
 }()
 
-var errorResponses = func() map[int][]byte {
-	m := make(map[int][]byte)
-	for _, code := range []int{400, 413, 431, 500, 501, 505} {
+// cannedError is the part of an error response that follows the status,
+// Server and Date lines.
+type cannedError struct {
+	code int
+	tail []byte
+}
+
+// cannedErrors covers every status the parser and the timeouts produce.
+var cannedErrors = func() []cannedError {
+	var t []cannedError
+	for _, code := range []int{400, 413, 431, 501, 505} {
 		body := nethttp.StatusText(code) + "\n"
-		b := append([]byte(nil), statusLines[code]...)
-		b = append(b, defaultContentType...)
+		b := append([]byte(nil), defaultContentType...)
 		b = append(b, "Content-Length: "...)
 		b = strconv.AppendInt(b, int64(len(body)), 10)
 		b = append(b, "\r\nConnection: close\r\n\r\n"...)
-		t := append(b, body...)
-		m[code] = t
+		t = append(t, cannedError{code, append(b, body...)})
 	}
-	return m
+	return t
 }()
 
-// errorResponse returns the canned close-after response for code.
-func errorResponse(code int) []byte {
-	if b, ok := errorResponses[code]; ok {
-		return b
+// errorTail returns the canned tail for code. Every code sendError is
+// given has one; anything else is a bug in this package.
+func errorTail(code int) []byte {
+	for i := range cannedErrors {
+		if cannedErrors[i].code == code {
+			return cannedErrors[i].tail
+		}
 	}
-	return errorResponses[400]
+	panic("twine/http: no canned response for status " + strconv.Itoa(code))
 }
