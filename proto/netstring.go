@@ -141,7 +141,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 				}
 				ns.state = nsData
 				if cap(ns.buf) < ns.n {
-					ns.buf = make([]byte, 0, ns.n)
+					ns.buf = make([]byte, 0, min(ns.n, retainLimit))
 				}
 				ns.buf = ns.buf[:0]
 			default:
