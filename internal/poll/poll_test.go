@@ -394,6 +394,15 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
+func TestBackend(t *testing.T) {
+	switch b := newPoller(t).Backend(); b {
+	case "epoll", "kqueue", "io_uring", "epoll (io_uring unavailable)":
+		t.Logf("backend: %s", b)
+	default:
+		t.Fatalf("Backend() = %q", b)
+	}
+}
+
 func TestAllocs(t *testing.T) {
 	p := newPoller(t)
 	a, b := socketpair(t)

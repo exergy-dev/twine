@@ -75,28 +75,12 @@ func (e *epoller) wait(evs []Event, timeout time.Duration, w *waker) (int, error
 		return 0, unix.EINVAL
 	}
 	evs = evs[:min(len(evs), MaxEvents)]
-	msec := durationToMs(timeout)
-	var deadline time.Time
-	if timeout > 0 {
-		deadline = time.Now().Add(timeout)
-	}
-	var n int
-	for {
-		var err error
-		n, err = unix.EpollWait(e.fd, e.kevs[:len(evs)], msec)
-		if err == nil {
-			break
+	n, err := unix.EpollWait(e.fd, e.kevs[:len(evs)], durationToMs(timeout))
+	if err != nil {
+		if err == unix.EINTR {
+			return 0, nil // interrupted by a signal: a spurious wakeup
 		}
-		if err != unix.EINTR {
-			return 0, err
-		}
-		if timeout > 0 {
-			rem := time.Until(deadline)
-			if rem <= 0 {
-				return 0, nil
-			}
-			msec = durationToMs(rem)
-		}
+		return 0, err
 	}
 	out := 0
 	wfd := int32(w.fd)

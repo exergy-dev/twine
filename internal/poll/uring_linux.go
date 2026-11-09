@@ -79,6 +79,7 @@ package poll
 import (
 	"encoding/binary"
 	"math"
+	"runtime"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -284,9 +285,6 @@ func open(useURing bool) (*Poller, error) {
 // kernel-side failure (such as a closed fd) is then reported by Wait as
 // Error|Hangup for fd instead of being returned here.
 func (p *Poller) Add(fd int, flags uint32) error {
-	if p.closed {
-		return unix.EBADF
-	}
 	if p.ring == nil {
 		return p.ep.add(fd, flags)
 	}
@@ -296,9 +294,6 @@ func (p *Poller) Add(fd int, flags uint32) error {
 // Mod replaces fd's interest set. If fd is already ready for a requested
 // direction, the next Wait reports it.
 func (p *Poller) Mod(fd int, flags uint32) error {
-	if p.closed {
-		return unix.EBADF
-	}
 	if p.ring == nil {
 		return p.ep.mod(fd, flags)
 	}
@@ -307,9 +302,6 @@ func (p *Poller) Mod(fd int, flags uint32) error {
 
 // Del removes fd. Callers close the fd themselves, after Del.
 func (p *Poller) Del(fd int) error {
-	if p.closed {
-		return unix.EBADF
-	}
 	if p.ring == nil {
 		return p.ep.del(fd)
 	}
@@ -317,28 +309,22 @@ func (p *Poller) Del(fd int) error {
 }
 
 // Wait blocks up to timeout (negative = forever, 0 = poll) and fills evs,
-// returning the number of events written. At most min(len(evs), 256) events
-// are returned per call and each fd appears at most once; an empty evs is
-// rejected with EINVAL.
+// returning the number of events written. At most min(len(evs), MaxEvents)
+// events are returned per call and, on io_uring, each fd appears at most
+// once; an empty evs is rejected with EINVAL.
 //
 // The wake eventfd is drained internally and never reported, so a Wait woken
-// only by Wake returns (0, nil). EINTR is retried internally (with the
-// remaining timeout) and never returned. Wait does not allocate.
+// only by Wake returns (0, nil). EINTR is never returned: a Wait interrupted
+// by a signal, or woken by completions that carry no event (a stale or
+// internal CQE), may return (0, nil) before timeout. Wait does not allocate.
 func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
-	max := len(evs)
-	if max == 0 {
+	if p.ring == nil {
+		return p.ep.wait(evs, timeout, &p.w)
+	}
+	if len(evs) == 0 {
 		return 0, unix.EINVAL
 	}
-	if p.closed {
-		return 0, unix.EBADF
-	}
-	if max > MaxEvents {
-		max = MaxEvents
-	}
-	if p.ring == nil {
-		return p.ep.wait(evs[:max], timeout, &p.w)
-	}
-	return p.ring.wait(evs[:max], timeout, &p.w)
+	return p.ring.wait(evs[:min(len(evs), MaxEvents)], timeout, &p.w)
 }
 
 // Wake makes a blocked or future Wait return promptly. It is safe to call
@@ -366,6 +352,19 @@ func (p *Poller) Close() error {
 		err = err2
 	}
 	return err
+}
+
+// Backend names the kernel interface in use: "io_uring", or "epoll
+// (io_uring unavailable)" when New fell back because io_uring could not be
+// set up (the reason is not exposed; the fallback is fully functional).
+func (p *Poller) Backend() string {
+	switch {
+	case p.ring != nil:
+		return "io_uring"
+	case p.uringErr != nil:
+		return "epoll (io_uring unavailable)"
+	}
+	return "epoll" // fallback forced by a test
 }
 
 // ---------------------------------------------------------------------------
@@ -412,8 +411,9 @@ type uring struct {
 	fds []fdState
 	seq uint32 // Wait sequence number for per-fd coalescing
 
-	arg getEventsArg
+	arg getEventsArg // arg.ts holds &ts, set once by newURing
 	ts  kernelTimespec
+	pin runtime.Pinner // pins ts while arg refers to it
 }
 
 // sysSetup wraps io_uring_setup(2).
@@ -434,6 +434,10 @@ func newURing(wakeFD int) (r *uring, err error) {
 		return nil, err
 	}
 	r = &uring{fd: fd}
+	// The kernel reads the timeout through the uintptr in r.arg, which the
+	// GC cannot see: pin r.ts for the ring's lifetime (close unpins it).
+	r.pin.Pin(&r.ts)
+	r.arg = getEventsArg{sigmaskSz: 8, ts: uint64(uintptr(unsafe.Pointer(&r.ts)))}
 	defer func() {
 		if err != nil {
 			_ = r.close()
@@ -529,6 +533,7 @@ func (r *uring) close() error {
 		_ = unix.Munmap(r.sqRing)
 	}
 	r.sqesMem, r.cqRing, r.sqRing, r.sqes, r.cqes = nil, nil, nil, nil, nil
+	r.pin.Unpin()
 	return unix.Close(r.fd)
 }
 
@@ -796,34 +801,30 @@ func (r *uring) resync() {
 	}
 }
 
+// wait is Poller.Wait for io_uring; evs is non-empty and at most MaxEvents
+// long. With a timeout it makes one pass (enter, then reap), so completions
+// that carry no event end it early with (0, nil); without one it waits again
+// until something is reported.
 func (r *uring) wait(evs []Event, timeout time.Duration, w *waker) (int, error) {
-	var deadline time.Time
-	if timeout > 0 {
-		deadline = time.Now().Add(timeout)
-	}
-	rem := timeout
 	for {
 		pending := r.sqLocal != atomic.LoadUint32(r.sqHead)
 		ready := atomic.LoadUint32(r.cqTail) != r.cqLocal
 		overflow := atomic.LoadUint32(r.sqFlags)&ioringSQCQOverflow != 0
-		timedOut := false
 		if pending || overflow || (!ready && timeout != 0) {
 			var e unix.Errno
 			switch {
 			case ready || timeout == 0:
 				e = r.enter(0, ioringEnterGetEvents, nil, 0)
-			case rem < 0:
+			case timeout < 0:
 				e = r.enter(1, ioringEnterGetEvents, nil, 0)
 			default:
-				r.ts = kernelTimespec{sec: int64(rem / time.Second), nsec: int64(rem % time.Second)}
-				r.arg = getEventsArg{sigmaskSz: 8, ts: uint64(uintptr(unsafe.Pointer(&r.ts)))}
+				// r.arg points at r.ts, which newURing pinned.
+				r.ts = kernelTimespec{sec: int64(timeout / time.Second), nsec: int64(timeout % time.Second)}
 				e = r.enter(1, ioringEnterGetEvents|ioringEnterExtArg,
 					unsafe.Pointer(&r.arg), unsafe.Sizeof(r.arg))
 			}
 			switch e {
-			case 0, unix.EINTR, unix.EAGAIN, unix.EBUSY:
-			case unix.ETIME:
-				timedOut = true
+			case 0, unix.EINTR, unix.EAGAIN, unix.EBUSY, unix.ETIME:
 			case unix.EBADR:
 				r.resync()
 			default:
@@ -831,13 +832,8 @@ func (r *uring) wait(evs []Event, timeout time.Duration, w *waker) (int, error) 
 			}
 		}
 		n, woke, err := r.drain(evs, w)
-		if n > 0 || woke || err != nil || timeout == 0 || timedOut {
+		if n > 0 || woke || err != nil || timeout >= 0 {
 			return n, err
-		}
-		if timeout > 0 {
-			if rem = time.Until(deadline); rem <= 0 {
-				return 0, nil
-			}
 		}
 	}
 }

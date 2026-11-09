@@ -34,8 +34,9 @@ func (w *waker) open(kq int) error {
 	return nil
 }
 
-// wake writes one byte to the pipe: a single write(2). A full pipe (EAGAIN)
-// means a wakeup is already pending, so it is not an error.
+// wake writes one byte to the pipe: a single write(2), retried on EINTR. A
+// full pipe (EAGAIN) means a wakeup is already pending, so it is not an
+// error.
 func (w *waker) wake() error {
 	for {
 		_, err := unix.Write(w.w, w.one[:])

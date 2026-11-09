@@ -42,9 +42,9 @@ func (p *Poller) Del(fd int) error { return p.del(fd) }
 // events are returned per call; an empty evs is rejected with EINVAL.
 //
 // The wake eventfd is drained internally and never reported, so a Wait woken
-// only by Wake returns (0, nil). EINTR is retried internally (with the
-// remaining timeout) and never returned. Positive timeouts are rounded up to
-// a whole millisecond. Wait does not allocate.
+// only by Wake returns (0, nil). A Wait interrupted by a signal returns
+// (0, nil) early; EINTR is never returned. Positive timeouts are rounded up
+// to a whole millisecond. Wait does not allocate.
 func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
 	return p.wait(evs, timeout, &p.w)
 }
@@ -70,3 +70,6 @@ func (p *Poller) Close() error {
 	}
 	return err
 }
+
+// Backend names the kernel interface in use: "epoll".
+func (p *Poller) Backend() string { return "epoll" }

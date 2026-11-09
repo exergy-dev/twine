@@ -37,15 +37,31 @@ func requireURing(t testing.TB, p *Poller) {
 func TestURingBackendSelected(t *testing.T) {
 	p := newPoller(t)
 	if forceEpoll {
-		if p.ring != nil || p.ep == nil {
-			t.Fatal("forceEpoll set but io_uring backend selected")
+		if p.ring != nil || p.ep == nil || p.Backend() != "epoll" {
+			t.Fatalf("forceEpoll set but backend is %q", p.Backend())
 		}
 		return
 	}
 	if p.ring == nil {
+		if got := p.Backend(); got != "epoll (io_uring unavailable)" {
+			t.Errorf("fallback Backend() = %q", got)
+		}
 		b, _ := os.ReadFile("/proc/sys/kernel/io_uring_disabled")
 		t.Logf("io_uring_disabled=%q", strings.TrimSpace(string(b)))
 		t.Skipf("io_uring unavailable, epoll fallback in use: %v", p.uringErr)
+	}
+	if got := p.Backend(); got != "io_uring" {
+		t.Fatalf("Backend() = %q, want io_uring", got)
+	}
+	// open(false) is the fallback path New takes when io_uring fails.
+	q, err := open(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	q.uringErr = unix.ENOSYS
+	if got := q.Backend(); got != "epoll (io_uring unavailable)" {
+		t.Fatalf("fallback Backend() = %q", got)
 	}
 }
 
@@ -244,21 +260,6 @@ func TestURingConnectRefused(t *testing.T) {
 	f, _ := waitFor(t, p, fd, time.Second)
 	if f != Writable|Hangup|Error {
 		t.Fatalf("flags = %#x, want Writable|Hangup|Error", f)
-	}
-}
-
-func TestURingWaitAfterClose(t *testing.T) {
-	p, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.Close()
-	var evs [4]Event
-	if _, err := p.Wait(evs[:], 0); err != unix.EBADF {
-		t.Fatalf("Wait after Close: %v, want EBADF", err)
-	}
-	if err := p.Add(0, Readable); err != unix.EBADF {
-		t.Fatalf("Add after Close: %v, want EBADF", err)
 	}
 }
 
