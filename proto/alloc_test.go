@@ -3,6 +3,8 @@ package proto
 import (
 	"bytes"
 	"testing"
+
+	"github.com/exergy-dev/twine"
 )
 
 // The steady state of each parser is a complete frame in one chunk: it must
@@ -41,6 +43,65 @@ func TestNetstringZeroAlloc(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("no strings delivered")
+	}
+}
+
+// TestSplitFrameZeroAlloc: a frame split across two chunks goes through the
+// partial-frame buffer, which is reused, so the steady state does not
+// allocate either.
+func TestSplitFrameZeroAlloc(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		p     interface{ DataReceived([]byte) }
+		frame []byte
+	}{
+		{"LineReceiver", newBenchLine(), benchLine},
+		{"NetstringReceiver", newBenchNS(), benchNSFrame},
+		{"LengthPrefixed", newBenchLP(), benchLPFrame},
+	} {
+		for _, split := range []int{1, len(tc.frame) / 2, len(tc.frame) - 1} {
+			a, b := tc.frame[:split], tc.frame[split:]
+			tc.p.DataReceived(a) // warm the buffer
+			tc.p.DataReceived(b)
+			if n := testing.AllocsPerRun(1000, func() { tc.p.DataReceived(a); tc.p.DataReceived(b) }); n != 0 {
+				t.Fatalf("%s split at %d allocates %v per frame", tc.name, split, n)
+			}
+		}
+	}
+}
+
+// TestAMPAllocs bounds the allocations of one request/answer exchange and
+// of serving one request. AMP allocates by design (a map and strings per
+// box, a Future per call); this gate catches regressions.
+func TestAMPAllocs(t *testing.T) {
+	if debugBuild {
+		t.Skip("twine_debug adds allocations")
+	}
+	a := &AMP{}
+	ft := newFake()
+	a.ConnectionMade(ft)
+	args := Args{"a": "13", "b": "29"}
+	answer := twistedBox("_answer", "1", "total", "42")
+	call := testing.AllocsPerRun(1000, func() {
+		ft.reset()
+		a.next = 0
+		a.Call("Sum", args)
+		a.DataReceived(answer)
+	})
+	if a.Pending() != 0 {
+		t.Fatal("calls left pending")
+	}
+
+	s := &AMP{Handle: func(_ string, args Args) *twine.Future[Args] {
+		return twine.Resolved[Args](nil, Args{"total": args["a"]})
+	}}
+	s.ConnectionMade(ft)
+	req := twistedBox("_ask", "1", "_command", "Sum", "a", "13", "b", "29")
+	serve := testing.AllocsPerRun(1000, func() { ft.reset(); s.DataReceived(req) })
+
+	const maxCall, maxServe = 7, 13
+	if call > maxCall || serve > maxServe {
+		t.Fatalf("AMP allocations: call+answer %v (max %d), serve %v (max %d)", call, maxCall, serve, maxServe)
 	}
 }
 
