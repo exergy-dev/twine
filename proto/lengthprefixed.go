@@ -20,7 +20,7 @@ const DefaultMaxFrame = 1 << 20
 // LittleEndian rather than a BigEndian field. Configure the fields before
 // the first byte is received.
 //
-// A body longer than MaxFrame aborts with twine.ErrFrameTooLarge; with
+// A body longer than MaxFrame aborts with ErrFrameTooLarge; with
 // LengthIncludesPrefix a length smaller than the prefix aborts with
 // ErrMalformedFrame. ConnectionLost reports the error (see the package doc).
 type LengthPrefixed struct {
@@ -110,12 +110,12 @@ func (lp *LengthPrefixed) MaxSendable() int {
 }
 
 // SendFrame writes the prefix and b to the transport stored by
-// ConnectionMade, with a single Writev. It returns twine.ErrFrameTooLarge,
+// ConnectionMade, with a single Writev. It returns ErrFrameTooLarge,
 // writing nothing, when b does not fit the prefix (see MaxSendable). It
 // does not allocate.
 func (lp *LengthPrefixed) SendFrame(b []byte) error {
 	if len(b) > lp.MaxSendable() {
-		return twine.ErrFrameTooLarge
+		return ErrFrameTooLarge
 	}
 	p := lp.prefixLen()
 	n := uint32(len(b))
@@ -175,7 +175,7 @@ func (lp *LengthPrefixed) bodyLen(v uint64, p int) (int, bool) {
 		v -= uint64(p)
 	}
 	if v > uint64(lp.maxFrame()) {
-		lp.fail(twine.ErrFrameTooLarge)
+		lp.fail(ErrFrameTooLarge)
 		return 0, false
 	}
 	return int(v), true

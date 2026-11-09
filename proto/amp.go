@@ -99,7 +99,7 @@ func (e *RemoteError) Is(target error) bool {
 // nil) or UNKNOWN (for a panic). Requests without _ask get no reply.
 //
 // A box whose encoded size exceeds MaxBoxSize, or with a key longer than
-// 255 bytes, aborts the connection with twine.ErrFrameTooLarge.
+// 255 bytes, aborts the connection with ErrFrameTooLarge.
 type AMP struct {
 	// Handle serves an incoming command. It runs on the loop. args excludes
 	// the reserved keys. The returned Future may be settled later and on any
@@ -359,7 +359,7 @@ func appendPair(b []byte, k, v string) []byte {
 func (a *AMP) frameReceived(f []byte) {
 	a.boxSize += 2 + len(f)
 	if a.boxSize > a.maxBox() {
-		a.lp.fail(twine.ErrFrameTooLarge)
+		a.lp.fail(ErrFrameTooLarge)
 		return
 	}
 	if a.haveKey {
@@ -377,7 +377,7 @@ func (a *AMP) frameReceived(f []byte) {
 		return
 	}
 	if len(f) > ampMaxKeyLen {
-		a.lp.fail(twine.ErrFrameTooLarge)
+		a.lp.fail(ErrFrameTooLarge)
 		return
 	}
 	a.key = internKey(f)
