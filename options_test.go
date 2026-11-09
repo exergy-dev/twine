@@ -2,6 +2,7 @@ package twine
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"runtime"
 	"testing"
@@ -50,6 +51,25 @@ func TestOptionDefaults(t *testing.T) {
 	}
 	if c.watchdog != 0 || c.shutdownTimeout != 0 || c.closeLinger != 0 {
 		t.Errorf("negative durations not clamped: %v %v %v", c.watchdog, c.shutdownTimeout, c.closeLinger)
+	}
+}
+
+func TestEngineLogger(t *testing.T) {
+	e := New()
+	defer e.Stop()
+	if e.Logger() != slog.Default() {
+		t.Error("default Engine.Logger is not slog.Default()")
+	}
+	l := slog.New(slog.DiscardHandler)
+	e2 := New(Logger(l))
+	defer e2.Stop()
+	if e2.Logger() != l {
+		t.Error("Engine.Logger is not the configured logger")
+	}
+	e3 := New(Logger(nil))
+	defer e3.Stop()
+	if e3.Logger() == nil || e3.Logger().Enabled(context.Background(), slog.LevelError) {
+		t.Error("Logger(nil) does not yield a discarding logger")
 	}
 }
 
