@@ -128,7 +128,11 @@ type Consumer interface {
 type DatagramProtocol interface {
 	// StartProtocol is called once with the transport before any datagram.
 	StartProtocol(t DatagramTransport)
-	// DatagramReceived is called per datagram. b is valid only for the call.
+	// DatagramReceived is called per datagram. Both b and from are valid
+	// only for the call: from is a *net.UDPAddr the loop reuses for the next
+	// datagram, so keep a copy such as from.(*net.UDPAddr).AddrPort(), not
+	// the pointer (debug builds empty it after each call). Passing from
+	// straight to WriteTo inside the call is fine.
 	DatagramReceived(b []byte, from net.Addr)
 	// StopProtocol is called once when the socket closes.
 	StopProtocol()
