@@ -18,7 +18,7 @@ type Poller struct {
 	closed bool
 	// kevs is the kernel event buffer, embedded so Wait never allocates and
 	// never re-zeroes a large stack array.
-	kevs [maxEvents]unix.EpollEvent
+	kevs [MaxEvents]unix.EpollEvent
 }
 
 // New creates the epoll instance and the eventfd used by Wake.
@@ -88,8 +88,8 @@ func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
 	if max == 0 {
 		return 0, errNoEvents
 	}
-	if max > maxEvents {
-		max = maxEvents
+	if max > MaxEvents {
+		max = MaxEvents
 	}
 	msec := durationToMs(timeout)
 	var deadline time.Time
