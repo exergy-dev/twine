@@ -115,8 +115,7 @@ type AMP struct {
 	// MaxBoxSize limits one incoming box's encoded size. Default 1 MiB.
 	MaxBoxSize int
 
-	lp      LengthPrefixed
-	t       twine.Transport
+	lp      LengthPrefixed // holds the transport
 	box     Args
 	key     string
 	haveKey bool
@@ -133,7 +132,6 @@ var _ twine.Protocol = (*AMP)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (a *AMP) ConnectionMade(t twine.Transport) {
-	a.t = t
 	a.lp.PrefixLen = 2
 	a.lp.MaxFrame = ampMaxValueLen
 	a.lp.FrameReceived = a.frameReceived
@@ -160,6 +158,7 @@ func (a *AMP) ConnectionLost(err error) {
 	pending := a.pending
 	a.pending = nil
 	a.box = nil
+	a.lp.buf = nil
 	for _, r := range pending {
 		r.Reject(a.lost)
 	}
@@ -169,7 +168,7 @@ func (a *AMP) ConnectionLost(err error) {
 }
 
 // Transport returns the transport stored by ConnectionMade.
-func (a *AMP) Transport() twine.Transport { return a.t }
+func (a *AMP) Transport() twine.Transport { return a.lp.t }
 
 // Err returns the framing error that made the protocol abort, or nil.
 func (a *AMP) Err() error { return a.lp.err }
@@ -180,7 +179,7 @@ func (a *AMP) Pending() int { return len(a.pending) }
 // onLoop runs fn on the transport's loop: inline when already there (or
 // when there is no loop, as with test transports).
 func (a *AMP) onLoop(fn func()) {
-	l := a.t.Loop()
+	l := a.lp.t.Loop()
 	if l == nil || l.InLoop() {
 		fn()
 		return
@@ -191,7 +190,7 @@ func (a *AMP) onLoop(fn func()) {
 // loopGone reports whether the transport's loop has exited, in which case
 // CallFromThread would drop work and a Future would never settle.
 func (a *AMP) loopGone() bool {
-	l := a.t.Loop()
+	l := a.lp.t.Loop()
 	return l != nil && l.Stopped()
 }
 
@@ -204,10 +203,10 @@ func (a *AMP) loopGone() bool {
 // ErrNotConnected before ConnectionMade, and with ErrBadArgs for invalid
 // args.
 func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
-	if a.t == nil {
+	if a.lp.t == nil {
 		return twine.Rejected[Args](nil, ErrNotConnected)
 	}
-	fut, res := twine.NewFuture[Args](a.t.Loop())
+	fut, res := twine.NewFuture[Args](a.lp.t.Loop())
 	body, err := encodeRequest(cmd, args)
 	if err != nil {
 		res.Reject(err)
@@ -247,19 +246,19 @@ func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
 // ErrBadArgs, ErrNotConnected or ErrConnectionLost (the last only when
 // called on the loop) and is otherwise fire-and-forget.
 func (a *AMP) CallNoAnswer(cmd string, args Args) error {
-	if a.t == nil {
+	if a.lp.t == nil {
 		return ErrNotConnected
 	}
 	body, err := encodeRequest(cmd, args)
 	if err != nil {
 		return err
 	}
-	if l := a.t.Loop(); (l == nil || l.InLoop()) && a.lost != nil {
+	if l := a.lp.t.Loop(); (l == nil || l.InLoop()) && a.lost != nil {
 		return a.lost
 	}
 	a.onLoop(func() {
 		if a.lost == nil {
-			a.t.Write(body)
+			a.lp.t.Write(body)
 		}
 	})
 	return nil
@@ -291,7 +290,7 @@ func (a *AMP) writeRequest(id uint32, body []byte) {
 	h = strconv.AppendUint(h, uint64(id), 16)
 	h[n-1] = byte(len(h) - n)
 	a.iov[0], a.iov[1] = h, body
-	a.t.Writev(a.iov[:]...)
+	a.lp.t.Writev(a.iov[:]...)
 	a.iov = [2][]byte{}
 }
 
@@ -327,8 +326,12 @@ func isReserved(k string) bool {
 }
 
 // send encodes one box (k1/v1 and k2/v2 when non-empty, then args) and
-// writes it with a single Write. Loop-affine.
+// writes it with a single Write, unless the connection is gone (a handler
+// may answer after that). Loop-affine.
 func (a *AMP) send(k1, v1, k2, v2 string, args Args) {
+	if a.lost != nil {
+		return
+	}
 	out := a.out[:0]
 	out = appendPair(out, k1, v1)
 	if k2 != "" {
@@ -338,7 +341,7 @@ func (a *AMP) send(k1, v1, k2, v2 string, args Args) {
 		out = appendPair(out, k, v)
 	}
 	out = append(out, 0, 0)
-	a.t.Write(out)
+	a.lp.t.Write(out)
 	if cap(out) > retainLimit {
 		out = nil
 	}
@@ -377,8 +380,28 @@ func (a *AMP) frameReceived(f []byte) {
 		a.lp.fail(twine.ErrFrameTooLarge)
 		return
 	}
-	a.key = string(f)
+	a.key = internKey(f)
 	a.haveKey = true
+}
+
+// internKey returns f as a string, without allocating for the reserved
+// keys every request and answer carries.
+func internKey(f []byte) string {
+	switch string(f) {
+	case ampAsk:
+		return ampAsk
+	case ampAnswer:
+		return ampAnswer
+	case ampCommand:
+		return ampCommand
+	case ampError:
+		return ampError
+	case ampErrorCode:
+		return ampErrorCode
+	case ampErrorDesc:
+		return ampErrorDesc
+	}
+	return string(f)
 }
 
 func (a *AMP) maxBox() int {
@@ -463,9 +486,6 @@ func (a *AMP) callHandler(cmd string, args Args) (fut *twine.Future[Args], err e
 }
 
 func (a *AMP) sendError(tag string, re *RemoteError) {
-	if a.lost != nil {
-		return
-	}
 	code := re.Code
 	if code == "" {
 		code = UnknownErrorCode

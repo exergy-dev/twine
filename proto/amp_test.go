@@ -171,6 +171,32 @@ func TestAMPFramingLimits(t *testing.T) {
 	}
 }
 
+// TestAMPLateAnswerAfterLoss: a handler that settles after the connection
+// is gone writes nothing, whether it resolves or rejects, and the partial
+// box buffer is released.
+func TestAMPLateAnswerAfterLoss(t *testing.T) {
+	var rs []twine.Resolver[Args]
+	a := &AMP{Handle: func(string, Args) *twine.Future[Args] {
+		f, r := twine.NewFuture[Args](nil)
+		rs = append(rs, r)
+		return f
+	}}
+	ft := newFake()
+	a.ConnectionMade(ft)
+	feed(a, twistedBox("_ask", "1", "_command", "A"))
+	feed(a, twistedBox("_ask", "2", "_command", "B"))
+	feed(a, []byte{0, 5, 'k'}) // a partial key frame
+	a.ConnectionLost(nil)
+	if a.lp.buf != nil {
+		t.Fatal("partial frame buffer kept after ConnectionLost")
+	}
+	rs[0].Resolve(Args{"late": "1"})
+	rs[1].Reject(errors.New("late"))
+	if len(ft.out) != 0 {
+		t.Fatalf("wrote %q after the connection was lost", ft.out)
+	}
+}
+
 // ampPeer is an AMP protocol that reports itself once connected.
 type ampPeer struct {
 	AMP
