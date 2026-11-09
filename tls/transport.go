@@ -349,13 +349,16 @@ func (t *Transport) readError(err error) {
 
 // recoverInner turns a panic in inner code run from a Future callback or a
 // task (not from an underlying protocol callback, which the core guards)
-// into an abort delivering the panic to inner.ConnectionLost.
+// into an abort delivering the panic to inner.ConnectionLost. Like the
+// core's own recovery, it logs the panic through the engine logger and counts
+// it in MetricsSnapshot.Panics.
 func (t *Transport) recoverInner() {
 	if r := recover(); r != nil {
 		pe, ok := r.(*twine.PanicError)
 		if !ok {
 			pe = &twine.PanicError{Value: r, Stack: debug.Stack()}
 		}
+		t.loop.ReportPanic(pe)
 		if t.lostErr == nil {
 			t.lostErr = pe
 		}
