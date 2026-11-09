@@ -447,7 +447,7 @@ func (c *conn) flush() {
 		return
 	}
 	if c.ring.Len() == 0 {
-		c.ring.Reset() // release the slab so idle conns hold no buffer
+		// Consume released the last segment, so an idle conn holds no buffer.
 		c.disarmWrite()
 		if c.flags&flagClosing != 0 {
 			c.flags &^= flagFlushing

@@ -255,6 +255,9 @@ func (l *Loop) run(ready chan<- error) {
 		return
 	}
 	l.poller = p
+	if b := p.Backend(); l.id == 0 && b == "epoll (io_uring unavailable)" {
+		l.cfg.logger.Warn("twine: io_uring unavailable, using epoll")
+	}
 	l.tid.Store(threadID())
 	l.gid.Store(goid())
 
