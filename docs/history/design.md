@@ -2,7 +2,7 @@
 
 > **Historical:** the original design/build record, not maintained. See [README.md](../../README.md) and [docs/API.md](../API.md) for the current API, and [CHANGELOG.md](../../CHANGELOG.md) for what changed since.
 >
-> Superseded details: the module path is `github.com/exergy-dev/twine` and the minimum Go version is 1.24. Section 14 says `tls/transport.go` keeps a one-line switch (`handshakeOnPool`) back to the worker pool for TLS handshakes; that switch has been removed, and handshakes always run on their own goroutine. `scripts/ci-local.sh`, cited in Section 13, has been removed: CI and local runs share the Makefile targets.
+> Superseded details: the module path is `github.com/exergy-dev/twine` and the minimum Go version is 1.24. Section 14 says `tls/transport.go` keeps a one-line switch (`handshakeOnPool`) back to the worker pool for TLS handshakes; that switch has been removed, and handshakes always run on their own goroutine. Section 14 also mentions a ChaCha20 kTLS layout; it has been removed, and kernel offload covers TLS 1.3 AES-GCM only. `scripts/ci-local.sh`, cited in Section 13, has been removed: CI and local runs share the Makefile targets.
 
 *As of 2026-11-06*
 
