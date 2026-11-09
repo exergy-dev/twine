@@ -357,8 +357,8 @@ func (m *Message) SetAddr(a *net.UDPAddr) {
 // FillAddr fills dst in place from the received raw sockaddr: dst.IP is
 // resliced to 4 or 16 bytes (reusing its backing array when its capacity is
 // at least 16, so the call does not allocate), Port is set and Zone is set to
-// "". The IPv6 scope id is dropped. For AddrLen 0 or
-// an unsupported family dst is cleared (nil IP, port 0).
+// "". The IPv6 scope id is dropped. For AddrLen 0 or an unsupported family
+// dst is cleared (nil IP, port 0).
 func (m *Message) FillAddr(dst *net.UDPAddr) {
 	dst.Zone = ""
 	if m.AddrLen != 0 {
