@@ -128,7 +128,7 @@ func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory) *conn {
 	c.kind = kindTCP
 	c.peer, c.host = peer, host
 	l.register(c)
-	l.metrics.Connections.Add(1)
+	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
 	p := f.BuildProtocol(peer)
 	if p == nil {
@@ -308,14 +308,14 @@ func (c *conn) write(b []byte) {
 		return
 	}
 	if c.flags&(flagClosed|flagClosing) != 0 {
-		c.loop.metrics.WriteAfterClose.Add(1)
+		c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	if c.ring.Len() == 0 && c.flags&flagFlushing == 0 {
 		n, err := unix.Write(int(c.fd), b)
 		if n == len(b) {
-			c.loop.metrics.WriteBytes.Add(uint64(n))
-			c.loop.metrics.WriteDirectHit.Add(1)
+			c.loop.metrics.writeBytes.Add(uint64(n))
+			c.loop.metrics.writeDirectHit.Add(1)
 			c.touchIdle()
 			if c.producer != nil && !c.streaming {
 				c.markDirty() // flush pokes the pull producer for more
@@ -323,7 +323,7 @@ func (c *conn) write(b []byte) {
 			return
 		}
 		if n > 0 {
-			c.loop.metrics.WriteBytes.Add(uint64(n))
+			c.loop.metrics.writeBytes.Add(uint64(n))
 			b = b[n:]
 		} else if err != nil && err != unix.EAGAIN && err != unix.EINTR {
 			c.failWrite(err)
@@ -337,7 +337,7 @@ func (c *conn) write(b []byte) {
 // writev implements Transport.Writev.
 func (c *conn) writev(bs [][]byte) {
 	if c.flags&(flagClosed|flagClosing) != 0 {
-		c.loop.metrics.WriteAfterClose.Add(1)
+		c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	total := 0
@@ -360,8 +360,8 @@ func (c *conn) writev(bs [][]byte) {
 		}
 		n, err := rawWritev(int(c.fd), iov)
 		if n == total {
-			c.loop.metrics.WriteBytes.Add(uint64(n))
-			c.loop.metrics.WriteDirectHit.Add(1)
+			c.loop.metrics.writeBytes.Add(uint64(n))
+			c.loop.metrics.writeDirectHit.Add(1)
 			c.touchIdle()
 			if c.producer != nil && !c.streaming {
 				c.markDirty()
@@ -375,7 +375,7 @@ func (c *conn) writev(bs [][]byte) {
 			}
 			n = 0
 		}
-		c.loop.metrics.WriteBytes.Add(uint64(n))
+		c.loop.metrics.writeBytes.Add(uint64(n))
 		// Buffer the unwritten tail.
 		for _, b := range bs {
 			if n >= len(b) {
@@ -445,9 +445,9 @@ func (c *conn) flush() {
 	c.flags |= flagFlushing
 	iov := c.ring.Iovecs(c.loop.iovecs[:])
 	n, err := rawWritev(int(c.fd), iov)
-	c.loop.metrics.Writev.Add(1)
+	c.loop.metrics.writev.Add(1)
 	if n > 0 {
-		c.loop.metrics.WriteBytes.Add(uint64(n))
+		c.loop.metrics.writeBytes.Add(uint64(n))
 		c.ring.Consume(n)
 		c.touchIdle()
 	} else if err != nil && err != unix.EAGAIN && err != unix.EINTR {

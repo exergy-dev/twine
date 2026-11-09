@@ -7,12 +7,17 @@ import (
 
 // Sentinel errors. All are comparable with errors.Is.
 var (
-	// ErrClosed is recorded when Write is called on a closed transport. The
-	// write is a no-op; the error is counted in LoopMetrics.WriteAfterClose.
+	// ErrClosed rejects a ConnectTCP or Dial Future when the connection was
+	// closed during ConnectionMade (for example by Abort). Writes on a closed
+	// transport do not return it: they are silent no-ops counted in
+	// MetricsSnapshot.WriteAfterClose.
 	ErrClosed = errors.New("twine: transport closed")
 
-	// ErrLoopStopped is returned (or passed to callbacks) when CallFromThread,
-	// CallLater or ConnectTCP is used after the loop has exited.
+	// ErrLoopStopped reports work aimed at a loop that has exited. The core
+	// itself reports ErrEngineStopped for ConnectTCP, Dial, DeferToThread
+	// and Listen after Stop, and CallFromThread on an exited loop drops the
+	// function (counted in MetricsSnapshot.BacklogDrops); protocol libraries
+	// such as proto treat the two errors alike.
 	ErrLoopStopped = errors.New("twine: loop stopped")
 
 	// ErrWriteBufferFull aborts a connection whose pending writes exceed

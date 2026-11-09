@@ -102,7 +102,7 @@ func (l *Loop) completeConnect(c *conn) {
 	}
 	c.host = sock.LocalTCP(fd)
 	c.kind = kindTCP
-	l.metrics.Connections.Add(1)
+	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
 	p := d.factory.BuildProtocol(c.peer)
 	if p == nil {

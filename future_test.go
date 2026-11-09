@@ -576,10 +576,10 @@ func TestTimerZeroDelayRunsNextIteration(t *testing.T) {
 	l.CallFromThread(func() {
 		var r res
 		ran := false
-		r.schedIt = l.metrics.Iterations.Load()
+		r.schedIt = l.metrics.iterations.Load()
 		l.CallLater(0, func() {
 			ran = true
-			r.ranIt = l.metrics.Iterations.Load()
+			r.ranIt = l.metrics.iterations.Load()
 			ch <- r
 		})
 		if ran {

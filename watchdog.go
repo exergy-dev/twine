@@ -44,7 +44,7 @@ func (e *Engine) watchdog() {
 				continue
 			}
 			lastReport[i] = now
-			l.metrics.SlowCallbacks.Add(1)
+			l.metrics.slowCallbacks.Add(1)
 			proto := "<none>"
 			if c := l.cbProto.Load(); c != nil {
 				if n := c.protoName.Load(); n != nil {

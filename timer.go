@@ -40,7 +40,7 @@ func (t *Timer) fire() {
 func (l *Loop) recoverTimer() {
 	if r := recover(); r != nil {
 		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
+		l.metrics.panics.Add(1)
 		l.cfg.logger.Error("twine: panic in timer callback", "loop", l.id, "panic", pe.Value, "stack", string(pe.Stack))
 	}
 }
