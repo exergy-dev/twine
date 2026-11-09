@@ -177,7 +177,10 @@ func orDefault(d, def time.Duration) time.Duration {
 
 // Factory returns a twine.Factory that serves HTTP on every connection it
 // builds. Each connection allocates its protocol state (including its
-// RequestCtx) once; requests on it allocate nothing.
+// RequestCtx) once; requests on it allocate nothing beyond buffer growth.
+// A request that arrives over several reads arms the ReadTimeout timer at
+// most once per ReadTimeout, which costs a share of the loop's pooled
+// timer allocation (one per 256 timers).
 func (s *Server) Factory() twine.Factory {
 	s.init()
 	return twine.FactoryFunc(s.buildProtocol)
@@ -199,7 +202,9 @@ func (s *Server) buildProtocol(net.Addr) twine.Protocol {
 }
 
 // conn is the per-connection protocol. It embeds the RequestCtx so that a
-// connection costs one allocation.
+// connection costs one allocation for its state, plus the two method
+// values (resumeFn, readTimeoutFn) bound once so that scheduling them later
+// does not allocate.
 type conn struct {
 	s    *Server
 	t    twine.Transport
