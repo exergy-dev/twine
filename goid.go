@@ -2,21 +2,33 @@ package twine
 
 import (
 	"runtime"
-	"strconv"
-	"strings"
+	"sync"
 )
 
-// goid returns the current goroutine's id by parsing runtime.Stack. It is
-// slow (~1µs) and allocates; it is used only where threadID is unavailable
-// (non-Linux, or LockOSThread(false)).
+// goidBufs recycles the runtime.Stack scratch buffer. runtime.Stack stores
+// the slice it is given in the goroutine's g0 (g0.writebuf), so a stack
+// array always escapes to the heap; pooling it keeps goid allocation-free in
+// steady state.
+var goidBufs = sync.Pool{New: func() any { return new([64]byte) }}
+
+// goid returns the current goroutine's id by parsing the "goroutine N "
+// header that runtime.Stack writes. It costs ~1µs and does not allocate in
+// steady state. It is used only where threadID is unavailable (non-Linux,
+// or LockOSThread(false)), and there it sits on the CallFromThread path via
+// InLoop, so it must stay allocation-free (TestCallFromThreadZeroAlloc).
 func goid() int64 {
-	var buf [64]byte
+	buf := goidBufs.Get().(*[64]byte)
 	n := runtime.Stack(buf[:], false)
-	s := string(buf[:n])
-	s = strings.TrimPrefix(s, "goroutine ")
-	if i := strings.IndexByte(s, ' '); i > 0 {
-		s = s[:i]
+	const prefix = "goroutine "
+	var id int64
+	if n > len(prefix) && string(buf[:len(prefix)]) == prefix {
+		for _, c := range buf[len(prefix):n] {
+			if c < '0' || c > '9' {
+				break
+			}
+			id = id*10 + int64(c-'0')
+		}
 	}
-	id, _ := strconv.ParseInt(s, 10, 64)
+	goidBufs.Put(buf)
 	return id
 }
