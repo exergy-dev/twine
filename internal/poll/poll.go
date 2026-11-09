@@ -11,9 +11,10 @@
 // from other goroutines. A Poller must not be used after Close; only Close
 // itself may be repeated.
 //
-// Wait may return (0, nil) before its timeout without a Wake: a Wait
-// interrupted by a signal returns zero events (EINTR is never returned), and
-// on io_uring a completion that carries no event can end a timed Wait early.
+// Wait may return (0, nil) before its timeout without a Wake: EINTR is never
+// returned, a Wait interrupted by a signal may return zero events (epoll and
+// kqueue always do; io_uring re-waits when the timeout is negative), and on
+// io_uring a completion that carries no event can end a timed Wait early.
 // Callers already tolerate such spurious wakeups by recomputing the timeout.
 //
 // Backend differences the caller must tolerate:

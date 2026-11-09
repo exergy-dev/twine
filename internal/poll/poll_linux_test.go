@@ -5,6 +5,7 @@ package poll
 import (
 	"math"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,6 +104,12 @@ func benchWaitWake(b *testing.B, name string, mk func(*testing.B) *Poller, unloc
 	// waited on by a goroutine locked to its OS thread (Loop.run calls
 	// LockOSThread before poll.New). Both sides must run exactly b.N
 	// rounds, so these keep the b.N loop.
+	//
+	// Wait may return (0, nil) without a Wake (a signal interrupted it), so
+	// each side publishes the round it reached before waking the other, and
+	// a waiter waits again until it sees that round. Without this a
+	// spurious return lets one side run ahead, the extra Wakes coalesce in
+	// the eventfd, and the other side blocks forever.
 	modes := []bool{true}
 	if unlocked {
 		modes = []bool{false, true}
@@ -120,6 +127,7 @@ func benchWaitWake(b *testing.B, name string, mk func(*testing.B) *Poller, unloc
 			created := make(chan *Poller)
 			start := make(chan struct{})
 			done := make(chan struct{})
+			var sent1, sent2 atomic.Int64 // rounds whose Wake to p1 / p2 was sent
 			go func() {
 				defer close(done)
 				if locked {
@@ -129,8 +137,11 @@ func benchWaitWake(b *testing.B, name string, mk func(*testing.B) *Poller, unloc
 				}
 				<-start
 				evs := make([]Event, 8)
-				for i := 0; i < b.N; i++ {
-					p1.Wait(evs, -1)
+				for i := int64(1); i <= int64(b.N); i++ {
+					for sent1.Load() < i {
+						p1.Wait(evs, -1)
+					}
+					sent2.Store(i)
 					p2.Wake()
 				}
 			}()
@@ -144,9 +155,12 @@ func benchWaitWake(b *testing.B, name string, mk func(*testing.B) *Poller, unloc
 			evs := make([]Event, 8)
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for i := int64(1); i <= int64(b.N); i++ {
+				sent1.Store(i)
 				p1.Wake()
-				p2.Wait(evs, -1)
+				for sent2.Load() < i {
+					p2.Wait(evs, -1)
+				}
 			}
 			<-done
 		})
@@ -167,8 +181,12 @@ func benchWaitWake(b *testing.B, name string, mk func(*testing.B) *Poller, unloc
 		b.ReportAllocs()
 		for b.Loop() {
 			p.Mod(fds[0], Readable)
-			if n, _ := p.Wait(evs, -1); n != 1 {
-				b.Fatalf("Wait = %d", n)
+			n, err := p.Wait(evs, -1)
+			for n == 0 && err == nil { // spurious wakeup (signal)
+				n, err = p.Wait(evs, -1)
+			}
+			if n != 1 {
+				b.Fatalf("Wait = %d, %v", n, err)
 			}
 		}
 	})
