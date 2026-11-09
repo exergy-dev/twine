@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Benchmark the Go twine server (tunsink) against the Rust twine server
-# (tunsink-rs) on the same pipeline, with the goroutine-per-connection
-# baseline as a reference row.
+# Benchmark the twine server (tunsink) on the TCP -> TUN + Kafka pipeline,
+# with the goroutine-per-connection baseline as a reference row.
 #
 # Runs entirely inside an unprivileged user+network namespace so the TUN
 # device needs no root. One cell = one server process pinned to a CPU set, a
@@ -12,10 +11,10 @@
 # when the client buffer is full, so a Kafka cell measures the whole pipeline
 # (server + Kafka client + broker) with no drops.
 #
-#   ./bench.sh matrix results.txt      # full matrix, go rust baseline (~25 min, AES off)
-#   ./bench.sh quick results.txt       # go vs rust only, AES off and on, ~4.5 min
+#   ./bench.sh matrix results.txt      # full matrix, go and baseline (~17 min, AES off)
+#   ./bench.sh quick results.txt       # go only, AES off and on, ~2.5 min
 #   ./bench.sh cell SERVER MODE KAFKA AES CORES CONNS SIZE   # e.g. cell go direct off on 1core 64 512
-#   ./bench.sh compare results.txt     # go vs rust sunk/s table (+ failed checks)
+#   ./bench.sh compare results.txt     # go vs baseline sunk/s table (+ failed checks)
 #
 # AES is on|off: with on, the load generator encrypts every frame with
 # AES-256-GCM (12-byte nonce || ciphertext || 16-byte tag, fixed key) and the
@@ -28,17 +27,14 @@
 # (loadgen counts whole 64-frame batches only; TUN, and Kafka when on) and
 # decrypt_err=0, so frames sitting in socket buffers are not credited.
 #
-# SERVER is go (Go twine, alias twine), rust (Rust twine) or baseline.
-# Env: DURATION (8), SKIP_RUST=1 (do not build or run rust cells),
-# RUST_BIN (prebuilt tunsink-rs; skips the cargo build), TWINE_GOMAXPROCS,
-# LOADGEN_KEY (wrong-key negative check, see cell).
-# Building the Rust server needs cmake on PATH ($HOME/.local/bin is prepended).
+# SERVER is go (the twine server, alias twine) or baseline.
+# Env: DURATION (8), TWINE_GOMAXPROCS, LOADGEN_KEY (wrong-key negative check,
+# see cell).
 #
 # CPU layout assumes sibling threads are (0,1),(2,3),...: the server gets one
 # thread per physical core. go runs N loops pinned to the N CPUs; the
 # baseline runs GOMAXPROCS=N on the same CPUs; both get N sink goroutines
-# that float within the set. rust runs N loops pinned (-pin); its sink threads
-# and the librdkafka threads float within the taskset set (no GOMAXPROCS). cpu_s is the server's CPU time over the run, so
+# that float within the set. cpu_s is the server's CPU time over the run, so
 # frames/cpu_s compares efficiency when a server does not use its budget.
 # The go server runs with GOMAXPROCS=N+1 (TWINE_GOMAXPROCS overrides):
 # its loops are locked OS threads, so with GOMAXPROCS=N the sink and Kafka
@@ -46,14 +42,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 BIN=${BIN:-$(mktemp -d)/bin}
-SKIP_RUST=${SKIP_RUST:-0}
-RUST_CRATE=../../rust/examples/tunsink
 DURATION=${DURATION:-8}
 LOADGEN_CPUS=${LOADGEN_CPUS:-16-31}
 KAFKA_CPUS=${KAFKA_CPUS:-10,12,14}
 
-# compare FILE: per (mode, kafka, aes, cores, conns, size) cell, go vs rust sunk/s
-# (frames/s in old files), rust/go ratio, the baseline and the servers whose
+# compare FILE: per (mode, kafka, aes, cores, conns, size) cell, go vs baseline
+# sunk/s (frames/s in old files), baseline/go ratio and the servers whose
 # check failed. Old files: "twine" rows count as go, missing aes= counts as off.
 compare() {
   awk '
@@ -86,12 +80,12 @@ compare() {
     }
     function f(x) { return x == "" ? "-" : x }
     END {
-      printf "%-8s %-5s %-4s %-6s %-5s %-5s %12s %12s %8s %12s  %s\n", "mode", "kafka", "aes", "cores", "conns", "size", "go", "rust", "rust/go", "baseline", "chk"
+      printf "%-8s %-5s %-4s %-6s %-5s %-5s %12s %12s %8s  %s\n", "mode", "kafka", "aes", "cores", "conns", "size", "go", "baseline", "base/go", "chk"
       for (i = 1; i <= n; i++) {
         k = order[i]; split(k, p, SUBSEP)
-        g = v[k, "go"]; r = v[k, "rust"]; b = v[k, "baseline"]
-        ratio = (g != "" && r != "" && g > 0) ? sprintf("%.0f%%", 100 * r / g) : "-"
-        printf "%-8s %-5s %-4s %-6s %-5s %-5s %12s %12s %8s %12s  %s\n", p[1], p[2], p[3], p[4], p[5], p[6], f(g), f(r), ratio, f(b), (bad[k] == "" ? "-" : bad[k])
+        g = v[k, "go"]; b = v[k, "baseline"]
+        ratio = (g != "" && b != "" && g > 0) ? sprintf("%.0f%%", 100 * b / g) : "-"
+        printf "%-8s %-5s %-4s %-6s %-5s %-5s %12s %12s %8s  %s\n", p[1], p[2], p[3], p[4], p[5], p[6], f(g), f(b), ratio, (bad[k] == "" ? "-" : bad[k])
       }
     }' "$1"
 }
@@ -101,17 +95,6 @@ if [ "${1:-}" = compare ]; then compare "${2:?usage: $0 compare results.txt}"; e
 if [ -z "${IN_NETNS:-}" ]; then
   mkdir -p "$BIN"
   GOTOOLCHAIN=local go build -o "$BIN/" ./... >&2
-  if [ "$SKIP_RUST" != 1 ]; then
-    if [ -n "${RUST_BIN:-}" ]; then
-      [ -x "$RUST_BIN" ] || { echo "RUST_BIN=$RUST_BIN is not an executable file" >&2; exit 1; }
-    else
-      PATH=$HOME/.local/bin:$PATH cargo build --release --manifest-path "$RUST_CRATE/Cargo.toml" >&2 \
-        || { echo "rust build failed (needs cmake on PATH; SKIP_RUST=1 to skip)" >&2; exit 1; }
-      RUST_BIN=$RUST_CRATE/target/release/tunsink-rs
-    fi
-    [ -x "$RUST_BIN" ] || { echo "rust binary missing: $RUST_BIN (SKIP_RUST=1 to skip)" >&2; exit 1; }
-    cp "$RUST_BIN" "$BIN/tunsink-rs"
-  fi
   exec env IN_NETNS=1 BIN="$BIN" unshare -rn "$0" "$@"
 fi
 
@@ -149,7 +132,7 @@ start_kafka() {
 tun_rx() { ip -s link show tun0 | awk 'f{print $2; exit} /RX:/{f=1}'; }
 
 # cell SERVER MODE KAFKA AES CORES CONNS SIZE
-#   SERVER go|rust|baseline (twine = go)  MODE direct|channel   KAFKA on|off   AES on|off
+#   SERVER go|baseline (twine = go)  MODE direct|channel   KAFKA on|off   AES on|off
 #   CORES 1core (CPU 2) | 2core (2,4) | 4core (2,4,6,8) | 1+1 (2,4) | 2+2 (2,4,6,8)
 cell() {
   local server=$1 mode=$2 kafka=$3 aes=$4 cores=$5 conns=$6 size=$7
@@ -172,14 +155,8 @@ cell() {
   esac
   local log; log=$(mktemp)
   local rx0; rx0=$(tun_rx)
-  if [ "$server" = rust ] && [ ! -x "$BIN/tunsink-rs" ]; then
-    echo "rust binary missing: $BIN/tunsink-rs (unset SKIP_RUST or set RUST_BIN)" >&2; exit 1
-  fi
   if [ "$server" = go ]; then
     GOMAXPROCS=${TWINE_GOMAXPROCS:-$((gmp+1))} taskset -c "$cpus" "$BIN/tunsink" -addr 127.0.0.1:9000 -brokers "$brokers" -mode "$mode" \
-      -loops "$loops" -pin "$pin" -sinks "$sinks" -spin 0 -stats 0 -watchdog 0 "${aesflag[@]}" >"$log" 2>&1 &
-  elif [ "$server" = rust ]; then
-    taskset -c "$cpus" "$BIN/tunsink-rs" -addr 127.0.0.1:9000 -brokers "$brokers" -mode "$mode" \
       -loops "$loops" -pin "$pin" -sinks "$sinks" -spin 0 -stats 0 -watchdog 0 "${aesflag[@]}" >"$log" 2>&1 &
   else
     GOMAXPROCS=$gmp taskset -c "$cpus" "$BIN/baseline" -addr 127.0.0.1:9000 -brokers "$brokers" \
@@ -229,7 +206,7 @@ cell() {
 case ${1:-matrix} in
   cell) shift; cell "$@" ;;
   quick)
-    # ~4.5 minutes: go vs rust only, 4 s cells, AES off and on, one core in
+    # ~2.5 minutes: go only, 4 s cells, AES off and on, one core in
     # both modes with Kafka off/on at 64 and 1000 connections, plus 4 cores
     # direct at 1000.
     out=${2:-/dev/stdout}
@@ -241,10 +218,10 @@ case ${1:-matrix} in
         for kafka in off on; do
           for conns in 64 1000; do
             for mode in direct channel; do
-              for server in go rust; do cell $server $mode $kafka $aes 1core $conns 512; done
+              cell go $mode $kafka $aes 1core $conns 512
             done
           done
-          for server in go rust; do cell $server direct $kafka $aes 4core 1000 512; done
+          cell go direct $kafka $aes 4core 1000 512
         done
       done
     } | tee "$out"
@@ -258,8 +235,7 @@ case ${1:-matrix} in
         for cores in 1core 2core 4core 1+1 2+2; do
           for kafka in off on; do
             for conns in 64 1000; do
-              for server in go rust baseline; do
-                [ "$server" = rust ] && [ "$SKIP_RUST" = 1 ] && continue
+              for server in go baseline; do
                 for mode in direct channel; do
                   cell $server $mode $kafka $aes $cores $conns 512
                 done
@@ -268,12 +244,11 @@ case ${1:-matrix} in
           done
         done
         # larger packets at the most common configuration
-        for server in go rust baseline; do
-          [ "$server" = rust ] && [ "$SKIP_RUST" = 1 ] && continue
+        for server in go baseline; do
           cell $server direct off $aes 1core 64 1400; cell $server direct on $aes 1core 64 1400
         done
       done
     } | tee "$out"
     ;;
-  *) echo "usage: $0 matrix [out] | quick [out] | cell SERVER MODE KAFKA AES CORES CONNS SIZE | compare results.txt (sunk/s, chk) (SERVER: go|rust|baseline; KAFKA, AES: on|off)" >&2; exit 2 ;;
+  *) echo "usage: $0 matrix [out] | quick [out] | cell SERVER MODE KAFKA AES CORES CONNS SIZE | compare results.txt (sunk/s, chk) (SERVER: go|baseline; KAFKA, AES: on|off)" >&2; exit 2 ;;
 esac
