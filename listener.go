@@ -142,14 +142,14 @@ func (l *Loop) handleAccept(c *conn) {
 			if err == unix.EAGAIN {
 				return
 			}
-			l.metrics.AcceptErrors.Add(1)
+			l.metrics.acceptErrors.Add(1)
 			if err == unix.EMFILE || err == unix.ENFILE || err == unix.ENOBUFS || err == unix.ENOMEM {
 				l.cfg.logger.Warn("twine: accept failed", "loop", l.id, "err", err)
 				return
 			}
 			continue
 		}
-		l.metrics.Accepts.Add(1)
+		l.metrics.accepts.Add(1)
 		l.setupAccepted(fd, lst)
 		peer := sock.SockaddrToTCP(sa)
 		host := lst.addr

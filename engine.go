@@ -72,7 +72,6 @@ func (e *Engine) Metrics() []MetricsSnapshot {
 	out := make([]MetricsSnapshot, len(e.loops))
 	for i, l := range e.loops {
 		out[i] = l.Metrics()
-		out[i].LoopID = i
 	}
 	return out
 }

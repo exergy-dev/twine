@@ -89,7 +89,7 @@ func (l *Loop) handleUDPRead(c *conn) {
 		if n == 0 {
 			return
 		}
-		l.metrics.Datagrams.Add(uint64(n))
+		l.metrics.datagrams.Add(uint64(n))
 		for i := 0; i < n; i++ {
 			m := &msgs[i]
 			a := u.addrs[i]
@@ -137,7 +137,7 @@ func (c *conn) WriteTo(b []byte, to net.Addr) {
 		// limit, EAGAIN with a full buffer) drops this datagram only and
 		// leaves the socket usable. Count only what the kernel took.
 		if sa != nil && unix.Sendto(int(c.fd), b, 0, sa) == nil {
-			c.loop.metrics.DatagramsSent.Add(1)
+			c.loop.metrics.datagramsSent.Add(1)
 		}
 		return
 	}
@@ -168,7 +168,7 @@ func (l *Loop) flushUDP(c *conn) {
 	}
 	sent, err := u.out.SendMmsg(int(c.fd), u.outN)
 	if sent > 0 {
-		l.metrics.DatagramsSent.Add(uint64(sent))
+		l.metrics.datagramsSent.Add(uint64(sent))
 	}
 	if sent < u.outN {
 		if err != nil && err != unix.EAGAIN && err != unix.EINTR {

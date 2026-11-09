@@ -38,7 +38,7 @@ func (t *transport) FD() int {
 func (t *transport) Write(b []byte) {
 	t.c.loop.assertInLoop()
 	if t.gen != t.c.gen {
-		t.c.loop.metrics.WriteAfterClose.Add(1)
+		t.c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	t.c.write(b)
@@ -48,7 +48,7 @@ func (t *transport) Write(b []byte) {
 func (t *transport) Writev(bs ...[]byte) {
 	t.c.loop.assertInLoop()
 	if t.gen != t.c.gen {
-		t.c.loop.metrics.WriteAfterClose.Add(1)
+		t.c.loop.metrics.writeAfterClose.Add(1)
 		return
 	}
 	t.c.writev(bs)

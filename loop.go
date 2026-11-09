@@ -87,7 +87,7 @@ type Loop struct {
 	exitCh       chan struct{}
 
 	// Observability.
-	metrics LoopMetrics
+	metrics loopMetrics
 	cbStart atomic.Int64 // monotonic ns when the current callback began; 0 when idle
 	cbProto atomic.Pointer[conn]
 }
@@ -120,12 +120,15 @@ func (l *Loop) Engine() *Engine { return l.eng }
 func (l *Loop) Now() time.Time { return l.now }
 
 // Stopped reports whether the loop has exited. CallFromThread after this
-// point drops the function (ErrLoopStopped semantics) and counts it in
-// LoopMetrics.BacklogDrops.
+// point drops the function and counts it in MetricsSnapshot.BacklogDrops.
 func (l *Loop) Stopped() bool { return l.stopped.Load() }
 
 // Metrics returns a snapshot of the loop's counters. Safe from any goroutine.
-func (l *Loop) Metrics() MetricsSnapshot { return l.metrics.snapshot() }
+func (l *Loop) Metrics() MetricsSnapshot {
+	s := l.metrics.snapshot()
+	s.LoopID = l.id
+	return s
+}
 
 // InLoop reports whether the caller is running on this loop's thread.
 func (l *Loop) InLoop() bool {
@@ -145,7 +148,7 @@ func (l *Loop) InLoop() bool {
 // slice and skips the atomics. After the loop has exited fn is dropped.
 func (l *Loop) CallFromThread(fn func()) {
 	if l.stopped.Load() {
-		l.metrics.BacklogDrops.Add(1)
+		l.metrics.backlogDrops.Add(1)
 		return
 	}
 	if l.InLoop() {
@@ -163,12 +166,12 @@ func (l *Loop) CallFromThread(fn func()) {
 	if l.wakePending.CompareAndSwap(false, true) {
 		l.wakeBusy.Add(1)
 		if l.started.Load() && !l.stopped.Load() {
-			l.metrics.Wakeups.Add(1)
+			l.metrics.wakeups.Add(1)
 			_ = l.poller.Wake()
 		}
 		l.wakeBusy.Add(-1)
 	} else {
-		l.metrics.WakeupsCoalesced.Add(1)
+		l.metrics.wakeupsCoalesced.Add(1)
 	}
 }
 
@@ -221,7 +224,7 @@ func (l *Loop) fireDue() {
 			continue // stopped, or moved onto the wheel by Reset
 		}
 		t.due = false
-		l.metrics.TimersFired.Add(1)
+		l.metrics.timersFired.Add(1)
 		t.fire()
 	}
 	l.dueNext = l.dueNext[:0]
@@ -303,7 +306,7 @@ func (l *Loop) iterate() {
 		l.fireDue()
 		fired := l.wheel.Advance(l.nowNs)
 		if fired > 0 {
-			l.metrics.TimersFired.Add(uint64(fired))
+			l.metrics.timersFired.Add(uint64(fired))
 		}
 
 		// 3. Poll: spin with timeout 0, then block until the next timer.
@@ -332,7 +335,7 @@ func (l *Loop) iterate() {
 			pollStart := int64(time.Since(l.epoch))
 			n, err = l.poller.Wait(l.events[:], timeout)
 			l.refreshNow()
-			l.metrics.PollBlockNanos.Add(uint64(l.nowNs - pollStart))
+			l.metrics.pollBlockNanos.Add(uint64(l.nowNs - pollStart))
 		} else {
 			l.refreshNow()
 		}
@@ -370,7 +373,7 @@ func (l *Loop) iterate() {
 		// 6. Recycle closed connections.
 		l.recycleClosed()
 
-		l.metrics.Iterations.Add(1)
+		l.metrics.iterations.Add(1)
 		l.metrics.iterHist.observe(l.nowNs-iterStart, l.now.Unix())
 		st := l.alloc.Stats()
 		l.metrics.slabInUse.Store(int64(st.InUse))
@@ -489,7 +492,7 @@ func (l *Loop) drainTasks() {
 
 // runTask runs one task with panic recovery and watchdog bookkeeping.
 func (l *Loop) runTask(fn func()) {
-	l.metrics.TasksRun.Add(1)
+	l.metrics.tasksRun.Add(1)
 	l.cbStart.Store(l.nowNs)
 	defer l.cbStart.Store(0)
 	defer l.recoverTask()
@@ -499,7 +502,7 @@ func (l *Loop) runTask(fn func()) {
 func (l *Loop) recoverTask() {
 	if r := recover(); r != nil {
 		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
+		l.metrics.panics.Add(1)
 		l.cfg.logger.Error("twine: panic in CallFromThread task", "loop", l.id, "panic", pe.Value, "stack", string(pe.Stack))
 	}
 }
@@ -646,8 +649,8 @@ func (l *Loop) handleRead(c *conn, hangup bool) {
 	for ; i < maxReads; i++ {
 		n, err := unix.Read(fd, buf)
 		if n > 0 {
-			l.metrics.ReadBytes.Add(uint64(n))
-			l.metrics.Reads.Add(1)
+			l.metrics.readBytes.Add(uint64(n))
+			l.metrics.reads.Add(1)
 			if c.idleTimeout > 0 {
 				l.wheel.Add(&c.idle, l.nowNs+int64(c.idleTimeout))
 			}
@@ -704,7 +707,7 @@ func (l *Loop) endCallback() {
 func (l *Loop) recoverProto(c *conn) {
 	if r := recover(); r != nil {
 		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
+		l.metrics.panics.Add(1)
 		l.cfg.logger.Error("twine: panic in protocol", "loop", l.id, "fd", c.fd, "panic", pe.Value, "stack", string(pe.Stack))
 		switch c.kind {
 		case kindUDP:
@@ -786,8 +789,8 @@ func (l *Loop) finishClose(c *conn) {
 		_ = unix.Close(fd)
 		c.fd = -1
 	}
-	l.metrics.Closes.Add(1)
-	l.metrics.Connections.Add(^uint64(0))
+	l.metrics.closes.Add(1)
+	l.metrics.connections.Add(^uint64(0))
 	// Twisted order: the producer is stopped before connectionLost.
 	if c.producer != nil {
 		p := c.producer
@@ -815,7 +818,7 @@ func (l *Loop) callConnectionLost(c *conn) {
 func (l *Loop) recoverLost(c *conn) {
 	if r := recover(); r != nil {
 		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
+		l.metrics.panics.Add(1)
 		l.cfg.logger.Error("twine: panic in ConnectionLost", "loop", l.id, "fd", c.fd, "panic", pe.Value)
 	}
 }
