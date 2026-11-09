@@ -22,7 +22,10 @@ type Protocol interface {
 // Factory builds a Protocol per accepted or connected transport.
 type Factory interface {
 	// BuildProtocol returns the Protocol for a new connection from (or to)
-	// peer. It runs on the loop that will own the connection.
+	// peer. It runs on the loop that will own the connection. Returning nil
+	// refuses the connection, as in Twisted: an accepted socket is closed at
+	// once with no callbacks, and a ConnectTCP or Dial Future rejects with
+	// ErrNilProtocol.
 	BuildProtocol(peer net.Addr) Protocol
 }
 
