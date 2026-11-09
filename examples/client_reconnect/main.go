@@ -31,7 +31,7 @@ type lineClient struct {
 func newLineClient(net.Addr) twine.Protocol {
 	c := &lineClient{}
 	c.OnConnectionMade = func(t twine.Transport) {
-		c.SendLine(t, []byte("hello from client_reconnect"))
+		c.SendLine([]byte("hello from client_reconnect"))
 	}
 	c.LineReceived = func(line []byte) { log.Printf("recv: %s", line) }
 	return c
