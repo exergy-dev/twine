@@ -35,8 +35,13 @@ var (
 	// passes before the connection completes.
 	ErrConnectTimeout = errors.New("twine: connect timeout")
 
-	// ErrEngineStopped rejects ConnectTCP and ListenTCP after Engine.Stop.
+	// ErrEngineStopped rejects ConnectTCP, Dial, DeferToThread, ListenTCP
+	// and ListenUDP after Engine.Stop.
 	ErrEngineStopped = errors.New("twine: engine stopped")
+
+	// ErrRunTwice is returned by a second call to Engine.Run while the first
+	// is running or after it has returned. An Engine runs once.
+	ErrRunTwice = errors.New("twine: Engine.Run called twice")
 
 	// ErrLineTooLong aborts a LineReceiver connection whose line exceeds
 	// MaxLineLength.

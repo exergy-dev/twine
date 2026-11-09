@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"runtime"
@@ -108,6 +109,32 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+func TestRunTwice(t *testing.T) {
+	e := New(Loops(1), Watchdog(0))
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Run(context.Background()) }()
+	for !e.loops[0].started.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	if err := e.Run(context.Background()); !errors.Is(err, ErrRunTwice) {
+		t.Errorf("Run while running = %v, want ErrRunTwice", err)
+	}
+	e.Stop()
+	if err := <-errCh; err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := e.Run(context.Background()); !errors.Is(err, ErrRunTwice) {
+		t.Errorf("Run after Run = %v, want ErrRunTwice", err)
+	}
+
+	// Stop before Run: Run returns nil at once.
+	e2 := New(Loops(1), Watchdog(0))
+	e2.Stop()
+	if err := e2.Run(context.Background()); err != nil {
+		t.Errorf("Run after Stop = %v, want nil", err)
+	}
 }
 
 // onLoop runs fn on l and waits for it.
