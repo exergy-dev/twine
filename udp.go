@@ -106,7 +106,7 @@ func (l *Loop) handleUDPRead(c *conn) {
 	c.queueReady()
 }
 
-func (l *Loop) callDatagram(c *conn, b []byte, from net.Addr) {
+func (l *Loop) callDatagram(c *conn, b []byte, from *net.UDPAddr) {
 	l.cbStart.Store(l.nowNs)
 	l.cbProto.Store(c)
 	defer l.endCallback()
@@ -114,7 +114,18 @@ func (l *Loop) callDatagram(c *conn, b []byte, from net.Addr) {
 	c.udp.proto.DatagramReceived(b, from)
 	if debugEnabled {
 		poison(b)
+		scrubAddr(from)
 	}
+}
+
+// scrubAddr empties a reused source address after DatagramReceived in debug
+// builds, so a protocol that kept the pointer sees "<nil>" at once instead
+// of silently getting the next sender's address.
+func scrubAddr(a *net.UDPAddr) {
+	clear(a.IP)
+	a.IP = a.IP[:0]
+	a.Port = 0
+	a.Zone = ""
 }
 
 // WriteTo queues a datagram for the end-of-iteration sendmmsg flush.
