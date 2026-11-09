@@ -33,12 +33,10 @@ type NetstringReceiver struct {
 	// framing error recorded before an abort, or the core's error otherwise.
 	OnConnectionLost func(err error)
 
-	t      twine.Transport
-	err    error
+	stream // buf holds a partial payload
 	state  uint8
 	digits int // length digits seen in the current header
 	n      int // declared payload length
-	buf    []byte
 	hdr    [24]byte
 	iov    [3][]byte
 }
@@ -55,22 +53,13 @@ var comma = []byte{','}
 
 // ConnectionMade implements twine.Protocol.
 func (ns *NetstringReceiver) ConnectionMade(t twine.Transport) {
-	ns.t = t
-	if ns.OnConnectionMade != nil {
-		ns.OnConnectionMade(t)
-	}
+	ns.made(t, ns.OnConnectionMade)
 }
 
 // ConnectionLost implements twine.Protocol. It substitutes the recorded
 // framing error, if any, and calls OnConnectionLost.
 func (ns *NetstringReceiver) ConnectionLost(err error) {
-	if ns.err != nil {
-		err = ns.err
-	}
-	ns.buf = nil
-	if ns.OnConnectionLost != nil {
-		ns.OnConnectionLost(err)
-	}
+	ns.lost(err, ns.OnConnectionLost)
 }
 
 // Transport returns the transport stored by ConnectionMade.
@@ -93,14 +82,6 @@ func (ns *NetstringReceiver) maxLen() int {
 		return DefaultMaxNetstring
 	}
 	return ns.MaxLength
-}
-
-func (ns *NetstringReceiver) fail(err error) {
-	ns.err = err
-	ns.buf = ns.buf[:0]
-	if ns.t != nil {
-		ns.t.Abort()
-	}
 }
 
 // DataReceived implements twine.Protocol.
@@ -140,10 +121,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 					continue
 				}
 				ns.state = nsData
-				if cap(ns.buf) < ns.n {
-					ns.buf = make([]byte, 0, min(ns.n, retainLimit))
-				}
-				ns.buf = ns.buf[:0]
+				ns.buf.reserve(ns.n)
 			default:
 				ns.fail(ErrMalformedNetstring)
 				return
@@ -167,11 +145,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 			if ns.StringReceived != nil {
 				ns.StringReceived(s)
 			}
-			if cap(ns.buf) > retainLimit {
-				ns.buf = nil // do not pin a large buffer per connection
-			} else {
-				ns.buf = ns.buf[:0]
-			}
+			ns.buf.reset()
 		}
 	}
 }

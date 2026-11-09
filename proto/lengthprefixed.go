@@ -9,10 +9,6 @@ import (
 // DefaultMaxFrame is the LengthPrefixed limit used when MaxFrame is zero.
 const DefaultMaxFrame = 1 << 20
 
-// retainLimit is the partial-frame buffer capacity a framer keeps between
-// frames; larger buffers are released after use.
-const retainLimit = 64 << 10
-
 // LengthPrefixed replaces Twisted's Int8/Int16/Int32StringReceiver: each
 // frame is a 1, 2 or 4 byte unsigned length followed by that many bytes.
 // Embed it and set the callback fields.
@@ -48,13 +44,11 @@ type LengthPrefixed struct {
 	// framing error recorded before an abort, or the core's error otherwise.
 	OnConnectionLost func(err error)
 
-	t      twine.Transport
-	err    error
+	stream // buf holds a partial body
 	inBody bool
 	nhdr   int     // header bytes buffered in hdr
 	hdr    [4]byte // partial header on receive
 	n      int     // current body length
-	buf    []byte  // partial body
 	out    [4]byte // prefix scratch for SendFrame
 	iov    [2][]byte
 }
@@ -63,22 +57,13 @@ var _ twine.Protocol = (*LengthPrefixed)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (lp *LengthPrefixed) ConnectionMade(t twine.Transport) {
-	lp.t = t
-	if lp.OnConnectionMade != nil {
-		lp.OnConnectionMade(t)
-	}
+	lp.made(t, lp.OnConnectionMade)
 }
 
 // ConnectionLost implements twine.Protocol. It substitutes the recorded
 // framing error, if any, and calls OnConnectionLost.
 func (lp *LengthPrefixed) ConnectionLost(err error) {
-	if lp.err != nil {
-		err = lp.err
-	}
-	lp.buf = nil
-	if lp.OnConnectionLost != nil {
-		lp.OnConnectionLost(err)
-	}
+	lp.lost(err, lp.OnConnectionLost)
 }
 
 // Transport returns the transport stored by ConnectionMade.
@@ -174,14 +159,6 @@ func (lp *LengthPrefixed) getPrefix(src []byte) uint64 {
 	}
 }
 
-func (lp *LengthPrefixed) fail(err error) {
-	lp.err = err
-	lp.buf = lp.buf[:0]
-	if lp.t != nil {
-		lp.t.Abort()
-	}
-}
-
 // bodyLen validates a decoded prefix and returns the body length.
 func (lp *LengthPrefixed) bodyLen(v uint64, p int) (int, bool) {
 	if lp.LengthIncludesPrefix {
@@ -213,11 +190,7 @@ func (lp *LengthPrefixed) DataReceived(b []byte) {
 			if lp.FrameReceived != nil {
 				lp.FrameReceived(lp.buf)
 			}
-			if cap(lp.buf) > retainLimit {
-				lp.buf = nil
-			} else {
-				lp.buf = lp.buf[:0]
-			}
+			lp.buf.reset()
 			continue
 		}
 		var v uint64
@@ -249,9 +222,6 @@ func (lp *LengthPrefixed) DataReceived(b []byte) {
 		}
 		lp.n = n
 		lp.inBody = true
-		if cap(lp.buf) < n {
-			lp.buf = make([]byte, 0, min(n, retainLimit))
-		}
-		lp.buf = lp.buf[:0]
+		lp.buf.reserve(n)
 	}
 }
