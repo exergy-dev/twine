@@ -132,7 +132,9 @@ func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory) *conn {
 	c.h = &transport{c: c, gen: c.gen}
 	p := f.BuildProtocol(peer)
 	if p == nil {
-		p = nopProtocol{}
+		// The factory refused the connection: close it without callbacks.
+		c.abortNoCallback()
+		return c
 	}
 	c.setProto(p)
 	if err := l.poller.Add(fd, poll.Readable); err != nil {
@@ -151,14 +153,6 @@ func (l *Loop) callConnectionMade(c *conn) {
 	defer l.recoverProto(c)
 	c.proto.ConnectionMade(c.h)
 }
-
-// nopProtocol stands in when a Factory returns nil (Twisted drops the
-// connection; we keep it open but ignore data).
-type nopProtocol struct{}
-
-func (nopProtocol) ConnectionMade(Transport) {}
-func (nopProtocol) DataReceived([]byte)      {}
-func (nopProtocol) ConnectionLost(error)     {}
 
 // onIdle is the idle-timer callback (wheel.Timer.Fn).
 func (c *conn) onIdle() {

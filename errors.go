@@ -39,6 +39,10 @@ var (
 	// and ListenUDP after Engine.Stop.
 	ErrEngineStopped = errors.New("twine: engine stopped")
 
+	// ErrNilProtocol rejects a ConnectTCP or Dial Future whose Factory
+	// returned a nil Protocol; the connection is closed.
+	ErrNilProtocol = errors.New("twine: factory returned a nil Protocol")
+
 	// ErrRunTwice is returned by a second call to Engine.Run while the first
 	// is running or after it has returned. An Engine runs once.
 	ErrRunTwice = errors.New("twine: Engine.Run called twice")

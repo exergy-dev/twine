@@ -365,7 +365,40 @@ func testEngineDialRoundRobin(t *testing.T, reusePort bool) {
 	}
 	mu.Unlock()
 	for _, tr := range trs {
-		tr := tr
 		onLoop(t, tr.Loop(), tr.Abort)
+	}
+}
+
+// A Factory returning nil refuses the connection: the accepted socket is
+// closed at once (the client sees EOF), and a Dial Future rejects with
+// ErrNilProtocol. Blocking passes the refusal through.
+func TestFactoryReturnsNil(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	nilFactory := FactoryFunc(func(net.Addr) Protocol { return nil })
+	for name, f := range map[string]Factory{"plain": nilFactory, "Blocking": Blocking(nilFactory)} {
+		t.Run(name, func(t *testing.T) {
+			lst := listen(t, e, f)
+			c := dialTCP(t, lst.Addr().String())
+			_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			start := time.Now()
+			n, err := c.Read(make([]byte, 1))
+			if n != 0 || (err != io.EOF && !errors.Is(err, unix.ECONNRESET)) {
+				t.Fatalf("read on a refused connection = %d, %v; want EOF", n, err)
+			}
+			if d := time.Since(start); d > time.Second {
+				t.Errorf("refused connection closed after %v", d)
+			}
+
+			echo := listen(t, e, echoFactory())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, err = e.Dial(echo.Addr().String(), f).Await(ctx)
+			if !errors.Is(err, ErrNilProtocol) {
+				t.Fatalf("Dial with a nil-returning factory = %v, want ErrNilProtocol", err)
+			}
+		})
+	}
+	if !waitUntil(2*time.Second, func() bool { return e.Loops()[0].Metrics().Connections == 0 }) {
+		t.Errorf("Connections = %d, want 0 (refused connections leaked)", e.Loops()[0].Metrics().Connections)
 	}
 }

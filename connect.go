@@ -106,7 +106,9 @@ func (l *Loop) completeConnect(c *conn) {
 	c.h = &transport{c: c, gen: c.gen}
 	p := d.factory.BuildProtocol(c.peer)
 	if p == nil {
-		p = nopProtocol{}
+		c.abortNoCallback()
+		d.res.Reject(ErrNilProtocol)
+		return
 	}
 	c.setProto(p)
 	// The fd may already be registered with Writable interest; set the
