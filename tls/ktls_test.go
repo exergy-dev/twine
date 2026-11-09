@@ -56,11 +56,18 @@ func kFactory(info chan kinfo, lost chan error) twine.Factory {
 	return twine.FactoryFunc(func(net.Addr) twine.Protocol { return &kProto{info: info, lost: lost} })
 }
 
+// requireKTLS skips a test that needs kernel TLS on a host without it, or
+// fails it when TWINE_REQUIRE_KTLS=1 (set by the CI step that loads the tls
+// module, so that a broken probe cannot silently skip every kTLS test).
 func requireKTLS(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS != "linux" || !twtls.KTLSAvailable() {
-		t.Skip("kTLS unavailable on this host")
+	if runtime.GOOS == "linux" && twtls.KTLSAvailable() {
+		return
 	}
+	if os.Getenv("TWINE_REQUIRE_KTLS") == "1" {
+		t.Fatal("TWINE_REQUIRE_KTLS=1 but kTLS is unavailable (load the tls module: sudo modprobe tls)")
+	}
+	t.Skip("kTLS unavailable on this host (TWINE_REQUIRE_KTLS=1 makes this a failure)")
 }
 
 // settle gives the server loop time to finish the handshake before the client
@@ -109,14 +116,15 @@ func TestKTLSGoClient(t *testing.T) {
 	if !bytes.Equal(got, data) {
 		t.Fatal("1 MiB stream corrupted")
 	}
-	// The peer's close_notify is a non-data record: the kernel fails the
-	// read with EIO, which surfaces as ConnectionLost (documented).
+	// The peer's close_notify is a non-data record: with RX offloaded the
+	// kernel fails the read with EIO, which surfaces as ConnectionLost
+	// (documented).
 	c.Close()
 	select {
 	case err := <-lost:
 		t.Logf("ConnectionLost after client close: %v", err)
-		if err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			t.Fatalf("unexpected error %v", err)
+		if !errors.Is(err, syscall.EIO) {
+			t.Fatalf("ConnectionLost(%v), want an error wrapping EIO under RX offload", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("no ConnectionLost")
@@ -275,8 +283,20 @@ func (p *offByeProto) ConnectionMade(t twine.Transport) {
 	p.byeProto.ConnectionMade(t)
 }
 
+// TestKTLSFallbacks: KTLSAvailable agrees with the kernel, and TLS 1.2 or
+// KernelOffload(false) never offloads. Runs on every host: without kTLS the
+// fallback is the only possible outcome, but the option must still work.
 func TestKTLSFallbacks(t *testing.T) {
-	requireKTLS(t)
+	// Probe first: the probe itself may load the tls module on demand.
+	avail := twtls.KTLSAvailable()
+	t.Logf("KTLSAvailable=%v", avail)
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp"); err == nil {
+		if want := strings.Contains(string(b), "tls"); avail != want {
+			t.Errorf("KTLSAvailable=%v but tcp_available_ulp=%q", avail, b)
+		}
+	} else if runtime.GOOS != "linux" && avail {
+		t.Errorf("KTLSAvailable=true on %s", runtime.GOOS)
+	}
 	e := startEngine(t)
 	for _, tc := range []struct {
 		name string

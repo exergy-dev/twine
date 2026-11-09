@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -594,45 +593,6 @@ func TestInnerPanic(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no ConnectionLost")
 	}
-}
-
-func TestKernelOffloadFallsBack(t *testing.T) {
-	t.Logf("KTLSAvailable=%v", twtls.KTLSAvailable())
-	if b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp"); err == nil {
-		want := strings.Contains(string(b), "tls")
-		if twtls.KTLSAvailable() != want {
-			t.Errorf("KTLSAvailable=%v but tcp_available_ulp=%q", twtls.KTLSAvailable(), b)
-		}
-	}
-	e := startEngine(t)
-	offloaded := make(chan bool, 1)
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
-		return &offloadProto{ch: offloaded}
-	}), twtls.KernelOffload(true))
-	// TLS 1.2 is never offloaded (see ktls_test.go for TLS 1.3).
-	c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MaxVersion: ctls.VersionTLS12})
-	defer c.Close()
-	if _, err := c.Write([]byte("abc")); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, 3)
-	if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "abc" {
-		t.Fatalf("echo: %q %v", buf, err)
-	}
-	if <-offloaded {
-		t.Fatal("TLS 1.2 connection offloaded")
-	}
-}
-
-type offloadProto struct {
-	echo
-	ch chan bool
-}
-
-func (p *offloadProto) ConnectionMade(t twine.Transport) {
-	p.t = t
-	tx, _ := t.(*twtls.Transport).KernelOffload()
-	p.ch <- tx
 }
 
 // --- client tests ------------------------------------------------------------
