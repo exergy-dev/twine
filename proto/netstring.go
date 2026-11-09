@@ -38,7 +38,7 @@ type NetstringReceiver struct {
 	digits int // length digits seen in the current header
 	n      int // declared payload length
 	hdr    [24]byte
-	iov    [3][]byte
+	iov    [3][]byte // Writev argument; a literal through the interface would allocate
 }
 
 const (

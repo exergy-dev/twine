@@ -54,7 +54,7 @@ type LineReceiver struct {
 	stream        // buf holds an incomplete trailing line (may end with a delimiter prefix)
 	win    []byte // scratch for delimiter-spanning search
 	raw    bool
-	iov    [2][]byte
+	iov    [2][]byte // Writev argument; a literal through the interface would allocate
 }
 
 var _ twine.Protocol = (*LineReceiver)(nil)

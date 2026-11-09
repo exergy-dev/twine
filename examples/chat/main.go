@@ -1,14 +1,14 @@
 // Command chat is a line-based chat room built on proto.LineReceiver and
 // proto.Broadcast. Connect with any line-oriented client:
 //
-//	go run ./examples/chat --addr :9001
+//	go run ./examples/chat -addr :9001
 //	nc -C localhost 9001        # or: telnet localhost 9001
 //
 // Every line a client sends is broadcast to every connected client, across
 // all loops. "/nick NAME" renames the sender and "/quit" disconnects.
 //
-// With --trace FILE the run is recorded with runtime/trace (design Section
-// 11); inspect it with "go tool trace FILE".
+// With -trace FILE the run is recorded with runtime/trace; inspect it with
+// "go tool trace FILE".
 package main
 
 import (

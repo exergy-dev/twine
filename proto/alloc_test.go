@@ -6,7 +6,7 @@ import (
 )
 
 // The steady state of each parser is a complete frame in one chunk: it must
-// be delivered in place with no heap allocation (design Section 7.3).
+// be delivered in place with no heap allocation.
 
 func TestLineReceiverZeroAlloc(t *testing.T) {
 	lr := &LineReceiver{}
