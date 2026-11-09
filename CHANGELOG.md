@@ -19,31 +19,89 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - `LoopMetrics` is unexported; read metrics through `Engine.Metrics` and
   `Loop.Metrics` (`MetricsSnapshot`).
 - `Transport` embeds `Consumer` instead of repeating its methods.
-- A `Factory` that returns a nil `Protocol` now aborts the connection, and
-  the `Dial`/`ConnectTCP` Future is rejected with a sentinel error. Before,
-  the connection stayed open and ignored all data.
+- A `Factory` that returns a nil `Protocol` now refuses the connection, and
+  the `Dial`/`ConnectTCP` Future is rejected with `ErrNilProtocol`. Before,
+  the connection stayed open and ignored all data. The same applies under
+  `tls.Server` and `tls.Client`.
 - proto: `LineReceiver.SendLine`, `NetstringReceiver.SendString` and
   `LengthPrefixed.SendFrame` drop the transport argument and always use the
   stored transport.
-- proto: `Option` is renamed `ReconnectOption`, and the `OnStateChange`
-  callback receives the error that caused the state change.
+- proto: `Option` is renamed `ReconnectOption`; the `OnStateChange`
+  callback is `func(connected bool, err error)` and is called once more
+  when the client gives up, with an error wrapping the new `ErrGaveUp`.
+- proto: `LengthPrefixed.ConnectionMade` panics on a `PrefixLen` other
+  than 0, 1, 2 or 4 instead of silently using 4.
 - tls: `KTLSSupported` is removed (it only reported `GOOS == "linux"`).
   `Transport.KernelOffload()` reports whether TX and RX are offloaded
   (`KernelOffloaded` reported TX only).
 - tls: `Server` panics when the config has no certificate source
   (`Certificates`, `GetCertificate` or `GetConfigForClient`), and `Listen`
   returns an error, instead of failing every handshake silently.
+- tls: `HandshakeTimeout(d)` with `d <= 0` now means the default (10 s);
+  it no longer disables the timeout. Handshake failures reach the
+  `OnHandshakeError` hook and the `Connect` Future as a `*HandshakeError`
+  carrying the peer address, and are logged at Warn when no hook is set.
+- http: `IdleTimeout` zero now means 90 s (was disabled); a negative value
+  disables it. The new `ReadTimeout` (default 60 s) bounds an incomplete
+  request head or body. Responses larger than the new `MaxResponseBytes`
+  (default 16 MiB) become a 500 instead of a truncated body.
+- http: a status below 200 is sent as 500; response headers with an
+  invalid name are dropped; HEAD responses with an empty body carry no
+  Content-Length; canned error responses carry Date and Server.
 - http: `RequestCtx.SetUserValue` and `UserValue` are removed; use
   `Transport.SetContext` for per-connection state.
 
 ### Added
 
-- `ErrNoFutures` (from `Any` with no inputs) and `ErrRunTwice` (from a
-  second `Engine.Run`).
+- `ErrNoFutures` (from `Any` with no inputs), `ErrRunTwice` (from a
+  second `Engine.Run`) and `ErrNilProtocol`.
+- `Engine.Logger`, `Loop.ReportPanic`, and `poll` backend logging when a
+  `twine_uring` build falls back to epoll.
+- proto: `ErrLineTooLong` and `ErrFrameTooLarge` are also available under
+  `proto`; `FuzzAMP` and `FuzzLineReceiverRaw` fuzz targets; benchmarks.
+- tls: `HandshakeError`, `Transport.KernelOffload`, allocation gates and
+  record benchmarks, and a layout test that fails when a Go release
+  changes the `crypto/tls` fields kTLS reads.
+- http: `ReadTimeout`, `MaxResponseBytes`, `DefaultIdleTimeout`,
+  `DefaultReadTimeout`, `DefaultMaxResponseBytes`; a 408 response.
+- `twine_debug` assertions inside `internal/`: slab double-Put, re-entrant
+  wheel Advance and ring invariants.
 - `metrics` package with the Prometheus text-format handler.
 - Runnable examples on pkg.go.dev for the root, `proto`, `http` and `tls`
   packages; package documentation for the root package.
 - `CONTRIBUTING.md`, `SECURITY.md` and this changelog.
+
+### Fixed
+
+- `twine.Blocking` under `tls.Server`/`tls.Listen` panicked on every
+  connection and the panic was swallowed; the client only saw EOF.
+- `proto.AMP.Call` and `CallNoAnswer` read the caller's `Args` map on the
+  loop after returning (a data race); the arguments are now encoded on the
+  caller's goroutine.
+- `Engine.Dial` and `Loop.ConnectTCP` with a host name resolved it on the
+  loop thread, stalling every connection on that loop; names are now
+  resolved on the worker pool.
+- `tls.Client` used with `Loop.ConnectTCP` resolved the Future with the
+  raw socket before the handshake; the documentation now says so and
+  points at `tls.Connect`.
+- Zero or negative size and count options (`ReadBufferSize(0)`,
+  `MaxReadsPerEvent(0)`, ...) broke the engine instead of meaning the
+  default.
+- A peer could make `LengthPrefixed` or `NetstringReceiver` pre-allocate
+  up to 1 MiB per connection with a 5-byte header.
+- The default watchdog sampled every millisecond and burnt about 7% of a
+  core on an idle engine; it now backs off to 50 ms while idle.
+- `ReconnectingClient.GaveUp` stayed false after a clean `Engine.Stop`.
+- A `proto.Broadcast` zero value panicked on `Add`.
+- `DatagramReceived`'s `from` address is reused between calls; this is now
+  documented, and debug builds clear it after the callback.
+- Under kTLS TX offload a peer `KeyUpdate` was silently ignored instead of
+  aborting the connection as documented.
+- `listener.Close` before `Engine.Run` raced with the loop start.
+- `Loop.Metrics().LoopID` was always 0.
+- `internal/poll` did not compile on 32-bit NetBSD and OpenBSD.
+- macOS: `CallFromThread` allocated, `Engine.Dial` skipped half the loops
+  when `ReusePort` was off, and three tests assumed Linux limits.
 
 ### Changed
 
