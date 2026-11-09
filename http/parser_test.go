@@ -145,6 +145,72 @@ func TestResponseHeaders(t *testing.T) {
 	}
 }
 
+// TestRequestCtxMethods covers the RequestCtx methods the other tests do
+// not reach.
+func TestRequestCtxMethods(t *testing.T) {
+	l := testLoop(t)
+	type seen struct {
+		isPost, isLower, isGet bool
+		hdr, hdrNil, hdrMiss   []byte
+		cl                     int64
+		local, remote          string
+		loop                   bool
+		status0, status1       int
+		body1, body2           string
+	}
+	var got []seen
+	s := &Server{Handler: func(ctx *RequestCtx) {
+		v := seen{
+			isPost:  ctx.IsMethod("POST"),
+			isLower: ctx.IsMethod("post"),
+			isGet:   ctx.IsMethod("GET"),
+			hdr:     append([]byte(nil), ctx.HeaderBytes([]byte("x-HDR"))...),
+			hdrNil:  ctx.HeaderBytes(nil),
+			hdrMiss: ctx.HeaderBytes([]byte("x-hdrs")),
+			cl:      ctx.ContentLength(),
+			local:   ctx.LocalAddr().String(),
+			remote:  ctx.RemoteAddr().String(),
+			loop:    ctx.Loop() == l,
+			status0: ctx.Status(),
+		}
+		ctx.SetStatus(201)
+		v.status1 = ctx.Status()
+		ctx.SetContentTypeBytes([]byte("application/x\r\ny"))
+		ctx.SetHeader("X-Del", "1")
+		ctx.AddHeader("x-del", "2")
+		ctx.SetHeader("X-Keep", "k")
+		ctx.DelHeader("X-DEL")
+		ctx.SetBodyString("abc")
+		ctx.WriteString("def")
+		v.body1 = string(ctx.ResponseBody())
+		ctx.SetBody([]byte("xyz"))
+		v.body2 = string(ctx.ResponseBody())
+		got = append(got, v)
+	}}
+	out, _ := serveOnce(t, l, s, "POST /x HTTP/1.1\r\nHost: x\r\nX-Hdr: v\r\nContent-Length: 3\r\n\r\nabc"+
+		"POST /c HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\n\r\n"+
+		"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	if len(got) != 3 {
+		t.Fatalf("%d requests served:\n%s", len(got), out)
+	}
+	v := got[0]
+	if !v.isPost || v.isLower || v.isGet || string(v.hdr) != "v" || v.hdrNil != nil || v.hdrMiss != nil ||
+		v.cl != 3 || v.local != fakeHost.String() || v.remote != fakePeer.String() || !v.loop ||
+		v.status0 != 200 || v.status1 != 201 || v.body1 != "abcdef" || v.body2 != "xyz" {
+		t.Fatalf("POST: %+v", v)
+	}
+	if got[1].cl != -1 || got[2].cl != -1 || !got[2].isGet {
+		t.Fatalf("ContentLength chunked %d, GET %d", got[1].cl, got[2].cl)
+	}
+	first, _, _ := strings.Cut(out, "\r\n\r\nxyz")
+	first += "\r\n"
+	if !strings.HasPrefix(first, "HTTP/1.1 201 Created\r\n") || !strings.Contains(first, "\r\nContent-Type: application/x  y\r\n") ||
+		!strings.Contains(first, "\r\nX-Keep: k\r\n") || strings.Contains(first, "X-Del") || strings.Contains(first, "x-del") ||
+		!strings.Contains(first, "\r\nContent-Length: 3\r\n") {
+		t.Fatalf("response:\n%q", first)
+	}
+}
+
 // TestInterimStatusIs500 checks that a Handler setting a 1xx status gets a
 // 500 instead of an interim response that would leave the client waiting
 // and shift every later pipelined response.
