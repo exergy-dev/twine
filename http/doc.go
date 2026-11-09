@@ -53,6 +53,13 @@
 // a request with both Content-Length and Transfer-Encoding, and an HTTP/1.1
 // request without Host are all rejected with 400.
 //
+// Timeouts: a connection with no I/O for IdleTimeout (90 s) is closed, and
+// a request still incomplete ReadTimeout (60 s) after its first bytes were
+// buffered is answered with 408 and closed, so neither an idle keep-alive
+// connection nor a peer trickling a request byte by byte holds a
+// connection forever. Negative values disable them. Neither bounds the
+// Handler, which runs on the loop and must not block.
+//
 // Pipelining: at most MaxPipelinedRequests (16) requests are served from one
 // read. The remainder is copied into the reassembly buffer, reading is
 // paused and serving resumes on the next loop iteration (Loop.CallLater

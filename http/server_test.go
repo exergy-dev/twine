@@ -483,3 +483,125 @@ func TestServerCloseWhilePaused(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestIdleTimeoutSetting checks the value handed to the transport's idle
+// timer: zero means the default, negative disables it.
+func TestIdleTimeoutSetting(t *testing.T) {
+	l := testLoop(t)
+	for _, tc := range []struct{ set, want time.Duration }{
+		{0, DefaultIdleTimeout},
+		{-1, 0},
+		{5 * time.Second, 5 * time.Second},
+	} {
+		h := newHarness(t, l, &Server{IdleTimeout: tc.set})
+		var got time.Duration
+		onLoop(t, l, func() { got = h.ft.idle })
+		h.lose()
+		if got != tc.want {
+			t.Errorf("IdleTimeout %v: transport idle timeout %v, want %v", tc.set, got, tc.want)
+		}
+	}
+}
+
+// expectClosed reads from br until EOF and fails if that takes longer
+// than within.
+func expectClosed(t *testing.T, br *bufio.Reader, within time.Duration) []byte {
+	t.Helper()
+	start := time.Now()
+	rest, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("read: %v (got %q)", err, rest)
+	}
+	if d := time.Since(start); d > within {
+		t.Fatalf("closed after %v, want within %v", d, within)
+	}
+	return rest
+}
+
+func TestServerIdleTimeout(t *testing.T) {
+	s := &Server{Handler: testHandler, IdleTimeout: 200 * time.Millisecond}
+	addr, _ := startServer(t, s)
+	_, br := dial(t, addr)
+	if rest := expectClosed(t, br, 5*time.Second); len(rest) != 0 {
+		t.Fatalf("idle close sent %q", rest)
+	}
+}
+
+// TestServerReadTimeoutTrickle trickles a head one byte at a time, which
+// keeps the idle timer from firing: ReadTimeout must answer 408 and close.
+func TestServerReadTimeoutTrickle(t *testing.T) {
+	const timeout = 300 * time.Millisecond
+	s := &Server{Handler: testHandler, ReadTimeout: timeout, IdleTimeout: 150 * time.Millisecond}
+	addr, _ := startServer(t, s)
+	nc, br := dial(t, addr)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		if _, err := io.WriteString(nc, "GET /hello HTTP/1.1\r\nHost: x\r\nX-Slow: "); err != nil {
+			return
+		}
+		tick := time.NewTicker(30 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				if _, err := nc.Write([]byte{'a'}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	start := time.Now()
+	resp, err := nethttp.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != nethttp.StatusRequestTimeout || !resp.Close {
+		t.Fatalf("status %d close %v", resp.StatusCode, resp.Close)
+	}
+	if d := time.Since(start); d < timeout {
+		t.Fatalf("408 after %v, before ReadTimeout %v", d, timeout)
+	}
+	expectClosed(t, br, 5*time.Second)
+}
+
+// TestServerReadTimeoutRestarts checks that a request completed in time
+// clears the clock, that the stale timer firing later does nothing, and
+// that the next incomplete request gets a fresh ReadTimeout.
+func TestServerReadTimeoutRestarts(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	s := &Server{Handler: testHandler, ReadTimeout: timeout}
+	addr, _ := startServer(t, s)
+	nc, br := dial(t, addr)
+	get := func() {
+		t.Helper()
+		resp, err := nethttp.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode != 200 {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+	}
+	io.WriteString(nc, "GET /hello HTTP/1.1\r\nHo")
+	time.Sleep(timeout / 4)
+	io.WriteString(nc, "st: x\r\n\r\n")
+	get()
+	time.Sleep(2 * timeout) // the timer armed by the first request fires
+	io.WriteString(nc, "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
+	get()
+	io.WriteString(nc, "GET /hello HTTP/1.1\r\n")
+	start := time.Now()
+	resp, err := nethttp.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if d := time.Since(start); resp.StatusCode != nethttp.StatusRequestTimeout || d > 5*time.Second {
+		t.Fatalf("status %d after %v", resp.StatusCode, d)
+	}
+}
