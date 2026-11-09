@@ -187,6 +187,31 @@ func TestLineReceiverSetLineModeInsideLine(t *testing.T) {
 	}
 }
 
+// TestLineReceiverReleasesLargeBuffer: a long line assembled across chunks
+// grows the partial buffer; once delivered, a buffer larger than
+// retainLimit is not kept for the rest of the connection.
+func TestLineReceiverReleasesLargeBuffer(t *testing.T) {
+	lr := &LineReceiver{MaxLineLength: 4 * retainLimit}
+	_, c := newLR(t, lr)
+	long := bytes.Repeat([]byte("y"), 2*retainLimit)
+	lr.DataReceived(long)
+	if cap(lr.buf) < len(long) {
+		t.Fatalf("partial buffer cap %d", cap(lr.buf))
+	}
+	lr.DataReceived([]byte("\r\nnext"))
+	if len(c.frames) != 1 || !bytes.Equal(c.frames[0], long) {
+		t.Fatalf("got %d lines", len(c.frames))
+	}
+	if cap(lr.buf) > retainLimit || string(lr.buf) != "next" {
+		t.Fatalf("after delivery: buf %.8q cap %d", lr.buf, cap(lr.buf))
+	}
+	// A small buffered line keeps its storage.
+	lr.DataReceived([]byte("\r\n"))
+	if cap(lr.buf) == 0 {
+		t.Fatal("small partial buffer was released")
+	}
+}
+
 func TestLineReceiverSendLine(t *testing.T) {
 	lr := &LineReceiver{Delimiter: []byte("\n")}
 	ft, _ := newLR(t, lr)

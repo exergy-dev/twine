@@ -2,6 +2,8 @@ package proto
 
 import (
 	"encoding/binary"
+	"fmt"
+	"math"
 
 	"github.com/exergy-dev/twine"
 )
@@ -23,7 +25,8 @@ const DefaultMaxFrame = 1 << 20
 // ErrMalformedFrame. ConnectionLost reports the error (see the package doc).
 type LengthPrefixed struct {
 	// PrefixLen is the prefix size in bytes: 1, 2 or 4. Default (0) is 4.
-	// Other values are treated as 4.
+	// Any other value makes ConnectionMade panic; the core reports that to
+	// ConnectionLost as a *twine.PanicError and closes the connection.
 	PrefixLen int
 	// LittleEndian selects little-endian prefixes. Default big-endian
 	// (network order), matching Twisted.
@@ -57,6 +60,11 @@ var _ twine.Protocol = (*LengthPrefixed)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (lp *LengthPrefixed) ConnectionMade(t twine.Transport) {
+	switch lp.PrefixLen {
+	case 0, 1, 2, 4:
+	default:
+		panic(fmt.Sprintf("proto: LengthPrefixed.PrefixLen is %d; want 1, 2 or 4 (0 means 4)", lp.PrefixLen))
+	}
 	lp.made(t, lp.OnConnectionMade)
 }
 
@@ -95,13 +103,11 @@ func (lp *LengthPrefixed) MaxSendable() int {
 	if lp.LengthIncludesPrefix {
 		limit -= uint64(p)
 	}
-	if limit > uint64(maxInt) {
-		return maxInt
+	if limit > math.MaxInt {
+		return math.MaxInt
 	}
 	return int(limit)
 }
-
-const maxInt = int(^uint(0) >> 1)
 
 // SendFrame writes the prefix and b to the transport stored by
 // ConnectionMade, with a single Writev. It returns twine.ErrFrameTooLarge,
