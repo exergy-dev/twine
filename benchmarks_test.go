@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// Micro-benchmarks for design Section 12 (timers_1m, callfromthread) and the
+// Micro-benchmarks for the timers_1m and callfromthread targets (see
+// docs/history/design.md Section 12) and the
 // Phase 3 acceptance gates. The network harness lives in the bench module.
 
 // benchNoop is the timer callback; hoisted so CallLater never sees a fresh
@@ -207,7 +208,7 @@ func crossThreadBench(b *testing.B, window int, submit func(fn func())) {
 	}
 }
 
-// BenchmarkCallFromThread is design Section 12 callfromthread: 16 producer
+// BenchmarkCallFromThread is the callfromthread target: 16 producer
 // goroutines push a preallocated func to one loop. wakeups/op is the eventfd
 // writes per call (the Phase 3 gate is <= 0.1). window=2048 bounds each
 // producer's outstanding tasks so the MPSC ring never fills; flood lets
