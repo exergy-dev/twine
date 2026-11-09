@@ -478,8 +478,14 @@ func (t *Transport) leaveTLS(err error) {
 	}
 }
 
-// Writev encrypts each slice in turn, as Write.
+// Writev writes the slices in order. On the memory BIO each slice is
+// encrypted into its own record(s), as by Write. Under kTLS TX offload they
+// reach the socket in one writev and the kernel builds the records.
 func (t *Transport) Writev(bs ...[]byte) {
+	if t.offloaded && t.state == stReady && !t.closeSent {
+		t.under.Writev(bs...)
+		return
+	}
 	for _, b := range bs {
 		t.Write(b)
 	}
