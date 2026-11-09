@@ -4,6 +4,7 @@ import (
 	ctls "crypto/tls"
 	"errors"
 	"net"
+	"strings"
 
 	"github.com/exergy-dev/twine"
 )
@@ -28,10 +29,12 @@ type HandshakeError struct {
 
 // Error implements error.
 func (e *HandshakeError) Error() string {
+	// crypto/tls errors and ErrHandshakeTimeout carry their own "tls: ".
+	cause := strings.TrimPrefix(e.Err.Error(), "tls: ")
 	if e.Peer == nil {
-		return "tls: handshake failed: " + e.Err.Error()
+		return "tls: handshake failed: " + cause
 	}
-	return "tls: handshake with " + e.Peer.String() + " failed: " + e.Err.Error()
+	return "tls: handshake with " + e.Peer.String() + " failed: " + cause
 }
 
 // Unwrap returns Err.
