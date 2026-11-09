@@ -51,6 +51,7 @@ type Transport struct {
 	closeSent bool // close_notify sent (LoseConnection)
 	peerEOF   bool // close_notify received
 	aborted   bool // Abort requested (by inner or an error); deliver nothing more
+	selfAbort bool // Abort called on this Transport: ConnectionLost(nil), not a truncation
 	hsDone    bool // handshake outcome reported (hook and Future) exactly once
 	inTLS     bool // inside a tls.Conn call; Write/LoseConnection defer
 	// deferred holds plaintext written re-entrantly during a tls.Conn call;
@@ -177,9 +178,11 @@ func (w *wrapper) ConnectionLost(err error) {
 		if t.rxOffloaded && errors.Is(err, syscall.EIO) {
 			err = fmt.Errorf("tls: kTLS read got a non-data record (close_notify, alert or KeyUpdate): %w", err)
 		}
-		if err == nil && !t.peerEOF && !t.closeSent {
+		if err == nil && !t.peerEOF && !t.closeSent && !t.selfAbort {
 			// A TCP FIN without close_notify is a truncation, not a clean
 			// close; the inner protocol must be able to tell them apart.
+			// An Abort by the inner protocol itself stays nil, as the core's
+			// Transport documents.
 			err = io.ErrUnexpectedEOF
 		}
 		t.made = false
@@ -294,14 +297,9 @@ func (t *Transport) handshakeFailed(err error) {
 // loggerOf returns the engine's logger when the core exposes one (a Logger
 // method on the Loop or the Engine), and slog.Default() otherwise.
 func loggerOf(l *twine.Loop) *slog.Logger {
-	type loggerer interface{ Logger() *slog.Logger }
 	if l != nil {
-		for _, v := range []any{l, l.Engine()} {
-			if lg, ok := v.(loggerer); ok {
-				if x := lg.Logger(); x != nil {
-					return x
-				}
-			}
+		if lg := l.Engine().Logger(); lg != nil {
+			return lg
 		}
 	}
 	return slog.Default()
@@ -593,6 +591,7 @@ func (t *Transport) closeOffloaded(delay time.Duration) {
 // discarding pending writes.
 func (t *Transport) Abort() {
 	t.aborted = true // stop delivering plaintext already decrypted
+	t.selfAbort = true
 	if t.under != nil {
 		t.under.Abort()
 	}

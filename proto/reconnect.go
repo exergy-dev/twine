@@ -249,7 +249,9 @@ func (rc *ReconnectingClient) connect() {
 func (a *attempt) build(peer net.Addr) twine.Protocol {
 	p := a.rc.factory.BuildProtocol(peer)
 	if p == nil {
-		p = nopProto{}
+		// Refuse the connection like the core does; the Catch above sees
+		// twine.ErrNilProtocol and retries with backoff.
+		return nil
 	}
 	return &reconnectProto{a: a, inner: p}
 }
@@ -364,9 +366,3 @@ func (p *reconnectProto) ConnectionLost(err error) {
 	rc.setConnected(false, err)
 	rc.retry(err)
 }
-
-type nopProto struct{}
-
-func (nopProto) ConnectionMade(twine.Transport) {}
-func (nopProto) DataReceived([]byte)            {}
-func (nopProto) ConnectionLost(error)           {}
