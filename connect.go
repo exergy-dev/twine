@@ -179,16 +179,11 @@ func (l *Loop) completeConnect(c *conn) {
 		return
 	}
 	c.setProto(p)
-	// The fd may already be registered with Writable interest; set the
-	// steady-state interest set.
-	var err error
-	if c.flags&flagWantWrite != 0 {
-		err = l.poller.Mod(fd, poll.Readable)
-	} else {
-		err = l.poller.Mod(fd, poll.Readable)
-		if err != nil {
-			err = l.poller.Add(fd, poll.Readable)
-		}
+	// An in-progress connect registered the fd for Writable: switch it to
+	// the steady-state interest. An immediate connect never registered it.
+	err := l.poller.Mod(fd, poll.Readable)
+	if err != nil {
+		err = l.poller.Add(fd, poll.Readable)
 	}
 	if err != nil {
 		c.lostErr = err

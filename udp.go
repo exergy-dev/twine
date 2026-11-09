@@ -35,7 +35,6 @@ func (e *Engine) newUDPListener(addr string, p DatagramProtocol, lc listenConfig
 	lst := &listener{eng: e, addr: laddr, dgram: p, lc: lc, udp: true}
 	lp := e.NextLoop()
 	c := &conn{loop: lp, fd: int32(fd), kind: kindUDP}
-	c.idle.Fn = c.onIdle
 	c.udp = &udpState{lst: lst, proto: p}
 	c.host = laddr
 	lst.fds = []int{fd}
