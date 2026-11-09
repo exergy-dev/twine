@@ -325,6 +325,11 @@ func (p *streamProducer) ResumeProducing() {
 	if !p.paused {
 		p.sink.Errorf("ResumeProducing while not paused")
 	}
+	// A streaming producer is resumed only once the ring has drained to the
+	// low-water mark (default 64 KiB), whatever the kernel buffers do.
+	if n := p.t.PendingWrite(); n > 64<<10 {
+		p.sink.Errorf("ResumeProducing with %d bytes still pending, above the 64 KiB low-water mark", n)
+	}
 	p.paused = false
 	p.record("resume")
 	p.resumes++
@@ -336,6 +341,31 @@ func (p *streamProducer) ResumeProducing() {
 }
 
 func (p *streamProducer) StopProducing() { p.stops.Add(1) }
+
+// bpSockBuf is the SO_SNDBUF / SO_RCVBUF pinned by TestBackpressureProducer.
+const bpSockBuf = 64 << 10
+
+// dialTCPRcvBuf dials addr with SO_RCVBUF set to rcvBuf before the connect,
+// so the advertised window is fixed and receive-buffer autotuning is off.
+func dialTCPRcvBuf(t testing.TB, addr string, rcvBuf int) *net.TCPConn {
+	t.Helper()
+	d := net.Dialer{Timeout: 5 * time.Second, Control: func(_, _ string, rc syscall.RawConn) error {
+		var serr error
+		err := rc.Control(func(fd uintptr) {
+			serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, rcvBuf)
+		})
+		if err != nil {
+			return err
+		}
+		return serr
+	}}
+	c, err := d.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial %s: %v", addr, err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c.(*net.TCPConn)
+}
 
 func TestBackpressureProducer(t *testing.T) {
 	for _, crossings := range []int{1, 2} {
@@ -355,8 +385,16 @@ func TestBackpressureProducer(t *testing.T) {
 					},
 					lost: func(_ *hookProto, err error) { lostCh <- err },
 				}
-			}))
-			c := dialTCP(t, lst.Addr().String())
+			}), SocketBuffers(0, bpSockBuf))
+			// Pin the client's receive buffer before connecting. With fixed
+			// buffers at both ends the kernel can hold at most a few hundred
+			// KiB of the stream, far less than the 1 MiB chunk that crosses
+			// the high-water mark, so the ring cannot drain to the low-water
+			// mark while the client is not reading. With autotuned buffers it
+			// can: macOS grows the send and receive buffers as the connection
+			// runs, and the first CI run saw [pause resume pause] before any
+			// read.
+			c := dialTCPRcvBuf(t, lst.Addr().String(), bpSockBuf)
 			var p *streamProducer
 			select {
 			case p = <-prodCh:
@@ -370,7 +408,9 @@ func TestBackpressureProducer(t *testing.T) {
 			}
 			// The client does not read for a while: nothing may resume.
 			time.Sleep(100 * time.Millisecond)
-			if ev := p.snapshot(); len(ev) != 1 || ev[0] != "pause" {
+			ev := p.snapshot()
+			t.Logf("events before client reads: %v", ev)
+			if len(ev) != 1 || ev[0] != "pause" {
 				t.Errorf("events before client reads = %v, want [pause]", ev)
 			}
 			_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
