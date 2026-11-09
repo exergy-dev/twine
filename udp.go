@@ -137,8 +137,10 @@ func (c *conn) WriteTo(b []byte, to net.Addr) {
 		var v4 unix.SockaddrInet4
 		var v6 unix.SockaddrInet6
 		sa := sock.UDPAddrToSockaddr(ua, &v4, &v6)
-		if sa != nil {
-			_ = unix.Sendto(int(c.fd), b, 0, sa)
+		// UDP is best effort: a failed send (EMSGSIZE above the socket's
+		// limit, EAGAIN with a full buffer) drops this datagram only and
+		// leaves the socket usable. Count only what the kernel took.
+		if sa != nil && unix.Sendto(int(c.fd), b, 0, sa) == nil {
 			c.loop.metrics.DatagramsSent.Add(1)
 		}
 		return
