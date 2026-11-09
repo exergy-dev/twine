@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
@@ -350,6 +351,10 @@ func TestServerHandshakeFailure(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "bad certificate") {
 			t.Fatalf("server handshake error %v, want the client's bad_certificate alert", err)
 		}
+		var he *twtls.HandshakeError
+		if !errors.As(err, &he) || he.Peer == nil {
+			t.Fatalf("server handshake error %v (%T), want a *HandshakeError with the peer", err, err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("OnHandshakeError not called")
 	}
@@ -380,12 +385,107 @@ func TestHandshakeTimeout(t *testing.T) {
 		if !errors.Is(err, twtls.ErrHandshakeTimeout) {
 			t.Fatalf("handshake error %v, want ErrHandshakeTimeout", err)
 		}
+		var he *twtls.HandshakeError
+		if !errors.As(err, &he) || he.Err != twtls.ErrHandshakeTimeout {
+			t.Fatalf("handshake error %v (%T), want *HandshakeError{Err: ErrHandshakeTimeout}", err, err)
+		}
+		if he.Peer == nil || he.Peer.String() != c.LocalAddr().String() {
+			t.Fatalf("HandshakeError.Peer = %v, want %v", he.Peer, c.LocalAddr())
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("handshake did not time out")
 	}
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := c.Read(make([]byte, 1)); err == nil {
 		t.Fatal("connection still open after handshake timeout")
+	}
+}
+
+// logCapture is a slog.Handler that keeps every record.
+type logCapture struct {
+	mu   sync.Mutex
+	recs []slog.Record
+}
+
+func (h *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+func (h *logCapture) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	h.recs = append(h.recs, r.Clone())
+	h.mu.Unlock()
+	return nil
+}
+func (h *logCapture) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *logCapture) WithGroup(string) slog.Handler      { return h }
+
+// find returns the first record with msg and its attributes as strings.
+func (h *logCapture) find(msg string) (slog.Record, map[string]string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.recs {
+		if r.Message == msg {
+			attrs := map[string]string{}
+			r.Attrs(func(a slog.Attr) bool {
+				attrs[a.Key] = a.Value.String()
+				return true
+			})
+			return r, attrs, true
+		}
+	}
+	return slog.Record{}, nil, false
+}
+
+// TestHandshakeFailureLoggedWithoutHook: with no OnHandshakeError hook, a
+// failed handshake is logged once at Warn with the peer address. The
+// handler is installed both as the engine's logger and as slog's default,
+// whichever the package can reach.
+func TestHandshakeFailureLoggedWithoutHook(t *testing.T) {
+	h := &logCapture{}
+	lg := slog.New(h)
+	prev := slog.Default()
+	slog.SetDefault(lg)
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	e := startEngine(t, twine.Logger(lg))
+	addr := listen(t, e, serverConfig(t), echoFactory())
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Write([]byte("GET / HTTP/1.0\r\n\r\n")); err != nil { // not a ClientHello
+		t.Fatal(err)
+	}
+	const msg = "twine/tls: handshake failed"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		r, attrs, ok := h.find(msg)
+		if ok {
+			if r.Level != slog.LevelWarn {
+				t.Fatalf("logged at %v, want Warn", r.Level)
+			}
+			if attrs["peer"] != c.LocalAddr().String() {
+				t.Fatalf("logged peer %q, want %s (attrs %v)", attrs["peer"], c.LocalAddr(), attrs)
+			}
+			if attrs["err"] == "" {
+				t.Fatalf("no err attribute: %v", attrs)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("handshake failure not logged")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	h.mu.Lock()
+	n := 0
+	for _, r := range h.recs {
+		if r.Message == msg {
+			n++
+		}
+	}
+	h.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("logged %d times, want once", n)
 	}
 }
 
@@ -653,6 +753,10 @@ func TestClientHandshakeFailure(t *testing.T) {
 	var verr *ctls.CertificateVerificationError
 	if !errors.As(err, &verr) {
 		t.Fatalf("Connect error %v (%T), want CertificateVerificationError", err, err)
+	}
+	var he *twtls.HandshakeError
+	if !errors.As(err, &he) || he.Peer == nil || he.Peer.String() != addr {
+		t.Fatalf("Connect error %v (%T), want a *HandshakeError with Peer %s", err, err, addr)
 	}
 	select {
 	case herr := <-hsErr:

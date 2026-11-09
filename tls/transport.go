@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"runtime/debug"
 	"syscall"
@@ -34,6 +35,7 @@ const (
 type Transport struct {
 	f     *factory
 	inner twine.Protocol
+	peer  net.Addr // from BuildProtocol; immutable
 
 	under twine.Transport
 	loop  *twine.Loop
@@ -109,13 +111,16 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 			}
 		}()
 		if err := t.tc.Handshake(); err != nil {
-			// Settle the user's Connect Future from here as well (Reject is
-			// idempotent and thread-safe): the loop callback that normally
-			// does it is dropped if the loop exits mid-handshake.
+			// Build the HandshakeError here so that the Connect Future and
+			// the OnHandshakeError hook receive the same value, and settle
+			// the Future from here as well (Reject is idempotent and
+			// thread-safe): the loop callback that normally does it is
+			// dropped if the loop exits mid-handshake.
+			herr := t.handshakeError(err)
 			if t.f.res != nil {
-				t.f.res.Reject(err)
+				t.f.res.Reject(herr)
 			}
-			res.Reject(err)
+			res.Reject(herr)
 			return
 		}
 		res.Resolve(struct{}{})
@@ -236,7 +241,8 @@ func (t *Transport) onHandshakeDone(struct{}) {
 	}
 }
 
-// onHandshakeError runs on the loop when the worker's Handshake failed.
+// onHandshakeError runs on the loop when the handshake goroutine's
+// Handshake failed (err is then a *HandshakeError) or panicked.
 func (t *Transport) onHandshakeError(err error) {
 	t.stopTimer()
 	if t.state == stHandshaking {
@@ -245,23 +251,60 @@ func (t *Transport) onHandshakeError(err error) {
 		t.bio.shutdown(err)
 		t.under.Abort()
 	}
-	if t.bio.err == ErrHandshakeTimeout {
-		err = ErrHandshakeTimeout
-	}
 	t.handshakeFailed(err)
 }
 
+// handshakeError wraps err with the peer address. When HandshakeTimeout
+// expired, the handshake failed on the read error the timeout caused, and
+// ErrHandshakeTimeout is reported instead. Safe from the handshake goroutine.
+func (t *Transport) handshakeError(err error) *HandshakeError {
+	var he *HandshakeError
+	if errors.As(err, &he) {
+		return he
+	}
+	if t.bio != nil {
+		t.bio.mu.Lock()
+		if t.bio.err == ErrHandshakeTimeout {
+			err = ErrHandshakeTimeout
+		}
+		t.bio.mu.Unlock()
+	}
+	return &HandshakeError{Peer: t.peer, Err: err}
+}
+
+// handshakeFailed reports a failed handshake exactly once: to the
+// OnHandshakeError hook, or to the engine's log when there is no hook, and
+// to the Connect Future.
 func (t *Transport) handshakeFailed(err error) {
 	if t.hsDone {
 		return
 	}
 	t.hsDone = true
+	he := t.handshakeError(err)
 	if fn := t.f.opts.onHandshakeError; fn != nil {
-		fn(err)
+		fn(he)
+	} else {
+		loggerOf(t.loop).Warn("twine/tls: handshake failed", "peer", t.peer, "err", he.Err)
 	}
 	if t.f.res != nil {
-		t.f.res.Reject(err)
+		t.f.res.Reject(he)
 	}
+}
+
+// loggerOf returns the engine's logger when the core exposes one (a Logger
+// method on the Loop or the Engine), and slog.Default() otherwise.
+func loggerOf(l *twine.Loop) *slog.Logger {
+	type loggerer interface{ Logger() *slog.Logger }
+	if l != nil {
+		for _, v := range []any{l, l.Engine()} {
+			if lg, ok := v.(loggerer); ok {
+				if x := lg.Logger(); x != nil {
+					return x
+				}
+			}
+		}
+	}
+	return slog.Default()
 }
 
 // drain reads plaintext until crypto/tls would block and delivers each chunk
