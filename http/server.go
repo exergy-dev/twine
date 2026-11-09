@@ -467,7 +467,7 @@ func (c *conn) writeResponse() {
 		w = append(w, c.date.line...)
 	}
 	body := ctx.out
-	head := string(ctx.Method()) == "HEAD"
+	head := ctx.req.isHead
 	if st != 204 && st != 304 {
 		if len(ctx.ct) > 0 {
 			w = append(w, "Content-Type: "...)
