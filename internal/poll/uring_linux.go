@@ -326,7 +326,7 @@ func (p *Poller) Del(fd int) error {
 func (p *Poller) Wait(evs []Event, timeout time.Duration) (int, error) {
 	max := len(evs)
 	if max == 0 {
-		return 0, errNoEvents
+		return 0, unix.EINVAL
 	}
 	if p.closed {
 		return 0, unix.EBADF
