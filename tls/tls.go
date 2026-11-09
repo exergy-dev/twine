@@ -68,6 +68,17 @@ func (f *factory) BuildProtocol(peer net.Addr) twine.Protocol {
 	return (*wrapper)(t)
 }
 
+// newFactory builds a factory. With KernelOffload(true) it also runs the
+// kTLS capability probes, once per process, on the calling goroutine rather
+// than on a loop at the first handshake.
+func newFactory(cfg *ctls.Config, inner twine.Factory, client bool, opts []Option) *factory {
+	f := &factory{cfg: cfg, inner: inner, client: client, opts: buildOptions(opts)}
+	if f.opts.kernelOffload {
+		warmKTLS()
+	}
+	return f
+}
+
 type nopProtocol struct{}
 
 func (nopProtocol) ConnectionMade(twine.Transport) {}
@@ -85,7 +96,7 @@ func Server(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory
 	if !canServe(cfg) {
 		panic(errNoCertificate)
 	}
-	return &factory{cfg: cfg, inner: inner, opts: buildOptions(opts)}
+	return newFactory(cfg, inner, false, opts)
 }
 
 // Client wraps inner so that every connection it builds speaks TLS as the
@@ -105,7 +116,7 @@ func Client(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory
 	if cfg == nil {
 		cfg = &ctls.Config{}
 	}
-	return &factory{cfg: cfg, inner: inner, client: true, opts: buildOptions(opts)}
+	return newFactory(cfg, inner, true, opts)
 }
 
 // Listen is ListenTCP with a Server factory. Core listener options are passed

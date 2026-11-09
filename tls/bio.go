@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/exergy-dev/twine"
@@ -53,9 +54,13 @@ type bio struct {
 	out         []byte // (mu) outbound ciphertext written during the handshake
 	flushQueued bool   // (mu) a flushOut task is pending on the loop
 	err         error  // (mu) terminal error once the connection is gone
-	loopMode    bool   // (mu) written once by the loop on mode switch
 	noWrite     bool   // (mu) kTLS TX installed: crypto/tls writes are refused
 	refused     bool   // (mu) a write was refused because of noWrite
+
+	// loopMode is set once, by the loop, when the handshake has completed.
+	// It is atomic so that Read, called on the loop for every record, can
+	// test it without taking mu.
+	loopMode atomic.Bool
 
 	borrowed []byte // loop mode only: the current DataReceived slice
 	flushFn  func() // b.flushOut, allocated once
@@ -76,11 +81,12 @@ func (b *bio) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	b.mu.Lock()
-	if b.loopMode {
-		b.mu.Unlock()
+	if b.loopMode.Load() {
 		return b.readLoop(p)
 	}
+	// Handshake mode: only the handshake goroutine reads, and it has
+	// returned from Handshake before the loop sets loopMode.
+	b.mu.Lock()
 	for b.r == len(b.in) && b.err == nil {
 		b.cond.Wait()
 	}
@@ -187,7 +193,7 @@ func (b *bio) Write(p []byte) (int, error) {
 		b.mu.Unlock()
 		return 0, errOffloadWrite
 	}
-	if b.loopMode {
+	if b.loopMode.Load() {
 		b.mu.Unlock()
 		b.under.Write(p)
 		return len(p), nil
@@ -219,7 +225,7 @@ func (b *bio) flushOut() {
 // switchToLoopMode is called on the loop once the handshake has completed.
 func (b *bio) switchToLoopMode() {
 	b.mu.Lock()
-	b.loopMode = true
+	b.loopMode.Store(true)
 	b.out = nil
 	b.mu.Unlock()
 }

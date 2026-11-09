@@ -64,6 +64,19 @@ func probeKTLS() bool {
 	return err == nil || errors.Is(err, unix.ENOTCONN)
 }
 
+// warmKTLS runs the capability probes (KTLSAvailable and the per-cipher key
+// probes) now, so that they do not run on a loop thread at the first
+// handshake, where the sync.Once would also block every other loop
+// finishing a handshake at the same time. Called when a factory is built
+// with KernelOffload(true); later calls return at once.
+func warmKTLS() {
+	if KTLSAvailable() {
+		for k := ktlsKind(0); k < numKinds; k++ {
+			cipherUsable(k)
+		}
+	}
+}
+
 // setCryptoInfo calls setsockopt(SOL_TLS, opt, info). unix has no helper for
 // an arbitrary byte buffer at an arbitrary level.
 func setCryptoInfo(fd, opt int, info []byte) error {

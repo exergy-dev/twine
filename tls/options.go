@@ -36,7 +36,9 @@ func buildOptions(opts []Option) options {
 // precondition fails the connection silently stays on the memory BIO. A
 // server offloads both directions, a client transmit only.
 // Transport.KernelOffload reports the mode in use; see the package
-// documentation, "Kernel TLS", for the exact rules and limitations.
+// documentation, "Kernel TLS", for the exact rules and limitations. The
+// kernel capability probes run once per process, when the first factory
+// with KernelOffload(true) is built (by Server, Client, Listen or Connect).
 func KernelOffload(on bool) Option { return func(o *options) { o.kernelOffload = on } }
 
 // OnHandshakeError registers fn to be called, on the connection's loop, when
