@@ -225,6 +225,45 @@ func TestKTLSLoseConnectionCloseNotify(t *testing.T) {
 	}
 }
 
+// writevProto sends its slices with one Writev, then closes.
+type writevProto struct {
+	parts [][]byte
+	tx    chan bool
+}
+
+func (p *writevProto) ConnectionMade(t twine.Transport) {
+	tx, _ := t.(*twtls.Transport).KernelOffload()
+	p.tx <- tx
+	t.Writev(p.parts...)
+	t.LoseConnection()
+}
+func (p *writevProto) DataReceived([]byte)  {}
+func (p *writevProto) ConnectionLost(error) {}
+
+// TestKTLSWritev: under TX offload Writev hands every slice to the socket in
+// one writev; the peer must see them in order, then close_notify.
+func TestKTLSWritev(t *testing.T) {
+	requireKTLS(t)
+	e := startEngine(t)
+	parts := [][]byte{[]byte("head "), {}, bytes.Repeat([]byte("m"), 100<<10), []byte(" tail")}
+	txCh := make(chan bool, 1)
+	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &writevProto{parts: parts, tx: txCh}
+	}), twtls.KernelOffload(true))
+	c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MinVersion: ctls.VersionTLS13})
+	defer c.Close()
+	got, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatalf("ReadAll: %v (want clean close_notify EOF)", err)
+	}
+	if !<-txCh {
+		t.Fatal("not offloaded")
+	}
+	if want := bytes.Join(parts, nil); !bytes.Equal(got, want) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(want))
+	}
+}
+
 type offByeProto struct {
 	byeProto
 	ch chan bool
