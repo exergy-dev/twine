@@ -143,9 +143,11 @@ func (l *Loop) InLoop() bool {
 
 // CallFromThread schedules fn to run on the loop. It is safe from any
 // goroutine and never blocks: when the lock-free ring is full, tasks spill
-// into a mutex-guarded slice. Wakeups are coalesced so N concurrent calls cost at
-// most one eventfd write. A call made from the loop itself appends to a local
-// slice and skips the atomics. After the loop has exited fn is dropped.
+// into a mutex-guarded slice. Wakeups are coalesced so N concurrent calls
+// cost at most one wakeup write. A call made from the loop itself appends to
+// a local slice and skips the atomics; the function runs on a later
+// iteration, never re-entrantly. After the loop has exited fn is dropped
+// (counted in MetricsSnapshot.BacklogDrops).
 func (l *Loop) CallFromThread(fn func()) {
 	if l.stopped.Load() {
 		l.metrics.backlogDrops.Add(1)
