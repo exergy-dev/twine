@@ -8,7 +8,13 @@
 // caller bug: the only caller, ring, never asks for more than MaxClass.
 //
 // An Allocator is not goroutine-safe: each loop owns its own instance.
+//
+// Built with -tags twine_debug, Get reports an n above MaxClass and Put
+// reports a slab that is already on its free list (a double Put, which
+// would hand one buffer to two owners) with a descriptive panic.
 package slab
+
+import "github.com/exergy-dev/twine/internal/debugtag"
 
 // Class sizes, ascending.
 const (
@@ -87,6 +93,9 @@ func exactClassIndex(c int) int {
 // at most MaxClass; a larger n panics. Get from a non-empty free list does
 // not allocate. The contents of a reused slab are not cleared.
 func (a *Allocator) Get(n int) []byte {
+	if debugtag.On && n > MaxClass {
+		panic("slab: Get larger than MaxClass")
+	}
 	a.gets++
 	i := classIndex(n)
 	fl := a.free[i] // i == -1 (n > MaxClass) panics here
@@ -116,6 +125,14 @@ func (a *Allocator) Put(b []byte) {
 	i := exactClassIndex(c)
 	if i < 0 {
 		return
+	}
+	if debugtag.On {
+		p := &b[:c][0]
+		for _, f := range a.free[i] {
+			if &f[0] == p {
+				panic("slab: double Put")
+			}
+		}
 	}
 	a.free[i] = append(a.free[i], b[:c])
 	a.inUse -= c

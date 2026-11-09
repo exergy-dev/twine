@@ -14,12 +14,15 @@
 // (relative to the base), firing is exact: a timer fires during the first
 // Advance(now) with now >= at.
 //
-// A Wheel is not safe for concurrent use.
+// A Wheel is not safe for concurrent use. Built with -tags twine_debug,
+// Advance panics when called from inside a timer's Fn.
 package wheel
 
 import (
 	"math/bits"
 	"time"
+
+	"github.com/exergy-dev/twine/internal/debugtag"
 )
 
 const (
@@ -82,6 +85,8 @@ type Wheel struct {
 	cur   int64 // current tick (ticks since base)
 	now   int64 // last time passed to Advance (or New); cur is its tick outside Advance
 	count int
+
+	advancing bool // inside Advance; maintained only when debugtag.On
 }
 
 // New creates a wheel with the given tick length whose tick 0 is at the
@@ -211,6 +216,13 @@ func (w *Wheel) Remove(t *Timer) bool {
 // A Fn that unconditionally re-adds its own timer with at <= now makes
 // Advance loop forever. Advance must not be called from inside Fn.
 func (w *Wheel) Advance(now int64) int {
+	if debugtag.On {
+		if w.advancing {
+			panic("wheel: Advance called from inside a timer's Fn")
+		}
+		w.advancing = true
+		defer func() { w.advancing = false }()
+	}
 	if now <= w.now {
 		fired := 0
 		for w.due.next != &w.due {
