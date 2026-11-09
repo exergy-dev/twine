@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command scaling is the server-bound scaling runner (BENCHMARKS.md, "pinned
 // methodology"). For every combination of server, server loop count,
 // connection count and client configuration it
@@ -77,7 +79,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer os.RemoveAll(d)
+		defer func() { _ = os.RemoveAll(d) }()
 		bd = d
 	}
 	for _, p := range []string{"twineload", "echo_twine", "echo_gnet", "echoclient", "http_twine", "http_nethttp", "httpclient"} {
@@ -88,23 +90,23 @@ func main() {
 		c.Env = append(os.Environ(), "GOTOOLCHAIN=local")
 		c.Stderr = os.Stderr
 		if err := c.Run(); err != nil {
-			log.Fatalf("build %s: %v (run from the bench/ directory)", p, err)
+			log.Fatalf("build %s: %v (run from the bench/ directory)", p, err) //nolint:gocritic // leaves the temp dir behind on a build failure
 		}
 	}
 
-	var outF io.Writer = io.Discard
+	var outF = io.Discard
 	if *out != "" {
 		f, err := os.OpenFile(*out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		outF = f
 	}
 	logf := func(format string, a ...any) {
 		s := fmt.Sprintf(format, a...)
 		fmt.Print(s)
-		io.WriteString(outF, s)
+		_, _ = io.WriteString(outF, s)
 	}
 	logf("# scaling run %s mode=%s duration=%v host=%s\n", time.Now().Format(time.RFC3339), *mode, *dur, hostInfo())
 
@@ -194,7 +196,7 @@ func run(j job, mode, bd string, port int, dur time.Duration, cliCPUs, cliPin st
 	defer func() {
 		_ = srv.Process.Signal(os.Interrupt)
 		done := make(chan struct{})
-		go func() { srv.Wait(); close(done) }()
+		go func() { _ = srv.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
@@ -207,7 +209,7 @@ func run(j job, mode, bd string, port int, dur time.Duration, cliCPUs, cliPin st
 	for i := 0; i < 100; i++ {
 		c, err := net.DialTimeout("tcp", addr, time.Second)
 		if err == nil {
-			c.Close()
+			_ = c.Close()
 			up = true
 			break
 		}

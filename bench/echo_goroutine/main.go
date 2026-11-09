@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command echo_goroutine is the net.Listen + goroutine-per-connection echo
 // server used as the baseline in the benchmarks (BENCHMARKS.md). Drive it
 // with bench/echoclient.

@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command echo_twine is the twine echo server used by the benchmarks
 // (BENCHMARKS.md). Drive it with bench/echoclient.
 package main
