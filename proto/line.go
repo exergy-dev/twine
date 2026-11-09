@@ -51,34 +51,23 @@ type LineReceiver struct {
 	// framing error recorded before an abort, or the core's error otherwise.
 	OnConnectionLost func(err error)
 
-	t   twine.Transport
-	buf []byte // incomplete trailing line (may end with a delimiter prefix)
-	win []byte // scratch for delimiter-spanning search
-	err error
-	raw bool
-	iov [2][]byte
+	stream        // buf holds an incomplete trailing line (may end with a delimiter prefix)
+	win    []byte // scratch for delimiter-spanning search
+	raw    bool
+	iov    [2][]byte
 }
 
 var _ twine.Protocol = (*LineReceiver)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (lr *LineReceiver) ConnectionMade(t twine.Transport) {
-	lr.t = t
-	if lr.OnConnectionMade != nil {
-		lr.OnConnectionMade(t)
-	}
+	lr.made(t, lr.OnConnectionMade)
 }
 
 // ConnectionLost implements twine.Protocol. It substitutes the recorded
 // framing error, if any, and calls OnConnectionLost.
 func (lr *LineReceiver) ConnectionLost(err error) {
-	if lr.err != nil {
-		err = lr.err
-	}
-	lr.buf = nil
-	if lr.OnConnectionLost != nil {
-		lr.OnConnectionLost(err)
-	}
+	lr.lost(err, lr.OnConnectionLost)
 }
 
 // Transport returns the transport stored by ConnectionMade.
@@ -124,15 +113,6 @@ func (lr *LineReceiver) maxLen() int {
 		return DefaultMaxLineLength
 	}
 	return lr.MaxLineLength
-}
-
-// fail records err and aborts the transport.
-func (lr *LineReceiver) fail(err error) {
-	lr.err = err
-	lr.buf = lr.buf[:0]
-	if lr.t != nil {
-		lr.t.Abort()
-	}
 }
 
 // DataReceived implements twine.Protocol.
