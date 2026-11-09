@@ -123,3 +123,18 @@ func TestBroadcastMembership(t *testing.T) {
 		t.Fatalf("Len %d", b.Len())
 	}
 }
+
+func TestBroadcastZeroValue(t *testing.T) {
+	var b Broadcast
+	b.Send([]byte("nobody\n")) // empty: a no-op
+	b.Remove(newFake())
+	f := newFake()
+	b.Add(f)
+	if b.Len() != 1 {
+		t.Fatalf("Len %d", b.Len())
+	}
+	b.Remove(f)
+	if b.Len() != 0 {
+		t.Fatalf("Len %d", b.Len())
+	}
+}
