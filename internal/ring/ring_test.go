@@ -48,27 +48,8 @@ func segSizes(r *Ring) []int {
 // checkInvariants verifies internal consistency of r.
 func checkInvariants(t *testing.T, r *Ring) {
 	t.Helper()
-	total := 0
-	for s := r.head; s != nil; s = s.next {
-		if s.n < 0 || s.n > len(s.buf) || s.r < 0 || s.r >= len(s.buf) {
-			t.Fatalf("bad segment r=%d n=%d size=%d", s.r, s.n, len(s.buf))
-		}
-		if s != r.head && s.r != 0 {
-			t.Fatalf("non-head segment has read offset %d", s.r)
-		}
-		if s != r.tail && s.n != len(s.buf) && s != r.head {
-			t.Fatalf("middle segment not full: n=%d size=%d", s.n, len(s.buf))
-		}
-		if s.n == 0 && (s != r.head || s.next != nil) {
-			t.Fatal("empty segment that is not the sole kept segment")
-		}
-		if s.next == nil && s != r.tail {
-			t.Fatal("tail pointer mismatch")
-		}
-		total += s.n
-	}
-	if total != r.Len() {
-		t.Fatalf("segment bytes %d != Len %d", total, r.Len())
+	if msg := r.verify(); msg != "" {
+		t.Fatalf("%s (segments %v, Len %d)", msg, segSizes(r), r.Len())
 	}
 }
 

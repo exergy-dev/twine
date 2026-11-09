@@ -18,13 +18,22 @@
 // A Ring holds no segment until its first non-empty Write. Consume keeps the
 // last segment (emptied) for reuse; Reset returns every segment.
 //
-// Not goroutine-safe.
+// Not goroutine-safe. Built with -tags twine_debug, Write and Consume verify
+// the segment chain after every call and panic on an inconsistency.
 package ring
 
 import (
+	"github.com/exergy-dev/twine/internal/debugtag"
 	"github.com/exergy-dev/twine/internal/slab"
 	"golang.org/x/sys/unix"
 )
+
+// noCopy makes go vet's copylocks check report a Ring copied by value. Its
+// methods are never called.
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
 
 // segment is one slab in the chain, used as a circular buffer: the readable
 // bytes are buf[r:r+n] taken modulo len(buf).
@@ -39,6 +48,8 @@ type segment struct {
 // Init. Not goroutine-safe. A Ring must not be copied after Init: it holds a
 // pointer to its own embedded first segment.
 type Ring struct {
+	_ noCopy // first: a trailing zero-size field would be padded
+
 	alloc     *slab.Allocator
 	head      *segment
 	tail      *segment
@@ -98,6 +109,9 @@ func (r *Ring) Write(b []byte) {
 		c := copy(s.buf[w:w+room], b)
 		s.n += c
 		b = b[c:]
+	}
+	if debugtag.On {
+		r.mustVerify()
 	}
 }
 
@@ -205,6 +219,9 @@ func (r *Ring) Consume(n int) {
 	if n < 0 || n > r.length {
 		panic("ring: Consume out of range")
 	}
+	if debugtag.On {
+		defer r.mustVerify()
+	}
 	r.length -= n
 	for n > 0 {
 		s := r.head
@@ -245,3 +262,42 @@ func (r *Ring) HighWater() int { return r.highWater }
 
 // ResetHighWater sets the high water mark to the current Len.
 func (r *Ring) ResetHighWater() { r.highWater = r.length }
+
+// verify checks the segment chain and returns a description of the first
+// inconsistency found, or "".
+func (r *Ring) verify() string {
+	if (r.head == nil) != (r.tail == nil) {
+		return "ring: head and tail disagree on emptiness"
+	}
+	total := 0
+	for s := r.head; s != nil; s = s.next {
+		if s.n < 0 || s.n > len(s.buf) || s.r < 0 || s.r >= len(s.buf) {
+			return "ring: segment offsets out of bounds"
+		}
+		if s != r.head && s.r != 0 {
+			return "ring: non-head segment has a read offset"
+		}
+		if s != r.tail && s != r.head && s.n != len(s.buf) {
+			return "ring: middle segment not full"
+		}
+		if s.n == 0 && (s != r.head || s.next != nil) {
+			return "ring: empty segment that is not the sole kept segment"
+		}
+		if s.next == nil && s != r.tail {
+			return "ring: tail is not the last segment"
+		}
+		total += s.n
+	}
+	if total != r.length {
+		return "ring: Len does not match the bytes in the segments"
+	}
+	return ""
+}
+
+// mustVerify panics if verify finds an inconsistency. Write and Consume call
+// it when built with -tags twine_debug.
+func (r *Ring) mustVerify() {
+	if msg := r.verify(); msg != "" {
+		panic(msg)
+	}
+}
