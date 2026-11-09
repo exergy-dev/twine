@@ -27,7 +27,8 @@ const (
 // underlying transport; DataReceived on the inner protocol carries plaintext.
 // Like every twine.Transport it is loop-affine: all methods except Loop must
 // be called on the owning loop. Inner protocols reach the TLS-specific
-// methods with a type assertion: t.(*tls.Transport).ConnectionState().
+// methods with a type assertion: t.(*twtls.Transport).ConnectionState(),
+// with this package imported as twtls (see the package documentation).
 type Transport struct {
 	f     *factory
 	inner twine.Protocol

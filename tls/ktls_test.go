@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	ctls "crypto/tls"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -82,10 +82,10 @@ func TestKTLSGoClient(t *testing.T) {
 	info := make(chan kinfo, 1)
 	lost := make(chan error, 1)
 	addr := listen(t, e, serverConfig(t), kFactory(info, lost), twtls.KernelOffload(true))
-	c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MinVersion: ctls.VersionTLS13})
+	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
 	settle()
 	ki := <-info
-	t.Logf("suite=%s offloaded=%v rx=%v", ctls.CipherSuiteName(ki.suite), ki.offloaded, ki.rx)
+	t.Logf("suite=%s offloaded=%v rx=%v", tls.CipherSuiteName(ki.suite), ki.offloaded, ki.rx)
 	if !ki.offloaded || !ki.rx {
 		t.Fatalf("kTLS did not engage: %+v", ki)
 	}
@@ -144,9 +144,9 @@ func TestKTLSOpenSSLSuites(t *testing.T) {
 		name string
 		id   uint16
 	}{
-		{"TLS_AES_128_GCM_SHA256", ctls.TLS_AES_128_GCM_SHA256},
-		{"TLS_AES_256_GCM_SHA384", ctls.TLS_AES_256_GCM_SHA384},
-		{"TLS_CHACHA20_POLY1305_SHA256", ctls.TLS_CHACHA20_POLY1305_SHA256},
+		{"TLS_AES_128_GCM_SHA256", tls.TLS_AES_128_GCM_SHA256},
+		{"TLS_AES_256_GCM_SHA384", tls.TLS_AES_256_GCM_SHA384},
+		{"TLS_CHACHA20_POLY1305_SHA256", tls.TLS_CHACHA20_POLY1305_SHA256},
 	} {
 		t.Run(suite.name, func(t *testing.T) {
 			// ChaCha20-Poly1305 is never offloaded (AES-GCM only).
@@ -194,7 +194,7 @@ func TestKTLSOpenSSLSuites(t *testing.T) {
 				t.Fatal("echo mismatch")
 			}
 			ki := <-info
-			t.Logf("negotiated %s offloaded=%v rx=%v", ctls.CipherSuiteName(ki.suite), ki.offloaded, ki.rx)
+			t.Logf("negotiated %s offloaded=%v rx=%v", tls.CipherSuiteName(ki.suite), ki.offloaded, ki.rx)
 			if ki.suite != suite.id {
 				t.Fatalf("negotiated %x, want %x", ki.suite, suite.id)
 			}
@@ -214,7 +214,7 @@ func TestKTLSLoseConnectionCloseNotify(t *testing.T) {
 	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
 		return &offByeProto{byeProto: byeProto{lost: lost, big: big}, ch: offl}
 	}), twtls.KernelOffload(true))
-	c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true})
+	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true})
 	got, err := io.ReadAll(c)
 	if err != nil {
 		t.Fatalf("ReadAll: %v (want clean close_notify EOF)", err)
@@ -258,7 +258,7 @@ func TestKTLSWritev(t *testing.T) {
 	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
 		return &writevProto{parts: parts, tx: txCh}
 	}), twtls.KernelOffload(true))
-	c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MinVersion: ctls.VersionTLS13})
+	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
 	defer c.Close()
 	got, err := io.ReadAll(c)
 	if err != nil {
@@ -303,13 +303,13 @@ func TestKTLSFallbacks(t *testing.T) {
 		opt  bool
 		max  uint16
 	}{
-		{"TLS12", true, ctls.VersionTLS12},
-		{"OffloadOff", false, ctls.VersionTLS13},
+		{"TLS12", true, tls.VersionTLS12},
+		{"OffloadOff", false, tls.VersionTLS13},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			info := make(chan kinfo, 1)
 			addr := listen(t, e, serverConfig(t), kFactory(info, nil), twtls.KernelOffload(tc.opt))
-			c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MaxVersion: tc.max})
+			c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MaxVersion: tc.max})
 			defer c.Close()
 			settle()
 			if _, err := c.Write([]byte("hello")); err != nil {
@@ -334,7 +334,7 @@ func TestKTLSEarlyDataIsNotLost(t *testing.T) {
 	info := make(chan kinfo, 20)
 	addr := listen(t, e, serverConfig(t), kFactory(info, nil), twtls.KernelOffload(true))
 	for i := 0; i < 20; i++ {
-		c := dial(t, addr, &ctls.Config{InsecureSkipVerify: true, MinVersion: ctls.VersionTLS13})
+		c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
 		// No settle: write immediately.
 		if _, err := c.Write([]byte("early")); err != nil {
 			t.Fatal(err)
@@ -367,14 +367,14 @@ func (p *kClient) ConnectionMade(t twine.Transport) {
 func TestKTLSClientTXOnly(t *testing.T) {
 	requireKTLS(t)
 	cert, pool := selfSigned(t)
-	addr := goEchoServer(t, &ctls.Config{Certificates: []ctls.Certificate{cert}, MinVersion: ctls.VersionTLS13})
+	addr := goEchoServer(t, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
 	e := startEngine(t)
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 40000) // 640 KB
 	p := &kClient{clientProto: clientProto{want: len(payload), done: make(chan []byte, 1), payload: payload},
 		info: make(chan kinfo, 1)}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, err := twtls.Connect(e.NextLoop(), addr, &ctls.Config{RootCAs: pool},
+	_, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{RootCAs: pool},
 		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }), twtls.KernelOffload(true)).Await(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +527,7 @@ func TestKTLSClientPeerKeyUpdate(t *testing.T) {
 
 	e := startEngine(t)
 	p := &keyUpdateClient{mode: make(chan [2]bool, 1), got: make(chan []byte, 16), lost: make(chan error, 1)}
-	if _, err := twtls.Connect(e.NextLoop(), addr, &ctls.Config{InsecureSkipVerify: true},
+	if _, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{InsecureSkipVerify: true},
 		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }), twtls.KernelOffload(true)).Await(ctx); err != nil {
 		t.Fatal(err)
 	}

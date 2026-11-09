@@ -4,19 +4,30 @@
 //
 // # Usage
 //
-//	cfg := &ctls.Config{Certificates: []ctls.Certificate{cert}, NextProtos: []string{"h2", "http/1.1"}}
-//	lst, err := tls.Listen(eng, ":8443", cfg, myFactory, tls.OnHandshakeError(logIt))
+// The package is named tls, like crypto/tls, which programs usually import
+// too. The convention is to keep crypto/tls unaliased and import this
+// package as twtls:
 //
-//	fut := tls.Connect(eng.NextLoop(), "example.com:443", &ctls.Config{}, clientFactory)
+//	import (
+//		"crypto/tls"
+//
+//		twtls "github.com/exergy-dev/twine/tls"
+//	)
+//
+//	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2", "http/1.1"}}
+//	lst, err := twtls.Listen(eng, ":8443", cfg, myFactory, twtls.OnHandshakeError(logIt))
+//
+//	fut := twtls.Connect(eng.NextLoop(), "example.com:443", &tls.Config{}, clientFactory)
 //
 // Server and Client wrap any twine.Factory. The inner protocol's
 // ConnectionMade is called only after the handshake has completed, with a
 // *Transport (a twine.Transport); DataReceived carries plaintext and Write
 // takes plaintext. Negotiated parameters (version, cipher suite, ALPN, SNI,
-// peer certificates) come from t.(*tls.Transport).ConnectionState().
+// peer certificates) come from t.(*twtls.Transport).ConnectionState().
 // LoseConnection sends close_notify before half-closing the socket, so a
 // peer sees a clean io.EOF. A failed handshake never reaches the inner
-// protocol: the socket is aborted and the OnHandshakeError hook is called.
+// protocol: the socket is aborted, and the OnHandshakeError hook is called
+// with a *HandshakeError (without a hook, the failure is logged).
 //
 // # Modes (design Section 10)
 //
