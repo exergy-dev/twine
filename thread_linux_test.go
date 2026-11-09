@@ -16,6 +16,18 @@ func currentCPU() int {
 	return int(cpu)
 }
 
+// checkDeferAccept asserts that TCP_DEFER_ACCEPT is set on the listener fd.
+func checkDeferAccept(t *testing.T, fd int) {
+	t.Helper()
+	v, err := unix.GetsockoptInt(fd, unix.IPPROTO_TCP, unix.TCP_DEFER_ACCEPT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v <= 0 {
+		t.Errorf("TCP_DEFER_ACCEPT = %d, want > 0", v)
+	}
+}
+
 // TestPinLoops checks that PinLoops lands each loop on the requested CPU.
 func TestPinLoops(t *testing.T) {
 	e := startEngine(t, Loops(2), PinLoops(0, 1))
