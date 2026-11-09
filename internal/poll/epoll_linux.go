@@ -19,7 +19,7 @@ func New() (*Poller, error) {
 	if err := p.w.open(); err != nil {
 		return nil, err
 	}
-	if err := p.epoller.open(p.w.fd); err != nil {
+	if err := p.open(p.w.fd); err != nil {
 		_ = p.w.close()
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (p *Poller) Close() error {
 	}
 	p.closed = true
 	err := p.w.close()
-	if err2 := p.epoller.close(); err == nil {
+	if err2 := p.close(); err == nil {
 		err = err2
 	}
 	return err
