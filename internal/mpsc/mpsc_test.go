@@ -256,7 +256,7 @@ func BenchmarkPushPopSingle(b *testing.B) {
 	q := New(1024)
 	noop := func() {}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		q.Push(noop)
 		q.Pop()
 	}
