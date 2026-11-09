@@ -44,6 +44,10 @@ func (u *udpEcho) DatagramReceived(b []byte, from net.Addr) {
 		}
 		return
 	}
+	if string(b) == "oversize" {
+		// Larger than any UDP datagram: the send fails with EMSGSIZE.
+		u.tr.WriteTo(make([]byte, 70000), from)
+	}
 	u.tr.WriteTo(b, from)
 }
 
@@ -104,14 +108,25 @@ func TestUDPEcho(t *testing.T) {
 	u.sink.report(t)
 }
 
+// A datagram larger than the 8 KiB send batch buffer bypasses the batch
+// (direct sendto) and arrives whole through the 64 KiB receive buffer.
 func TestUDPLargeDatagram(t *testing.T) {
+	// The largest datagram a UDP socket may send is capped by its SO_SNDBUF
+	// on macOS and the BSDs, whose default (net.inet.udp.maxdgram, 9216 on
+	// macOS) is barely above udpSendBuf; sending more fails with EMSGSIZE.
+	// Raise SO_SNDBUF on both ends so a near-64 KiB datagram is legal
+	// everywhere. Linux does not tie the datagram size to SO_SNDBUF.
+	const sndBuf = 256 << 10
 	e := startEngine(t, Loops(1))
 	u := newUDPEcho()
-	lst, err := e.ListenUDP("127.0.0.1:0", u)
+	lst, err := e.ListenUDP("127.0.0.1:0", u, SocketBuffers(0, sndBuf))
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := dialUDP(t, lst.Addr())
+	if err := c.SetWriteBuffer(sndBuf); err != nil {
+		t.Fatal(err)
+	}
 	msg := make([]byte, 60000)
 	fillPattern(msg, 0)
 	if _, err := c.Write(msg); err != nil {
@@ -121,11 +136,42 @@ func TestUDPLargeDatagram(t *testing.T) {
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := c.Read(buf)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v (server: %d datagrams received, %d sent)", err,
+			e.Loops()[0].Metrics().Datagrams, e.Loops()[0].Metrics().DatagramsSent)
 	}
 	if !bytes.Equal(buf[:n], msg) {
 		t.Errorf("60 KB datagram echo: got %d bytes, mismatch", n)
 	}
+}
+
+// A datagram the kernel refuses (EMSGSIZE) is dropped on its own: it is not
+// counted as sent and the socket keeps working.
+func TestUDPOversizeDropped(t *testing.T) {
+	e := startEngine(t, Loops(1))
+	u := newUDPEcho()
+	lst, err := e.ListenUDP("127.0.0.1:0", u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialUDP(t, lst.Addr())
+	for _, msg := range []string{"oversize", "after"} {
+		if _, err := c.Write([]byte(msg)); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, 128)
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := c.Read(buf)
+		if err != nil {
+			t.Fatalf("echo of %q: %v", msg, err)
+		}
+		if string(buf[:n]) != msg {
+			t.Fatalf("echo of %q: got %q", msg, buf[:n])
+		}
+	}
+	if sent := e.Loops()[0].Metrics().DatagramsSent; sent != 2 {
+		t.Errorf("DatagramsSent = %d, want 2 (the oversize datagram was not sent)", sent)
+	}
+	u.sink.report(t)
 }
 
 func TestUDPBatchWriteTo(t *testing.T) {
