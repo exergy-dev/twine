@@ -250,7 +250,7 @@ func (lp *LengthPrefixed) DataReceived(b []byte) {
 		lp.n = n
 		lp.inBody = true
 		if cap(lp.buf) < n {
-			lp.buf = make([]byte, 0, n)
+			lp.buf = make([]byte, 0, min(n, retainLimit))
 		}
 		lp.buf = lp.buf[:0]
 	}

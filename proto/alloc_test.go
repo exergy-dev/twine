@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -40,6 +41,41 @@ func TestNetstringZeroAlloc(t *testing.T) {
 	}
 	if n == 0 {
 		t.Fatal("no strings delivered")
+	}
+}
+
+// TestPartialFrameBufferBounded: a header declaring a 1 MiB frame followed
+// by a stall must not make the framer allocate the declared size up front;
+// the buffer grows only as body bytes arrive, and the frame is still
+// delivered intact.
+func TestPartialFrameBufferBounded(t *testing.T) {
+	const n = 1 << 20
+	body := bytes.Repeat([]byte("x"), n)
+
+	lp := &LengthPrefixed{}
+	var gotLP []byte
+	lp.FrameReceived = func(f []byte) { gotLP = append([]byte(nil), f...) }
+	lp.ConnectionMade(newFake())
+	lp.DataReceived([]byte{0, 0x10, 0, 0, 'x'})
+	if c := cap(lp.buf); c > retainLimit {
+		t.Fatalf("LengthPrefixed holds %d bytes for a 1-byte partial frame", c)
+	}
+	lp.DataReceived(body[1:])
+	if !bytes.Equal(gotLP, body) {
+		t.Fatalf("LengthPrefixed delivered %d bytes, want %d", len(gotLP), n)
+	}
+
+	ns := &NetstringReceiver{}
+	var gotNS []byte
+	ns.StringReceived = func(s []byte) { gotNS = append([]byte(nil), s...) }
+	ns.ConnectionMade(newFake())
+	ns.DataReceived([]byte("1048576:x"))
+	if c := cap(ns.buf); c > retainLimit {
+		t.Fatalf("NetstringReceiver holds %d bytes for a 1-byte partial frame", c)
+	}
+	ns.DataReceived(append(body[1:], ','))
+	if !bytes.Equal(gotNS, body) {
+		t.Fatalf("NetstringReceiver delivered %d bytes, want %d", len(gotNS), n)
 	}
 }
 
