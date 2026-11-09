@@ -1,6 +1,6 @@
 // Package proto is Twine's protocol library: embeddable framers and helpers
 // modelled on Twisted's twisted.protocols.basic, twisted.protocols.amp and
-// ReconnectingClientFactory (design Section 9).
+// ReconnectingClientFactory.
 //
 // # Embedding pattern
 //
@@ -45,6 +45,8 @@
 // # Threading
 //
 // Like every twine.Protocol, the framers are loop-affine: their methods and
-// callbacks run on the owning loop. Broadcast and ReconnectingClient are safe
-// to use from any goroutine and route work onto loops with CallFromThread.
+// callbacks run on the owning loop. The exceptions are AMP.Call and
+// AMP.CallNoAnswer, Broadcast, and ReconnectingClient (except its Transport
+// method): they are safe to use from any goroutine and route work onto
+// loops with CallFromThread.
 package proto

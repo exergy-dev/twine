@@ -49,11 +49,11 @@ type LengthPrefixed struct {
 
 	stream // buf holds a partial body
 	inBody bool
-	nhdr   int     // header bytes buffered in hdr
-	hdr    [4]byte // partial header on receive
-	n      int     // current body length
-	out    [4]byte // prefix scratch for SendFrame
-	iov    [2][]byte
+	nhdr   int       // header bytes buffered in hdr
+	hdr    [4]byte   // partial header on receive
+	n      int       // current body length
+	out    [4]byte   // prefix scratch for SendFrame
+	iov    [2][]byte // Writev argument; a literal through the interface would allocate
 }
 
 var _ twine.Protocol = (*LengthPrefixed)(nil)

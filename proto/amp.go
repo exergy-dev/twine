@@ -80,16 +80,34 @@ func (e *RemoteError) Is(target error) bool {
 }
 
 // AMP implements Twisted's Asynchronous Messaging Protocol: request/response
-// multiplexing with 32-bit ask ids. Embed it, set Handle, and use Call.
+// multiplexing with 32-bit ask ids. Embed it, set Handle, and use Call. A
+// handler answers synchronously with a resolved Future, or later, for
+// example from the worker pool:
+//
+//	p.Handle = func(cmd string, args proto.Args) *twine.Future[proto.Args] {
+//		switch cmd {
+//		case "Echo": // answered at once
+//			return twine.Resolved[proto.Args](nil, args)
+//		case "Lookup": // blocking work runs on the worker pool
+//			return twine.DeferToThread(loop, func() (proto.Args, error) { return lookup(args) })
+//		}
+//		return nil // the peer gets an UNHANDLED error
+//	}
 //
 // The wire format is Twisted's BinaryBoxProtocol, so a Twine AMP peer
 // interoperates with twisted.protocols.amp.AMP: a box is a sequence of
 // key/value strings, each with a 2-byte big-endian length prefix (framed by
-// an embedded LengthPrefixed with PrefixLen 2), terminated by an empty key.
+// an internal LengthPrefixed with PrefixLen 2), terminated by an empty key.
 // Keys are at most 255 bytes and values at most 65535. A request carries
 // _command and, unless no answer is wanted, _ask (a hex counter); the reply
 // carries _answer with the same tag, or _error with _error_code and
 // _error_description.
+//
+// There is no schema layer: Twisted's Command classes and argument types
+// (Integer, String, Unicode, Boolean, ...) have no counterpart, and values
+// are the raw byte strings on the wire. To interoperate with a Twisted
+// peer, encode values as its argument types do: an Integer is its decimal
+// text (strconv.Itoa), a Boolean is "True" or "False", Unicode is UTF-8.
 //
 // Handler outcomes map to replies as follows: a resolved Future sends its
 // Args as the answer; a rejected Future sends an _error box with the
@@ -124,8 +142,8 @@ type AMP struct {
 	pending map[uint32]twine.Resolver[Args]
 	lost    error // non-nil once the connection is gone
 	out     []byte
-	hdr     [16]byte // _ask pair of an outgoing request
-	iov     [2][]byte
+	hdr     [16]byte  // _ask pair of an outgoing request
+	iov     [2][]byte // Writev argument; a literal through the interface would allocate
 }
 
 var _ twine.Protocol = (*AMP)(nil)
@@ -195,9 +213,11 @@ func (a *AMP) loopGone() bool {
 }
 
 // Call sends cmd with args and returns a Future for the answer. It may be
-// called from any goroutine once ConnectionMade has happened-before the
-// call (for example, when signalled from OnConnectionMade); the request is written on the transport's loop
-// and the Future's callbacks run there. The Future rejects with a
+// called from any goroutine once ConnectionMade has happened-before the call
+// (for example, when signalled from OnConnectionMade). args is encoded
+// before Call returns, so the map may be reused at once; the request is
+// written on the transport's loop and the Future's callbacks run there.
+// The Future rejects with a
 // *RemoteError (errors.Is ErrRemote) when the peer answers with an error,
 // with ErrConnectionLost when the connection goes away first, with
 // ErrNotConnected before ConnectionMade, and with ErrBadArgs for invalid
