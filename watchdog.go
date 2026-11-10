@@ -60,10 +60,13 @@ func (e *Engine) watchdog() {
 			}
 			lastIter[i] = iter
 			now := time.Now()
-			if d := l.slowNs.Swap(0); d > 0 {
-				// A dispatch that already finished, measured by the loop.
+			if d := l.slowNs.Load(); d > 0 {
+				// A dispatch that already finished, measured by the loop. While
+				// the per-loop rate limit is active the value stays put (the
+				// loop keeps the maximum), so it is reported at a later sample
+				// rather than lost.
 				idle = false
-				if now.Sub(lastReport[i]) >= time.Second {
+				if now.Sub(lastReport[i]) >= time.Second && l.slowNs.CompareAndSwap(d, 0) {
 					lastReport[i] = now
 					l.metrics.slowCallbacks.Add(1)
 					proto := "<task>"
