@@ -289,9 +289,9 @@ package slab
 
 // MaxClass is the largest class and the largest n Get accepts.
 const MaxClass = 256 << 10
-// Classes are the slab sizes, ascending: 4 KiB, 16 KiB, 64 KiB, MaxClass.
-// Derived from constants; read-only.
-var Classes = [...]int{4 << 10, 16 << 10, 64 << 10, MaxClass}
+// Classes returns the slab sizes, ascending: 4 KiB, 16 KiB, 64 KiB, MaxClass.
+// It returns a copy; the allocator's table is unexported.
+func Classes() [4]int
 
 type Allocator struct { /* free list per class, counters */ }
 // New preallocates 64 free-list slots per class.
