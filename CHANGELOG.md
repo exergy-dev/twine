@@ -127,8 +127,6 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - CI tests Go 1.24, oldstable and stable on Linux and macOS, runs the
   io_uring backend and the kTLS tests, lints darwin and the nested modules,
   cross-builds every BSD, and runs govulncheck nightly.
-- `examples/tunsink`: `github.com/klauspost/compress` v1.20.2
-  (GO-2026-6865).
 
 ## [0.1.0] - 2026-11-09
 
@@ -167,8 +165,8 @@ First public release. The API is a snapshot and may change before v1.0.0.
   fallback (experimental).
 - `bench` module with the comparison harness (goroutine-per-connection,
   gnet, net/http), the pinned server-bound runner and the 1M-connection
-  soak; examples `echo`, `chat`, `http_hello`, `udp_echo`,
-  `client_reconnect` and `tunsink`.
+  soak; examples `echo`, `chat`, `http_hello`, `udp_echo` and
+  `client_reconnect`.
 
 ### Platforms
 

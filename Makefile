@@ -12,7 +12,7 @@ TESTFLAGS ?=
 LINT_STRICT ?=
 
 .PHONY: all test test-short test-race test-debug test-uring bench bench-compare \
-	lint vet fuzz fmt tidy crossbuild api tunsink vuln
+	lint vet fuzz fmt tidy crossbuild api vuln
 
 all: lint test
 
@@ -39,11 +39,6 @@ vet:
 	$(GO) vet -tags twine_debug $(PKGS)
 	$(GO) vet -tags twine_uring . ./internal/...
 
-# examples/tunsink is its own module (it depends on franz-go) and Linux-only;
-# vet and build it for Linux from any host.
-tunsink:
-	cd examples/tunsink && GOOS=linux $(GO) vet ./... && GOOS=linux $(GO) build -o /dev/null . && GOOS=linux $(GO) build ./cmd/...
-
 # Cross-compile and vet the kqueue and BSD code paths. Only Linux and macOS
 # run in CI; the rest must at least build.
 CROSS := darwin/arm64 freebsd/amd64 netbsd/amd64 netbsd/386 openbsd/amd64 openbsd/386 dragonfly/amd64
@@ -62,15 +57,14 @@ BENCHSTAT   := $(call tool,benchstat)
 GOVULNCHECK := $(call tool,govulncheck)
 missing = if [ -n "$(LINT_STRICT)" ]; then echo "$(1) not installed and LINT_STRICT is set" >&2; exit 1; fi; echo "$(1) not installed; skipped"
 
-# Root module on Linux, darwin and the io_uring tag; the bench and tunsink
-# modules for Linux (they are Linux-only), including gofmt.
-lint: vet crossbuild tunsink
+# Root module on Linux, darwin and the io_uring tag; the bench module for
+# Linux (it is Linux-only), including gofmt.
+lint: vet crossbuild
 ifneq ($(GOLANGCI),)
 	$(GOLANGCI) run $(PKGS)
 	GOOS=darwin GOARCH=arm64 $(GOLANGCI) run $(PKGS)
 	$(GOLANGCI) run --build-tags twine_uring ./internal/...
 	cd bench && GOOS=linux $(GOLANGCI) run ./...
-	cd examples/tunsink && GOOS=linux $(GOLANGCI) run ./...
 else
 	@$(call missing,golangci-lint)
 endif
@@ -80,7 +74,7 @@ else
 	@$(call missing,staticcheck)
 endif
 	cd bench && GOOS=linux $(GO) vet ./...
-	@out=$$(gofmt -l bench examples/tunsink); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	@out=$$(gofmt -l bench); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 fmt:
 	gofmt -l -w $$(git ls-files '*.go')
@@ -92,7 +86,6 @@ api:
 tidy:
 	$(GO) mod tidy
 	cd bench && $(GO) mod tidy
-	cd examples/tunsink && $(GO) mod tidy
 
 # Known vulnerabilities in all three modules (nightly CI runs this).
 vuln:
@@ -101,7 +94,6 @@ ifeq ($(GOVULNCHECK),)
 endif
 	$(GOVULNCHECK) ./...
 	cd bench && GOOS=linux $(GOVULNCHECK) ./...
-	cd examples/tunsink && GOOS=linux $(GOVULNCHECK) ./...
 
 # Fuzz every parser for a short time (nightly CI runs 10 minutes each). The
 # patterns are anchored because -fuzz must match exactly one target.

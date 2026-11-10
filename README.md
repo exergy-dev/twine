@@ -101,7 +101,7 @@ func main() {
 | `tls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Listen`, `Connect`) and opt-in kTLS offload |
 | `internal/*` | poller (epoll/kqueue/io_uring), sockets, slab allocator, write ring, MPSC queue, timing wheel |
 | `bench` | separate module with the comparison harness (goroutine-per-conn, gnet, net/http); Linux only |
-| `examples` | `echo`, `chat`, `http_hello`, `udp_echo`, `client_reconnect`, and `tunsink` (separate module, TCP → TUN + Kafka, Linux only) |
+| `examples` | `echo`, `chat`, `http_hello`, `udp_echo` and `client_reconnect` |
 
 The `http` and `tls` packages share their names with `net/http` and
 `crypto/tls`. Import them as `twhttp` and `twtls`, so the standard packages
@@ -180,9 +180,8 @@ make test        # unit + integration tests
 make test-race   # the same under -race (CI adds TESTFLAGS=-short to shorten the MPSC stress)
 make test-debug  # with -tags twine_debug
 make test-uring  # with -tags twine_uring (Linux io_uring backend)
-make lint        # vet, crossbuild, tunsink, golangci-lint, staticcheck (LINT_STRICT=1 fails on a missing tool)
+make lint        # vet, crossbuild, golangci-lint, staticcheck (LINT_STRICT=1 fails on a missing tool)
 make crossbuild  # build and vet for darwin, freebsd, netbsd, openbsd and dragonfly
-make tunsink     # vet and build examples/tunsink
 make fuzz        # parser fuzzers (FUZZTIME=30s each)
 make api         # regenerate docs/API.md (CI fails when it is stale)
 make bench       # writes bench/results/<git-sha>.txt

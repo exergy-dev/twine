@@ -105,8 +105,8 @@ not.
 
 ## Running
 
-`bench/` (the comparison harness, with gnet) and `examples/tunsink` are
-separate modules and Linux-only.
+`bench/` (the comparison harness, with gnet) is a separate module and
+Linux-only.
 
 ```sh
 make bench                    # root micro-benchmarks, then bench/ harness, -count=5; results in bench/results/<sha>.txt

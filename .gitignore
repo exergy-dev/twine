@@ -30,8 +30,3 @@
 /examples/echo/echo
 /examples/http_hello/http_hello
 /examples/udp_echo/udp_echo
-/examples/tunsink/tunsink
-/examples/tunsink/cmd/aesbench/aesbench
-/examples/tunsink/cmd/baseline/baseline
-/examples/tunsink/cmd/fakekafka/fakekafka
-/examples/tunsink/cmd/loadgen/loadgen

@@ -62,9 +62,9 @@ jobs:
           version: v2.15.0
           install-only: true
       - run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
-      # lint also runs vet, crossbuild and tunsink, and lints the bench and
-      # tunsink modules; LINT_STRICT fails if a linter is missing.
-      - run: make lint tunsink crossbuild LINT_STRICT=1
+      # lint also runs vet and crossbuild and lints the bench module;
+      # LINT_STRICT fails if a linter is missing.
+      - run: make lint crossbuild LINT_STRICT=1
       - name: docs/API.md is current (run make api)
         run: sh scripts/apidump.sh && git diff --exit-code docs/API.md
 

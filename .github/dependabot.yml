@@ -15,6 +15,5 @@ updates:
   - package-ecosystem: gomod
     directories:
       - /bench
-      - /examples/tunsink
     schedule:
       interval: weekly
