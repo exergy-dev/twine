@@ -136,7 +136,8 @@ Two features are **Linux-only and experimental**:
 ## Ownership rules (short form)
 
 1. A connection belongs to one loop for life. Protocol and Transport methods,
-   Timer.Stop/Reset and Future callbacks run only on that loop's thread.
+   Timer.Stop/Reset, Loop.CallLater, Loop.Now and Future callbacks run only
+   on that loop's thread.
 2. `CallFromThread` is the only door into a loop from another goroutine.
 3. `DeferToThread` is the only door out for blocking work.
 4. The slice passed to `DataReceived` is dead when the method returns, and

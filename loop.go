@@ -126,8 +126,13 @@ func (l *Loop) ID() int { return l.id }
 func (l *Loop) Engine() *Engine { return l.eng }
 
 // Now returns the time cached at the start of the current iteration. It is
-// cheap and is what timers fire against.
-func (l *Loop) Now() time.Time { return l.now }
+// cheap and is what timers fire against. It must be called on the loop (the
+// cache is written by the loop goroutine without synchronisation); debug
+// builds panic when it is called from anywhere else.
+func (l *Loop) Now() time.Time {
+	l.assertInLoop()
+	return l.now
+}
 
 // Stopped reports whether the loop has exited. CallFromThread after this
 // point drops the function and counts it in MetricsSnapshot.BacklogDrops.
