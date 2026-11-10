@@ -380,7 +380,22 @@ func TestURingCQOverflow(t *testing.T) {
 	collect("edge", maps.Clone(some), false)
 	quiet("edge")
 	p.ring.resync()
-	got := quiet("resync")
+	// The re-armed registrations complete asynchronously; give the kernel up
+	// to a second to report the fds with unread data, then make sure nothing
+	// else is reported.
+	got := map[int32]bool{}
+	for deadline := time.Now().Add(time.Second); len(got) < k && time.Now().Before(deadline); {
+		n, err := p.Wait(evs[:], 50*time.Millisecond)
+		if err != nil {
+			t.Fatalf("resync: Wait: %v", err)
+		}
+		for _, ev := range evs[:n] {
+			got[ev.FD] = true
+		}
+	}
+	for fd := range quiet("resync") {
+		got[fd] = true
+	}
 	if !maps.Equal(got, some) {
 		t.Fatalf("after resync reported %v, want exactly the %d fds with unread data %v", got, k, some)
 	}
