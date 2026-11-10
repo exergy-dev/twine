@@ -94,14 +94,14 @@ func TestConnectTCPToTwineServer(t *testing.T) {
 	}
 	var peer, host string
 	onLoop(t, l, func() {
-		peer, host = tr.GetPeer().String(), tr.GetHost().String()
+		peer, host = tr.RemoteAddr().String(), tr.LocalAddr().String()
 		tr.Write([]byte("ping"))
 	})
 	if peer != lst.Addr().String() {
-		t.Errorf("GetPeer = %s, want %s", peer, lst.Addr())
+		t.Errorf("RemoteAddr = %s, want %s", peer, lst.Addr())
 	}
 	if host == "" || host == peer {
-		t.Errorf("GetHost = %q", host)
+		t.Errorf("LocalAddr = %q", host)
 	}
 	if !waitUntil(5*time.Second, func() bool { return cp.received() == "ping" }) {
 		t.Errorf("client received %q, want echo \"ping\"", cp.received())
@@ -486,8 +486,8 @@ func TestDialHostnameResolvesOffLoop(t *testing.T) {
 		t.Errorf("%d lookups, want 2 (remote and LocalAddr)", lookups.Load())
 	}
 	onLoop(t, tr.Loop(), func() {
-		if ta, ok := tr.GetPeer().(*net.TCPAddr); !ok || ta.String() != lst.Addr().String() {
-			t.Errorf("GetPeer = %v, want %v", tr.GetPeer(), lst.Addr())
+		if ta, ok := tr.RemoteAddr().(*net.TCPAddr); !ok || ta.String() != lst.Addr().String() {
+			t.Errorf("RemoteAddr = %v, want %v", tr.RemoteAddr(), lst.Addr())
 		}
 		tr.Abort()
 	})

@@ -130,10 +130,10 @@ func (ctx *RequestCtx) IsChunked() bool { return ctx.req.chunked }
 func (ctx *RequestCtx) Body() []byte { return ctx.body }
 
 // RemoteAddr returns the peer address.
-func (ctx *RequestCtx) RemoteAddr() net.Addr { return ctx.c.t.GetPeer() }
+func (ctx *RequestCtx) RemoteAddr() net.Addr { return ctx.c.t.RemoteAddr() }
 
 // LocalAddr returns the local address of the connection.
-func (ctx *RequestCtx) LocalAddr() net.Addr { return ctx.c.t.GetHost() }
+func (ctx *RequestCtx) LocalAddr() net.Addr { return ctx.c.t.LocalAddr() }
 
 // Loop returns the loop that owns the connection, for fire-and-forget work
 // with CallLater or DeferToThread. The response is still the state of the

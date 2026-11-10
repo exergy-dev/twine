@@ -63,10 +63,10 @@ type Transport interface {
 	// Abort closes immediately and discards pending writes;
 	// ConnectionLost(nil) follows at the end of the loop iteration.
 	Abort()
-	// GetPeer returns the remote address (a *net.TCPAddr for TCP).
-	GetPeer() net.Addr
-	// GetHost returns the local address (a *net.TCPAddr for TCP).
-	GetHost() net.Addr
+	// RemoteAddr returns the remote address (a *net.TCPAddr for TCP).
+	RemoteAddr() net.Addr
+	// LocalAddr returns the local address (a *net.TCPAddr for TCP).
+	LocalAddr() net.Addr
 	// Loop returns the owning Loop. Safe from any goroutine.
 	Loop() *Loop
 	// SetIdleTimeout arms an idle timer on the timing wheel; 0 disables.
@@ -147,8 +147,8 @@ type DatagramTransport interface {
 	// (sendmmsg on Linux), larger ones at once. UDP is best effort: a
 	// datagram the kernel refuses is dropped.
 	WriteTo(b []byte, to net.Addr)
-	// GetHost returns the bound address.
-	GetHost() net.Addr
+	// LocalAddr returns the bound address.
+	LocalAddr() net.Addr
 	// Loop returns the owning Loop. Safe from any goroutine.
 	Loop() *Loop
 	// Close flushes queued datagrams, closes the socket and calls

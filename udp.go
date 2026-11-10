@@ -206,8 +206,8 @@ func (l *Loop) flushUDP(c *conn) {
 	}
 }
 
-// GetHost returns the bound address (DatagramTransport).
-func (c *conn) GetHost() net.Addr { return c.host }
+// LocalAddr returns the bound address (DatagramTransport).
+func (c *conn) LocalAddr() net.Addr { return c.host }
 
 // Loop returns the owning loop (DatagramTransport).
 func (c *conn) Loop() *Loop { return c.loop }

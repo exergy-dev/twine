@@ -593,11 +593,11 @@ func (t *Transport) Abort() {
 	}
 }
 
-// GetPeer returns the remote address.
-func (t *Transport) GetPeer() net.Addr { return t.under.GetPeer() }
+// RemoteAddr returns the remote address.
+func (t *Transport) RemoteAddr() net.Addr { return t.under.RemoteAddr() }
 
-// GetHost returns the local address.
-func (t *Transport) GetHost() net.Addr { return t.under.GetHost() }
+// LocalAddr returns the local address.
+func (t *Transport) LocalAddr() net.Addr { return t.under.LocalAddr() }
 
 // Loop returns the owning loop. Safe from any goroutine.
 func (t *Transport) Loop() *twine.Loop { return t.loop }

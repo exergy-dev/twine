@@ -259,8 +259,8 @@ func (p *proxyUser) ConnectionMade(t Transport) {
 			p.results <- name
 		}
 	}
-	ok("GetPeer", t.GetPeer() != nil)
-	ok("GetHost", t.GetHost() != nil)
+	ok("RemoteAddr", t.RemoteAddr() != nil)
+	ok("LocalAddr", t.LocalAddr() != nil)
 	ok("Loop", t.Loop() != nil && !t.Loop().InLoop())
 	v := new(int)
 	t.SetContext(v)

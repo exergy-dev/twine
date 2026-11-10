@@ -36,7 +36,7 @@ type DatagramProtocol interface {
 }
 type DatagramTransport interface {
 	WriteTo(b []byte, to net.Addr)
-	GetHost() net.Addr
+	LocalAddr() net.Addr
 	Loop() *Loop
 	Close()
 }
@@ -182,8 +182,8 @@ type Transport interface {
 	Writev(bs ...[]byte)
 	LoseConnection()
 	Abort()
-	GetPeer() net.Addr
-	GetHost() net.Addr
+	RemoteAddr() net.Addr
+	LocalAddr() net.Addr
 	Loop() *Loop
 	SetIdleTimeout(d time.Duration)
 	SetContext(v any)
@@ -423,15 +423,15 @@ type Transport struct {
 func (t *Transport) Abort()
 func (t *Transport) ConnectionState() tls.ConnectionState
 func (t *Transport) Context() any
-func (t *Transport) GetHost() net.Addr
-func (t *Transport) GetPeer() net.Addr
 func (t *Transport) KernelOffload() (tx, rx bool)
 func (t *Transport) KernelOffloaded() bool
+func (t *Transport) LocalAddr() net.Addr
 func (t *Transport) Loop() *twine.Loop
 func (t *Transport) LoseConnection()
 func (t *Transport) PauseReading()
 func (t *Transport) PendingWrite() int
 func (t *Transport) RegisterProducer(p twine.Producer, streaming bool)
+func (t *Transport) RemoteAddr() net.Addr
 func (t *Transport) ResumeReading()
 func (t *Transport) SetContext(v any)
 func (t *Transport) SetIdleTimeout(d time.Duration)

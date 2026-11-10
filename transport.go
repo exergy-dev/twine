@@ -74,11 +74,11 @@ func (t *transport) Abort() {
 	t.c.abortNoCallback()
 }
 
-// GetPeer returns the remote address.
-func (t *transport) GetPeer() net.Addr { return t.c.peerFor(t.gen) }
+// RemoteAddr returns the remote address.
+func (t *transport) RemoteAddr() net.Addr { return t.c.peerFor(t.gen) }
 
-// GetHost returns the local address.
-func (t *transport) GetHost() net.Addr { return t.c.hostFor(t.gen) }
+// LocalAddr returns the local address.
+func (t *transport) LocalAddr() net.Addr { return t.c.hostFor(t.gen) }
 
 // Loop returns the owning loop. Safe from any goroutine.
 func (t *transport) Loop() *Loop { return t.c.loop }

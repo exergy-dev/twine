@@ -70,7 +70,7 @@ type bio struct {
 var _ net.Conn = (*bio)(nil)
 
 func newBio(l *twine.Loop, under twine.Transport) *bio {
-	b := &bio{loop: l, under: under, laddr: under.GetHost(), raddr: under.GetPeer()}
+	b := &bio{loop: l, under: under, laddr: under.LocalAddr(), raddr: under.RemoteAddr()}
 	b.cond.L = &b.mu
 	b.flushFn = b.flushOut
 	return b

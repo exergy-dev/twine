@@ -127,9 +127,9 @@ func TestLocalAddr(t *testing.T) {
 		t.Fatalf("Dial with LocalAddr: %v", err)
 	}
 	var host net.Addr
-	onLoop(t, tr.Loop(), func() { host = tr.GetHost(); tr.Abort() })
+	onLoop(t, tr.Loop(), func() { host = tr.LocalAddr(); tr.Abort() })
 	ta, ok := host.(*net.TCPAddr)
 	if !ok || ta.Port != port || !ta.IP.Equal(net.IPv4(127, 0, 0, 1)) {
-		t.Fatalf("GetHost = %v, want 127.0.0.1:%d", host, port)
+		t.Fatalf("LocalAddr = %v, want 127.0.0.1:%d", host, port)
 	}
 }

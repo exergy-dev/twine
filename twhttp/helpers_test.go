@@ -38,8 +38,8 @@ func (f *fakeTransport) Writev(bs ...[]byte) {
 }
 func (f *fakeTransport) LoseConnection()                       { f.closing = true }
 func (f *fakeTransport) Abort()                                { f.aborted = true }
-func (f *fakeTransport) GetPeer() net.Addr                     { return fakePeer }
-func (f *fakeTransport) GetHost() net.Addr                     { return fakeHost }
+func (f *fakeTransport) RemoteAddr() net.Addr                  { return fakePeer }
+func (f *fakeTransport) LocalAddr() net.Addr                   { return fakeHost }
 func (f *fakeTransport) Loop() *twine.Loop                     { return f.loop }
 func (f *fakeTransport) SetIdleTimeout(d time.Duration)        { f.idle = d }
 func (f *fakeTransport) SetContext(v any)                      { f.ctx = v }

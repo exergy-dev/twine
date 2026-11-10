@@ -1234,7 +1234,7 @@ func TestTransportContextAndAddrs(t *testing.T) {
 			tr.SetContext(v)
 			got, _ := tr.Context().(*struct{ n int })
 			in.roundTrip = got == v
-			in.peer, in.host = tr.GetPeer().String(), tr.GetHost().String()
+			in.peer, in.host = tr.RemoteAddr().String(), tr.LocalAddr().String()
 			infoCh <- in
 			tr.LoseConnection()
 		}}
@@ -1254,10 +1254,10 @@ func TestTransportContextAndAddrs(t *testing.T) {
 			t.Errorf("conn %d: Context() did not return the value given to SetContext", i)
 		}
 		if in.peer != c.LocalAddr().String() {
-			t.Errorf("conn %d: GetPeer = %s, want %s", i, in.peer, c.LocalAddr())
+			t.Errorf("conn %d: RemoteAddr = %s, want %s", i, in.peer, c.LocalAddr())
 		}
 		if in.host != c.RemoteAddr().String() {
-			t.Errorf("conn %d: GetHost = %s, want %s", i, in.host, c.RemoteAddr())
+			t.Errorf("conn %d: LocalAddr = %s, want %s", i, in.host, c.RemoteAddr())
 		}
 		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 		_, _ = io.ReadAll(c)

@@ -55,7 +55,7 @@ func (b *blockingProto) ConnectionMade(t Transport) {
 	b.loop = t.Loop()
 	// The addresses are captured here, on the loop, because the proxy
 	// returns them on the protocol's goroutine.
-	b.proxy = &asyncTransport{t: t, loop: b.loop, peer: t.GetPeer(), host: t.GetHost()}
+	b.proxy = &asyncTransport{t: t, loop: b.loop, peer: t.RemoteAddr(), host: t.LocalAddr()}
 	// +1 so the final ConnectionLost event never blocks the loop when the
 	// goroutine is behind by a full window.
 	b.ch = make(chan blockingEvent, blockingDepth+1)
@@ -131,7 +131,7 @@ func (b *blockingProto) ConnectionLost(err error) {
 // asyncTransport is a Transport proxy safe to call from any goroutine. Writes
 // copy their argument because they are delivered asynchronously. Every method
 // returns at once except Context and PendingWrite, which wait for a round
-// trip to the loop (see sync); GetPeer, GetHost and Loop answer from values
+// trip to the loop (see sync); RemoteAddr, LocalAddr and Loop answer from values
 // captured at ConnectionMade.
 type asyncTransport struct {
 	t          Transport
@@ -159,16 +159,16 @@ func (a *asyncTransport) Writev(bs ...[]byte) {
 	a.call(func() { a.t.Write(cp) })
 }
 
-func (a *asyncTransport) LoseConnection()     { a.call(a.t.LoseConnection) }
-func (a *asyncTransport) Abort()              { a.call(a.t.Abort) }
-func (a *asyncTransport) GetPeer() net.Addr   { return a.peer }
-func (a *asyncTransport) GetHost() net.Addr   { return a.host }
-func (a *asyncTransport) Loop() *Loop         { return a.loop }
-func (a *asyncTransport) SetContext(v any)    { a.call(func() { a.t.SetContext(v) }) }
-func (a *asyncTransport) Context() any        { return a.sync(a.t.Context) }
-func (a *asyncTransport) PauseReading()       { a.call(a.t.PauseReading) }
-func (a *asyncTransport) ResumeReading()      { a.call(a.t.ResumeReading) }
-func (a *asyncTransport) UnregisterProducer() { a.call(a.t.UnregisterProducer) }
+func (a *asyncTransport) LoseConnection()      { a.call(a.t.LoseConnection) }
+func (a *asyncTransport) Abort()               { a.call(a.t.Abort) }
+func (a *asyncTransport) RemoteAddr() net.Addr { return a.peer }
+func (a *asyncTransport) LocalAddr() net.Addr  { return a.host }
+func (a *asyncTransport) Loop() *Loop          { return a.loop }
+func (a *asyncTransport) SetContext(v any)     { a.call(func() { a.t.SetContext(v) }) }
+func (a *asyncTransport) Context() any         { return a.sync(a.t.Context) }
+func (a *asyncTransport) PauseReading()        { a.call(a.t.PauseReading) }
+func (a *asyncTransport) ResumeReading()       { a.call(a.t.ResumeReading) }
+func (a *asyncTransport) UnregisterProducer()  { a.call(a.t.UnregisterProducer) }
 
 // PendingWrite blocks the calling goroutine until the loop answers, as does
 // Context above.

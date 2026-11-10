@@ -19,7 +19,7 @@ terms, and [API.md](API.md) lists the whole exported surface.
 | `Protocol` | `twine.Protocol` interface | Same three methods: ConnectionMade, DataReceived, ConnectionLost. |
 | `Factory` / `ServerFactory` | `twine.Factory` interface | `BuildProtocol(addr) Protocol`. |
 | `ReconnectingClientFactory` | `proto.ReconnectingClient` | Exponential backoff with jitter. |
-| `ITransport` | `twine.Transport` interface | Write, Writev, LoseConnection, Abort, GetPeer, GetHost. |
+| `ITransport` | `twine.Transport` interface | Write, Writev, LoseConnection, Abort, RemoteAddr, LocalAddr. |
 | `IPushProducer` / `IConsumer` | `twine.Producer` / `twine.Consumer` | Same pause/resume/stop contract. |
 | `Deferred` | `twine.Future[T]` | Typed, generic. Callbacks run on the owning loop. |
 | `Deferred.addCallback/addErrback` | `Future.Then / Future.Catch` | Chainable; returns the same Future. `Map` transforms. |
