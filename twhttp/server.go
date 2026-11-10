@@ -185,7 +185,7 @@ func orDefault(d, def time.Duration) time.Duration {
 // timer allocation (one per 256 timers).
 func (s *Server) Factory() twine.Factory {
 	s.init()
-	return twine.FactoryFunc(s.buildProtocol)
+	return s.buildProtocol
 }
 
 // Listen binds addr on e and serves HTTP on it. It is shorthand for

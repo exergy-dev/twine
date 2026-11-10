@@ -36,13 +36,13 @@ func TestReconnectingClient(t *testing.T) {
 	states := make(chan stateEvent, 64)
 	lines := make(chan string, 64)
 	var built atomic.Int32
-	clientFactory := twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	clientFactory := func(net.Addr) twine.Protocol {
 		n := built.Add(1)
 		c := &LineReceiver{}
 		c.OnConnectionMade = func(twine.Transport) { c.SendLine([]byte("ping " + strconv.Itoa(int(n)))) }
 		c.LineReceived = func(l []byte) { lines <- string(l) }
 		return c
-	})
+	}
 	rc := NewReconnectingClient(e.Loops()[0], addr, clientFactory,
 		InitialDelay(10*time.Millisecond), MaxDelay(40*time.Millisecond),
 		DialOptions(twine.DialTimeout(5*time.Second)),
@@ -62,12 +62,12 @@ func TestReconnectingClient(t *testing.T) {
 	// The server comes up; the client connects on a later retry and a line
 	// round-trips through the wrapper protocol.
 	serverConns := make(chan twine.Transport, 8)
-	lst, err := e.ListenTCP(addr, twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	lst, err := e.ListenTCP(addr, func(net.Addr) twine.Protocol {
 		p := &LineReceiver{}
 		p.OnConnectionMade = func(t twine.Transport) { serverConns <- t }
 		p.LineReceived = func(l []byte) { p.SendLine(append([]byte("echo: "), l...)) }
 		return p
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func expectLine(t *testing.T, ch <-chan string, want string) {
 func TestReconnectingClientMaxRetries(t *testing.T) {
 	e := startEngine(t, 1)
 	states := make(chan stateEvent, 8)
-	rc := NewReconnectingClient(e.Loops()[0], freeAddr(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return nil }),
+	rc := NewReconnectingClient(e.Loops()[0], freeAddr(t), func(net.Addr) twine.Protocol { return nil },
 		InitialDelay(time.Millisecond), MaxRetries(3),
 		OnStateChange(func(up bool, err error) { states <- stateEvent{up, err} }))
 	rc.Start()
@@ -177,14 +177,14 @@ func TestReconnectingClientEngineStop(t *testing.T) {
 			e := startEngine(t, 2)
 			addr := freeAddr(t)
 			if connected {
-				lst, err := e.ListenTCP(addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &LineReceiver{} }))
+				lst, err := e.ListenTCP(addr, func(net.Addr) twine.Protocol { return &LineReceiver{} })
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer lst.Close()
 			}
 			states := make(chan stateEvent, 64)
-			rc := NewReconnectingClient(e.Loops()[1], addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &LineReceiver{} }),
+			rc := NewReconnectingClient(e.Loops()[1], addr, func(net.Addr) twine.Protocol { return &LineReceiver{} },
 				InitialDelay(time.Hour), // a retry would never fire before the test ends
 				OnStateChange(func(up bool, err error) { states <- stateEvent{up, err} }))
 			rc.Start()
@@ -224,7 +224,7 @@ func TestReconnectingClientEngineStop(t *testing.T) {
 
 func TestReconnectingClientResetDelay(t *testing.T) {
 	e := startEngine(t, 1)
-	rc := NewReconnectingClient(e.Loops()[0], freeAddr(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return nil }),
+	rc := NewReconnectingClient(e.Loops()[0], freeAddr(t), func(net.Addr) twine.Protocol { return nil },
 		InitialDelay(time.Millisecond), MaxDelay(time.Millisecond))
 	rc.Start()
 	waitFor(t, "failed retries", func() bool { return rc.Attempts() >= 3 })

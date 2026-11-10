@@ -30,9 +30,9 @@ func (p *blockingEcho) ConnectionLost(err error) { p.lost <- err }
 func TestBlockingUnderTLS(t *testing.T) {
 	e := startEngine(t)
 	lost := make(chan error, 1)
-	f := twtls.Server(serverConfig(t), twine.Blocking(twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	f := twtls.Server(serverConfig(t), twine.Blocking(func(net.Addr) twine.Protocol {
 		return &blockingEcho{lost: lost}
-	})))
+	}))
 	lst, err := e.ListenTCP("127.0.0.1:0", f)
 	if err != nil {
 		t.Fatal(err)
@@ -78,9 +78,9 @@ func (p *madePanicker) ConnectionLost(err error)       { p.lost <- err }
 func TestInnerPanicCounted(t *testing.T) {
 	e := startEngine(t, twine.Logger(nil))
 	lost := make(chan error, 1)
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &madePanicker{lost: lost}
-	}))
+	})
 	c := dial(t, addr, nil)
 	defer c.Close()
 	select {

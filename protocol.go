@@ -19,21 +19,12 @@ type Protocol interface {
 	ConnectionLost(err error)
 }
 
-// Factory builds a Protocol per accepted or connected transport.
-type Factory interface {
-	// BuildProtocol returns the Protocol for a new connection from (or to)
-	// peer. It runs on the loop that will own the connection. Returning nil
-	// refuses the connection, as in Twisted: an accepted socket is closed at
-	// once with no callbacks, and a ConnectTCP or Dial Future rejects with
-	// ErrNilProtocol.
-	BuildProtocol(peer net.Addr) Protocol
-}
-
-// FactoryFunc adapts a function to Factory.
-type FactoryFunc func(peer net.Addr) Protocol
-
-// BuildProtocol implements Factory.
-func (f FactoryFunc) BuildProtocol(peer net.Addr) Protocol { return f(peer) }
+// Factory builds the Protocol for a new connection from (or to) peer, one
+// per accepted or connected transport. It runs on the loop that will own the
+// connection. Returning nil refuses the connection, as in Twisted: an
+// accepted socket is closed at once with no callbacks, and a ConnectTCP or
+// Dial Future rejects with ErrNilProtocol.
+type Factory func(peer net.Addr) Protocol
 
 // Transport is the loop-affine handle to a connection. Every method must be
 // called on the owning Loop, except Loop, which is safe from any goroutine;

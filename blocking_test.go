@@ -62,9 +62,9 @@ func (p *sleepEcho) ConnectionLost(err error) {
 func TestBlockingEcho(t *testing.T) {
 	const clients, msgs = 10, 20
 	e := startEngine(t, Loops(2))
-	lst := listen(t, e, Blocking(FactoryFunc(func(net.Addr) Protocol {
+	lst := listen(t, e, Blocking(func(net.Addr) Protocol {
 		return &sleepEcho{sleep: 5 * time.Millisecond, lost: make(chan struct{})}
-	})))
+	}))
 	var wg sync.WaitGroup
 	for i := 0; i < clients; i++ {
 		wg.Add(1)
@@ -97,9 +97,9 @@ func TestBlockingEcho(t *testing.T) {
 func TestBlockingDoesNotBlockLoop(t *testing.T) {
 	const sleep = 200 * time.Millisecond
 	e := startEngine(t, Loops(1))
-	blk := listen(t, e, Blocking(FactoryFunc(func(net.Addr) Protocol {
+	blk := listen(t, e, Blocking(func(net.Addr) Protocol {
 		return &sleepEcho{sleep: sleep, lost: make(chan struct{})}
-	})))
+	}))
 	plain := listen(t, e, echoFactory())
 	bc := dialTCP(t, blk.Addr().String())
 	ec := dialTCP(t, plain.Addr().String())
@@ -147,11 +147,11 @@ func TestBlockingDoesNotBlockLoop(t *testing.T) {
 func TestBlockingConnectionLostOnInnerGoroutine(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	pCh := make(chan *sleepEcho, 1)
-	lst := listen(t, e, Blocking(FactoryFunc(func(net.Addr) Protocol {
+	lst := listen(t, e, Blocking(func(net.Addr) Protocol {
 		p := &sleepEcho{sleep: time.Millisecond, lost: make(chan struct{})}
 		pCh <- p
 		return p
-	})))
+	}))
 	c := dialTCP(t, lst.Addr().String())
 	echoOnce(t, c, []byte("one"))
 	echoOnce(t, c, []byte("two"))
@@ -188,7 +188,7 @@ func TestBlockingConnectionLostOnInnerGoroutine(t *testing.T) {
 func TestBlockingBackpressure(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	var total atomic.Int64
-	lst := listen(t, e, Blocking(FactoryFunc(func(net.Addr) Protocol {
+	lst := listen(t, e, Blocking(func(net.Addr) Protocol {
 		return &hookProto{
 			made: nil,
 			data: func(p *hookProto, b []byte) {
@@ -197,7 +197,7 @@ func TestBlockingBackpressure(t *testing.T) {
 				p.t.Write(b)
 			},
 		}
-	})))
+	}))
 	plain := listen(t, e, echoFactory())
 	c := dialTCP(t, lst.Addr().String())
 	ec := dialTCP(t, plain.Addr().String())
@@ -295,9 +295,9 @@ func TestBlockingProxyMethods(t *testing.T) {
 	e := startEngine(t, Loops(1), Logger(nil))
 	results := make(chan string, 16)
 	lost := make(chan error, 4)
-	lst := listen(t, e, Blocking(FactoryFunc(func(net.Addr) Protocol {
+	lst := listen(t, e, Blocking(func(net.Addr) Protocol {
 		return &proxyUser{results: results, lost: lost}
-	})))
+	}))
 	expectLost := func(want func(error) bool) {
 		t.Helper()
 		select {

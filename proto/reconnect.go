@@ -231,7 +231,7 @@ func (rc *ReconnectingClient) connect() {
 	rc.attempts.Add(1)
 	rc.inFlight = true
 	a := &attempt{rc: rc}
-	fut := rc.loop.ConnectTCP(rc.addr, twine.FactoryFunc(a.build), rc.dialOpts...)
+	fut := rc.loop.ConnectTCP(rc.addr, a.build, rc.dialOpts...)
 	fut.Catch(func(err error) {
 		if a.made {
 			return // ConnectionLost handles the retry
@@ -247,7 +247,7 @@ func (rc *ReconnectingClient) connect() {
 }
 
 func (a *attempt) build(peer net.Addr) twine.Protocol {
-	p := a.rc.factory.BuildProtocol(peer)
+	p := a.rc.factory(peer)
 	if p == nil {
 		// Refuse the connection like the core does; the Catch above sees
 		// twine.ErrNilProtocol and retries with backoff.

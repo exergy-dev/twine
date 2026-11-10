@@ -31,7 +31,7 @@ const (
 type Transport struct {
 	f     *factory
 	inner twine.Protocol
-	peer  net.Addr // from BuildProtocol; immutable
+	peer  net.Addr // from the Factory call; immutable
 
 	under twine.Transport
 	loop  *twine.Loop

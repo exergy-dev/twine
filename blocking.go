@@ -21,13 +21,13 @@ import (
 // connection, and reaches its ConnectionLost as a *PanicError. If f returns
 // nil for a connection, so does the wrapped factory.
 func Blocking(f Factory) Factory {
-	return FactoryFunc(func(peer net.Addr) Protocol {
-		inner := f.BuildProtocol(peer)
+	return func(peer net.Addr) Protocol {
+		inner := f(peer)
 		if inner == nil {
 			return nil
 		}
 		return &blockingProto{inner: inner}
-	})
+	}
 }
 
 type blockingEvent struct {

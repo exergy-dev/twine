@@ -24,9 +24,9 @@ type countingFactory struct {
 	lost  atomic.Int64
 }
 
-func (cf *countingFactory) BuildProtocol(peer net.Addr) twine.Protocol {
+func (cf *countingFactory) build(peer net.Addr) twine.Protocol {
 	cf.conns.Add(1)
-	return &lostCounter{Protocol: cf.f.BuildProtocol(peer), cf: cf}
+	return &lostCounter{Protocol: cf.f(peer), cf: cf}
 }
 
 // lostCounter counts ConnectionLost calls.
@@ -46,7 +46,7 @@ func startServer(t *testing.T, s *Server) (string, *countingFactory) {
 	t.Helper()
 	e := startEngine(t, twine.Loops(2), twine.Watchdog(0))
 	cf := &countingFactory{f: s.Factory()}
-	lst, err := e.ListenTCP("127.0.0.1:0", cf)
+	lst, err := e.ListenTCP("127.0.0.1:0", cf.build)
 	if err != nil {
 		t.Fatal(err)
 	}

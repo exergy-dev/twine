@@ -52,7 +52,7 @@ func main() {
 	defer stop()
 
 	eng := twine.New(twine.Loops(*loops))
-	ln, err := eng.ListenTCP(*addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} }))
+	ln, err := eng.ListenTCP(*addr, func(net.Addr) twine.Protocol { return &echo{} })
 	if err != nil {
 		log.Fatal(err)
 	}

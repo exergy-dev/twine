@@ -41,15 +41,15 @@ func (g *greeter) ConnectionLost(error) { g.eng.Stop() }
 // Dial connects to an echo server on the same engine and exchanges one line.
 func ExampleEngine_Dial() {
 	eng := twine.New(twine.Loops(2))
-	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} }))
+	lst, err := eng.ListenTCP("127.0.0.1:0", func(net.Addr) twine.Protocol { return &echo{} })
 	if err != nil {
 		log.Fatal(err)
 	}
 	wait := run(eng)
 
-	eng.Dial(lst.Addr().String(), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	eng.Dial(lst.Addr().String(), func(net.Addr) twine.Protocol {
 		return &greeter{eng: eng}
-	})).Catch(func(err error) {
+	}).Catch(func(err error) {
 		log.Print(err)
 		eng.Stop()
 	})
@@ -129,9 +129,9 @@ func (s *shouter) ConnectionLost(error) {}
 // goroutine: the migration path for code not ready for callbacks.
 func ExampleBlocking() {
 	eng := twine.New(twine.Loops(1))
-	lst, err := eng.ListenTCP("127.0.0.1:0", twine.Blocking(twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	lst, err := eng.ListenTCP("127.0.0.1:0", twine.Blocking(func(net.Addr) twine.Protocol {
 		return &shouter{}
-	})))
+	}))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func (p *printer) ConnectionLost(error)             {}
 func dial(eng *twine.Engine, addr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	t, err := eng.Dial(addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &printer{} })).Await(ctx)
+	t, err := eng.Dial(addr, func(net.Addr) twine.Protocol { return &printer{} }).Await(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -188,9 +188,9 @@ func (s *stopOnLost) ConnectionLost(error) { s.eng.Stop() }
 // Transport it returns is used through its loop.
 func ExampleEngine_Dial_await() {
 	eng := twine.New(twine.Loops(2))
-	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	lst, err := eng.ListenTCP("127.0.0.1:0", func(net.Addr) twine.Protocol {
 		return &stopOnLost{eng: eng}
-	}))
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func (r *resolver) DataReceived(b []byte) {
 // an IP literal, which the resolver answers without a network lookup.
 func ExampleDeferToThread_resolver() {
 	eng := twine.New(twine.Loops(1))
-	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &resolver{} }))
+	lst, err := eng.ListenTCP("127.0.0.1:0", func(net.Addr) twine.Protocol { return &resolver{} })
 	if err != nil {
 		log.Fatal(err)
 	}

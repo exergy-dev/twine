@@ -121,7 +121,7 @@ func TestLocalAddr(t *testing.T) {
 	p := newClientProto()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	tr, err := e.Dial(lst.Addr().String(), FactoryFunc(func(net.Addr) Protocol { return p }),
+	tr, err := e.Dial(lst.Addr().String(), func(net.Addr) Protocol { return p },
 		LocalAddr(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))).Await(ctx)
 	if err != nil {
 		t.Fatalf("Dial with LocalAddr: %v", err)

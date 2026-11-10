@@ -318,7 +318,7 @@ type ampPeer struct {
 }
 
 func ampFactory(handle func(string, Args) *twine.Future[Args], made chan<- *ampPeer) twine.Factory {
-	return twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	return func(net.Addr) twine.Protocol {
 		p := &ampPeer{}
 		p.Handle = handle
 		p.OnConnectionMade = func(twine.Transport) {
@@ -327,7 +327,7 @@ func ampFactory(handle func(string, Args) *twine.Future[Args], made chan<- *ampP
 			}
 		}
 		return p
-	})
+	}
 }
 
 func TestAMPRoundTrip(t *testing.T) {

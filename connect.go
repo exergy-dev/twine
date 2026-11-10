@@ -172,7 +172,7 @@ func (l *Loop) completeConnect(c *conn) {
 	c.kind = kindTCP
 	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
-	p := d.factory.BuildProtocol(c.peer)
+	p := d.factory(c.peer)
 	if p == nil {
 		c.abortNoCallback()
 		d.res.Reject(ErrNilProtocol)

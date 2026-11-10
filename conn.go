@@ -130,7 +130,7 @@ func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory) *conn {
 	l.register(c)
 	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
-	p := f.BuildProtocol(peer)
+	p := f(peer)
 	if p == nil {
 		// The factory refused the connection: close it without callbacks.
 		c.abortNoCallback()

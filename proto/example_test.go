@@ -36,7 +36,7 @@ func newEcho(net.Addr) twine.Protocol {
 
 func ExampleLineReceiver() {
 	eng := twine.New(twine.Loops(1))
-	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(newEcho))
+	lst, err := eng.ListenTCP("127.0.0.1:0", newEcho)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,7 +68,7 @@ type frames struct {
 }
 
 func ExampleLengthPrefixed() {
-	factory := twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	factory := func(net.Addr) twine.Protocol {
 		p := &frames{}
 		p.PrefixLen = 2 // 1, 2 or 4; 0 means 4
 		p.LittleEndian = true
@@ -86,7 +86,7 @@ func ExampleLengthPrefixed() {
 			}
 		}
 		return p
-	})
+	}
 	eng := twine.New()
 	if _, err := eng.ListenTCP("127.0.0.1:9002", factory); err != nil {
 		log.Fatal(err)
@@ -105,7 +105,7 @@ func ExampleAMP() {
 	eng := twine.New(twine.Loops(1))
 
 	// The server answers Sum synchronously with a resolved Future.
-	server := twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	server := func(net.Addr) twine.Protocol {
 		p := &peer{}
 		p.Handle = func(cmd string, args proto.Args) *twine.Future[proto.Args] {
 			if cmd != "Sum" {
@@ -116,14 +116,14 @@ func ExampleAMP() {
 			return twine.Resolved[proto.Args](nil, proto.Args{"total": strconv.Itoa(a + b)})
 		}
 		return p
-	})
+	}
 	lst, err := eng.ListenTCP("127.0.0.1:0", server)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// The client calls Sum once connected; the answer arrives on its loop.
-	client := twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	client := func(net.Addr) twine.Protocol {
 		p := &peer{}
 		p.OnConnectionMade = func(twine.Transport) {
 			p.Call("Sum", proto.Args{"a": "13", "b": "29"}).Then(func(res proto.Args) {
@@ -135,7 +135,7 @@ func ExampleAMP() {
 			})
 		}
 		return p
-	})
+	}
 	eng.Dial(lst.Addr().String(), client)
 
 	if err := eng.Run(context.Background()); err != nil {
@@ -152,7 +152,7 @@ func ExampleReconnectingClient() {
 		c.LineReceived = func(line []byte) { log.Printf("recv: %s", line) }
 		return c
 	}
-	rc := proto.NewReconnectingClient(eng.NextLoop(), "127.0.0.1:9001", twine.FactoryFunc(newClient),
+	rc := proto.NewReconnectingClient(eng.NextLoop(), "127.0.0.1:9001", newClient,
 		proto.InitialDelay(500*time.Millisecond),
 		proto.MaxRetries(10),
 		proto.OnStateChange(func(connected bool, err error) {
@@ -174,7 +174,7 @@ func ExampleReconnectingClient() {
 
 func ExampleBroadcast() {
 	var room proto.Broadcast // the zero value is an empty group
-	factory := twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	factory := func(net.Addr) twine.Protocol {
 		m := &proto.LineReceiver{}
 		m.OnConnectionMade = func(t twine.Transport) { room.Add(t) }
 		m.OnConnectionLost = func(error) { room.Remove(m.Transport()) }
@@ -184,7 +184,7 @@ func ExampleBroadcast() {
 			room.Send(fmt.Appendf(nil, "%s\r\n", line))
 		}
 		return m
-	})
+	}
 	eng := twine.New()
 	if _, err := eng.ListenTCP("127.0.0.1:9003", factory); err != nil {
 		log.Fatal(err)

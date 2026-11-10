@@ -59,12 +59,8 @@ func (e *Engine) NextLoop() *Loop
 func (e *Engine) OnShutdown(fn func())
 func (e *Engine) Run(ctx context.Context) error
 func (e *Engine) Stop()
-type Factory interface {
-	BuildProtocol(peer net.Addr) Protocol
-}
+type Factory func(peer net.Addr) Protocol
 func Blocking(f Factory) Factory
-type FactoryFunc func(peer net.Addr) Protocol
-func (f FactoryFunc) BuildProtocol(peer net.Addr) Protocol
 type Future[T any] struct {
 	// Has unexported fields.
 }

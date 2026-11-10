@@ -53,7 +53,7 @@ func (p *kProto) ConnectionLost(err error) {
 }
 
 func kFactory(info chan kinfo, lost chan error) twine.Factory {
-	return twine.FactoryFunc(func(net.Addr) twine.Protocol { return &kProto{info: info, lost: lost} })
+	return func(net.Addr) twine.Protocol { return &kProto{info: info, lost: lost} }
 }
 
 // requireKTLS skips a test that needs kernel TLS on a host without it, or
@@ -211,9 +211,9 @@ func TestKTLSLoseConnectionCloseNotify(t *testing.T) {
 	lost := make(chan error, 1)
 	offl := make(chan bool, 1)
 	big := bytes.Repeat([]byte("x"), 2<<20) // far beyond the socket buffer: ring-buffered
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &offByeProto{byeProto: byeProto{lost: lost, big: big}, ch: offl}
-	}), twtls.KernelOffload(true))
+	}, twtls.KernelOffload(true))
 	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true})
 	got, err := io.ReadAll(c)
 	if err != nil {
@@ -255,9 +255,9 @@ func TestKTLSWritev(t *testing.T) {
 	e := startEngine(t)
 	parts := [][]byte{[]byte("head "), {}, bytes.Repeat([]byte("m"), 100<<10), []byte(" tail")}
 	txCh := make(chan bool, 1)
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &writevProto{parts: parts, tx: txCh}
-	}), twtls.KernelOffload(true))
+	}, twtls.KernelOffload(true))
 	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
 	defer c.Close()
 	got, err := io.ReadAll(c)
@@ -375,7 +375,7 @@ func TestKTLSClientTXOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	_, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{RootCAs: pool},
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }), twtls.KernelOffload(true)).Await(ctx)
+		func(net.Addr) twine.Protocol { return p }, twtls.KernelOffload(true)).Await(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func TestKTLSClientPeerKeyUpdate(t *testing.T) {
 	e := startEngine(t)
 	p := &keyUpdateClient{mode: make(chan [2]bool, 1), got: make(chan []byte, 16), lost: make(chan error, 1)}
 	if _, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{InsecureSkipVerify: true},
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }), twtls.KernelOffload(true)).Await(ctx); err != nil {
+		func(net.Addr) twine.Protocol { return p }, twtls.KernelOffload(true)).Await(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if m := <-p.mode; !m[0] || m[1] {

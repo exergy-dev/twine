@@ -62,7 +62,7 @@ func TestConnectTCPToTwineServer(t *testing.T) {
 	lst := listen(t, e, echoFactory())
 	l := e.Loops()[1]
 	cp := newClientProto()
-	f := l.ConnectTCP(lst.Addr().String(), FactoryFunc(func(net.Addr) Protocol { return cp }))
+	f := l.ConnectTCP(lst.Addr().String(), func(net.Addr) Protocol { return cp })
 	type thenRes struct {
 		madeFirst, onLoop bool
 		tr                Transport
@@ -143,7 +143,7 @@ func TestConnectTCPToNetListener(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	cp := newClientProto()
 	cp.onMade = func(tr Transport) { tr.Write([]byte("hello")) }
-	f := e.Loops()[0].ConnectTCP(ln.Addr().String(), FactoryFunc(func(net.Addr) Protocol { return cp }))
+	f := e.Loops()[0].ConnectTCP(ln.Addr().String(), func(net.Addr) Protocol { return cp })
 	if _, err := awaitT(t, f); err != nil {
 		t.Fatalf("ConnectTCP: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestConnectRefused(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	l := e.Loops()[0]
 	built := atomic.Bool{}
-	f := l.ConnectTCP(addr, FactoryFunc(func(net.Addr) Protocol { built.Store(true); return newClientProto() }))
+	f := l.ConnectTCP(addr, func(net.Addr) Protocol { built.Store(true); return newClientProto() })
 	caught := make(chan bool, 1)
 	f.Catch(func(error) { caught <- l.InLoop() })
 	_, err = awaitT(t, f)
@@ -190,7 +190,7 @@ func TestConnectRefused(t *testing.T) {
 		t.Error("Catch never ran")
 	}
 	if built.Load() {
-		t.Error("BuildProtocol called for a refused connection")
+		t.Error("Factory called for a refused connection")
 	}
 	if c := l.Metrics().Connections; c != 0 {
 		t.Errorf("Connections gauge = %d after a refused connect", c)
@@ -251,7 +251,7 @@ func TestConnectTimeout(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	const timeout = 200 * time.Millisecond
 	start := time.Now()
-	f := e.Loops()[0].ConnectTCP(addr, FactoryFunc(func(net.Addr) Protocol { return newClientProto() }), DialTimeout(timeout))
+	f := e.Loops()[0].ConnectTCP(addr, func(net.Addr) Protocol { return newClientProto() }, DialTimeout(timeout))
 	_, err := awaitT(t, f)
 	el := time.Since(start)
 	if !errors.Is(err, ErrConnectTimeout) {
@@ -278,11 +278,11 @@ func TestConnectAfterStop(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not return after Stop")
 	}
-	f := e.Loops()[0].ConnectTCP("127.0.0.1:1", FactoryFunc(func(net.Addr) Protocol { return newClientProto() }))
+	f := e.Loops()[0].ConnectTCP("127.0.0.1:1", func(net.Addr) Protocol { return newClientProto() })
 	if _, err := awaitT(t, f); !errors.Is(err, ErrEngineStopped) {
 		t.Errorf("ConnectTCP after Stop: %v, want ErrEngineStopped", err)
 	}
-	if _, err := awaitT(t, e.Dial("127.0.0.1:1", FactoryFunc(func(net.Addr) Protocol { return nil }))); !errors.Is(err, ErrEngineStopped) {
+	if _, err := awaitT(t, e.Dial("127.0.0.1:1", func(net.Addr) Protocol { return nil })); !errors.Is(err, ErrEngineStopped) {
 		t.Errorf("Dial after Stop: %v, want ErrEngineStopped", err)
 	}
 	if _, err := e.ListenTCP("127.0.0.1:0", echoFactory()); !errors.Is(err, ErrEngineStopped) {
@@ -317,7 +317,7 @@ func testEngineDialRoundRobin(t *testing.T, reusePort bool) {
 	var ids []int
 	var trs []Transport
 	for i := 0; i < 2*loops; i++ {
-		f := e.Dial(lst.Addr().String(), FactoryFunc(func(net.Addr) Protocol { return newClientProto() }))
+		f := e.Dial(lst.Addr().String(), func(net.Addr) Protocol { return newClientProto() })
 		tr, err := awaitT(t, f)
 		if err != nil {
 			t.Fatalf("Dial %d: %v", i, err)
@@ -375,7 +375,7 @@ func testEngineDialRoundRobin(t *testing.T, reusePort bool) {
 // ErrNilProtocol. Blocking passes the refusal through.
 func TestFactoryReturnsNil(t *testing.T) {
 	e := startEngine(t, Loops(1))
-	nilFactory := FactoryFunc(func(net.Addr) Protocol { return nil })
+	nilFactory := func(net.Addr) Protocol { return nil }
 	for name, f := range map[string]Factory{"plain": nilFactory, "Blocking": Blocking(nilFactory)} {
 		t.Run(name, func(t *testing.T) {
 			lst := listen(t, e, f)
@@ -459,7 +459,7 @@ func TestDialHostnameResolvesOffLoop(t *testing.T) {
 	echoOnce(t, c, []byte("warm"))
 
 	p := newClientProto()
-	fut := e.Loops()[0].ConnectTCP(net.JoinHostPort("slow.test", port), FactoryFunc(func(net.Addr) Protocol { return p }),
+	fut := e.Loops()[0].ConnectTCP(net.JoinHostPort("slow.test", port), func(net.Addr) Protocol { return p },
 		LocalAddr("local.test:0"))
 	if !waitUntil(2*time.Second, func() bool { return lookups.Load() >= 1 }) {
 		t.Fatal("resolver never called")

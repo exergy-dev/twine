@@ -22,7 +22,7 @@ func main() {
 	defer stop()
 
 	eng := twine.New() // one loop per core
-	if _, err := eng.ListenTCP(":9000", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })); err != nil {
+	if _, err := eng.ListenTCP(":9000", func(net.Addr) twine.Protocol { return &echo{} }); err != nil {
 		log.Fatal(err)
 	}
 	if err := eng.Run(ctx); err != nil {

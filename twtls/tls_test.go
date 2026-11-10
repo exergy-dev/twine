@@ -104,7 +104,7 @@ func (p *echo) DataReceived(b []byte)            { p.t.Write(b) }
 func (p *echo) ConnectionLost(error)             {}
 
 func echoFactory() twine.Factory {
-	return twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+	return func(net.Addr) twine.Protocol { return &echo{} }
 }
 
 func listen(t testing.TB, e *twine.Engine, cfg *tls.Config, f twine.Factory, opts ...twtls.Option) string {
@@ -197,9 +197,9 @@ func TestVersionsAndALPN(t *testing.T) {
 			ch := make(chan tls.ConnectionState, 1)
 			cfg := serverConfig(t)
 			cfg.NextProtos = []string{"h2", "twine/1"}
-			addr := listen(t, e, cfg, twine.FactoryFunc(func(net.Addr) twine.Protocol {
+			addr := listen(t, e, cfg, func(net.Addr) twine.Protocol {
 				return &stateProto{ch: ch}
-			}))
+			})
 			c := dial(t, addr, &tls.Config{
 				InsecureSkipVerify: true,
 				MinVersion:         tc.ver,
@@ -259,9 +259,9 @@ func TestLoseConnectionSendsCloseNotify(t *testing.T) {
 	e := startEngine(t)
 	lost := make(chan error, 1)
 	big := bytes.Repeat([]byte("x"), 300<<10) // forces ring buffering
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &byeProto{lost: lost, big: big}
-	}))
+	})
 	c := dial(t, addr, nil)
 	got, err := io.ReadAll(c) // io.ReadAll returns nil on io.EOF
 	if err != nil {
@@ -299,9 +299,9 @@ func (p *lostProto) ConnectionLost(err error)         { p.lost <- err }
 func TestPeerCloseNotify(t *testing.T) {
 	e := startEngine(t)
 	lost := make(chan error, 1)
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &lostProto{lost: lost}
-	}))
+	})
 	c := dial(t, addr, nil)
 	if _, err := c.Write([]byte("hi")); err != nil {
 		t.Fatal(err)
@@ -332,7 +332,7 @@ func TestServerHandshakeFailure(t *testing.T) {
 	e := startEngine(t)
 	hsErr := make(chan error, 1)
 	p := &lostProto{lost: make(chan error, 1)}
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }),
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol { return p },
 		twtls.OnHandshakeError(func(err error) { hsErr <- err }))
 	// A verifying client that does not trust the self-signed cert. With TLS
 	// 1.2 the server is still reading when the client's alert arrives, so
@@ -550,7 +550,7 @@ func (p *pauser) ConnectionLost(error) {}
 func TestPauseResumeReading(t *testing.T) {
 	e := startEngine(t)
 	p := &pauser{}
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol { return p })
 	c := dial(t, addr, nil)
 	defer c.Close()
 	data := make([]byte, 512<<10)
@@ -578,9 +578,9 @@ func (p *panicker) ConnectionLost(err error)       { p.lost <- err }
 func TestInnerPanic(t *testing.T) {
 	e := startEngine(t, twine.Logger(nil))
 	lost := make(chan error, 1)
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &panicker{lost: lost}
-	}))
+	})
 	c := dial(t, addr, nil)
 	defer c.Close()
 	_, _ = c.Write([]byte("x"))
@@ -672,7 +672,7 @@ func TestClientConnect(t *testing.T) {
 			// ServerName defaults from addr's host (127.0.0.1, an IP SAN).
 			tr, err := twtls.Connect(e.NextLoop(), addr,
 				&tls.Config{RootCAs: pool, NextProtos: []string{"twine/1"}},
-				twine.FactoryFunc(func(net.Addr) twine.Protocol { return p })).Await(ctx)
+				func(net.Addr) twine.Protocol { return p }).Await(ctx)
 			if err != nil {
 				t.Fatalf("Connect: %v", err)
 			}
@@ -705,7 +705,7 @@ func TestClientHandshakeFailure(t *testing.T) {
 	defer cancel()
 	_, err := twtls.Connect(e.NextLoop(), addr,
 		&tls.Config{RootCAs: pool, ServerName: "wrong.example"},
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }),
+		func(net.Addr) twine.Protocol { return p },
 		twtls.OnHandshakeError(func(err error) { hsErr <- err })).Await(ctx)
 	var verr *tls.CertificateVerificationError
 	if !errors.As(err, &verr) {
@@ -741,7 +741,7 @@ func TestClientWithConnectTCP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	raw, err := e.NextLoop().ConnectTCP(addr, twtls.Client(&tls.Config{RootCAs: pool, ServerName: "127.0.0.1"},
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))).Await(ctx)
+		func(net.Addr) twine.Protocol { return p })).Await(ctx)
 	if err != nil {
 		t.Fatalf("ConnectTCP: %v", err)
 	}
@@ -840,7 +840,7 @@ func TestTwineToTwine(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			_, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{RootCAs: pool, ServerName: "localhost"},
-				twine.FactoryFunc(func(net.Addr) twine.Protocol { return p })).Await(ctx)
+				func(net.Addr) twine.Protocol { return p }).Await(ctx)
 			if err != nil {
 				t.Errorf("Connect %d: %v", i, err)
 				return
@@ -967,9 +967,9 @@ func TestReentrantWriteFromProducer(t *testing.T) {
 	e := startEngine(t, twine.WriteHighWater(64<<10), twine.WriteLowWater(16<<10))
 	prod := &reentrantProducer{}
 	const total = 2 << 20
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
 		return &producerProto{prod: prod, total: total}
-	}), twtls.WithListenOptions(twine.SocketBuffers(0, 16<<10)))
+	}, twtls.WithListenOptions(twine.SocketBuffers(0, 16<<10)))
 	c := dial(t, addr, nil)
 	defer c.Close()
 	time.Sleep(50 * time.Millisecond) // let the ring fill past the high-water mark

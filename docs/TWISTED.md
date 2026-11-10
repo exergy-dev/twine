@@ -17,7 +17,7 @@ terms, and [API.md](API.md) lists the whole exported surface.
 | `reactor.connectTCP` (any loop) | `engine.Dial(addr, factory) *Future[Transport]` | `ConnectTCP` on the next loop, round-robin. |
 | `reactor.listenUDP(port, proto)` | `engine.ListenUDP(addr, proto)` | Linux: `recvmmsg`/`sendmmsg` batching. Elsewhere one datagram per syscall. |
 | `Protocol` | `twine.Protocol` interface | Same three methods: ConnectionMade, DataReceived, ConnectionLost. |
-| `Factory` / `ServerFactory` | `twine.Factory` interface | `BuildProtocol(addr) Protocol`. |
+| `Factory` / `ServerFactory` | `twine.Factory` | A function `func(peer net.Addr) Protocol`; nil refuses the connection. |
 | `ReconnectingClientFactory` | `proto.ReconnectingClient` | Exponential backoff with jitter. |
 | `ITransport` | `twine.Transport` interface | Write, Writev, LoseConnection, Abort, RemoteAddr, LocalAddr. |
 | `IPushProducer` / `IConsumer` | `twine.Producer` / `twine.Consumer` | Same pause/resume/stop contract. |

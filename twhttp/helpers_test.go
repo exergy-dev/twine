@@ -55,7 +55,7 @@ func (f *fakeTransport) String() string                        { return string(f
 // newFakeConn builds a server connection attached to ft. It must run on
 // ft.loop.
 func newFakeConn(s *Server, ft *fakeTransport) *conn {
-	c := s.Factory().BuildProtocol(fakePeer).(*conn)
+	c := s.Factory()(fakePeer).(*conn)
 	c.ConnectionMade(ft)
 	return c
 }

@@ -60,7 +60,7 @@ func newRecordRig(tb testing.TB) *recordRig {
 	tb.Helper()
 	e := startEngine(tb, twine.Loops(1))
 	sink := &sinkProto{made: make(chan *twtls.Transport, 1), lost: make(chan error, 1)}
-	addr := listen(tb, e, serverConfig(tb), twine.FactoryFunc(func(net.Addr) twine.Protocol { return sink }))
+	addr := listen(tb, e, serverConfig(tb), func(net.Addr) twine.Protocol { return sink })
 	raw, err := net.Dial("tcp", addr)
 	if err != nil {
 		tb.Fatal(err)

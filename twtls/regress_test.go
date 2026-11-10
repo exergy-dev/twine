@@ -41,7 +41,7 @@ func (p *recProto) ConnectionLost(err error) { p.lost <- err }
 func TestTruncationIsNotCleanClose(t *testing.T) {
 	e := startEngine(t)
 	p := &recProto{lost: make(chan error, 1)}
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol { return p })
 	raw, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func (h *holdConn) Write(p []byte) (int, error) {
 func TestNoDataAfterAbort(t *testing.T) {
 	e := startEngine(t)
 	p := &recProto{lost: make(chan error, 1), abortFirst: true}
-	addr := listen(t, e, serverConfig(t), twine.FactoryFunc(func(net.Addr) twine.Protocol { return p }))
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol { return p })
 	raw, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)

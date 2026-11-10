@@ -46,7 +46,7 @@ func (p *echoProto) DataReceived(b []byte)      { p.t.Write(b) }
 func (p *echoProto) ConnectionLost(error)       {}
 
 func echoFactory() Factory {
-	return FactoryFunc(func(net.Addr) Protocol { return &echoProto{} })
+	return func(net.Addr) Protocol { return &echoProto{} }
 }
 
 func TestRunTwice(t *testing.T) {

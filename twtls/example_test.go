@@ -30,7 +30,7 @@ func ExampleListen() {
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}}
 	_, err = twtls.Listen(eng, ":8443", cfg,
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return &lineEcho{} }),
+		func(net.Addr) twine.Protocol { return &lineEcho{} },
 		twtls.WithListenOptions(twine.Backlog(4096)),
 		twtls.HandshakeTimeout(5*time.Second),
 		twtls.OnHandshakeError(func(err error) {
@@ -54,7 +54,7 @@ func ExampleServer() {
 	}
 	eng := twine.New()
 	f := twtls.Server(&tls.Config{Certificates: []tls.Certificate{cert}},
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return &lineEcho{} }),
+		func(net.Addr) twine.Protocol { return &lineEcho{} },
 		twtls.KernelOffload(true)) // kTLS where the kernel supports it
 	if _, err := eng.ListenTCP(":8443", f, twine.TCPNoDelay(true), twine.Backlog(4096)); err != nil {
 		log.Fatal(err)
@@ -73,7 +73,7 @@ func ExampleConnect() {
 	defer cancel()
 	// ServerName defaults to the host part of the address.
 	t, err := twtls.Connect(eng.NextLoop(), "example.com:443", &tls.Config{},
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return &lineEcho{} })).Await(ctx)
+		func(net.Addr) twine.Protocol { return &lineEcho{} }).Await(ctx)
 	if err != nil {
 		log.Fatal(err) // a dial error or a *twtls.HandshakeError
 	}
@@ -94,7 +94,7 @@ func main() {
 	}
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
-	factory := twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+	factory := func(net.Addr) twine.Protocol { return &echo{} }
 	if _, err := twtls.Listen(eng, ":8443", cfg, factory); err != nil {
 		log.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func ExampleTransport_ConnectionState() {
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"twine/1"}}
 	if _, err := twtls.Listen(eng, ":8443", cfg,
-		twine.FactoryFunc(func(net.Addr) twine.Protocol { return &alpnProto{} })); err != nil {
+		func(net.Addr) twine.Protocol { return &alpnProto{} }); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))

@@ -61,9 +61,10 @@ type factory struct {
 	res twine.Resolver[twine.Transport]
 }
 
-// BuildProtocol implements twine.Factory.
-func (f *factory) BuildProtocol(peer net.Addr) twine.Protocol {
-	inner := f.inner.BuildProtocol(peer)
+// build is the twine.Factory that Server and Client return (as a method
+// value).
+func (f *factory) build(peer net.Addr) twine.Protocol {
+	inner := f.inner(peer)
 	if inner == nil {
 		// Refuse the connection, as the core does for a plain listener: the
 		// loop closes the socket without a handshake.
@@ -95,7 +96,7 @@ func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory 
 	if !canServe(cfg) {
 		panic(errNoCertificate)
 	}
-	return newFactory(cfg, inner, false, opts)
+	return newFactory(cfg, inner, false, opts).build
 }
 
 // Client wraps inner so that every connection it builds speaks TLS as the
@@ -115,7 +116,7 @@ func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory 
 	if cfg == nil {
 		cfg = &tls.Config{}
 	}
-	return newFactory(cfg, inner, true, opts)
+	return newFactory(cfg, inner, true, opts).build
 }
 
 // Listen is ListenTCP with a Server factory. Core listener options are passed
@@ -125,8 +126,8 @@ func Listen(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, 
 	if !canServe(cfg) {
 		return nil, errNoCertificate
 	}
-	f := Server(cfg, inner, opts...).(*factory)
-	return e.ListenTCP(addr, f, f.opts.listenOpts...)
+	f := newFactory(cfg, inner, false, opts)
+	return e.ListenTCP(addr, f.build, f.opts.listenOpts...)
 }
 
 // Connect dials addr from loop l and runs a TLS client handshake. The Future
@@ -148,8 +149,8 @@ func Connect(l *twine.Loop, addr string, cfg *tls.Config, inner twine.Factory, o
 		}
 	}
 	fut, res := twine.NewFuture[twine.Transport](l)
-	f := Client(cfg, inner, opts...).(*factory)
+	f := newFactory(cfg, inner, true, opts)
 	f.res = res
-	l.ConnectTCP(addr, f, f.opts.dialOpts...).Catch(res.Reject)
+	l.ConnectTCP(addr, f.build, f.opts.dialOpts...).Catch(res.Reject)
 	return fut
 }

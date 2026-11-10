@@ -55,7 +55,7 @@ func main() {
 	defer stop()
 
 	eng := twine.New() // one loop per core
-	if _, err := eng.ListenTCP(":9000", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })); err != nil {
+	if _, err := eng.ListenTCP(":9000", func(net.Addr) twine.Protocol { return &echo{} }); err != nil {
 		log.Fatal(err)
 	}
 	if err := eng.Run(ctx); err != nil {
@@ -84,7 +84,7 @@ func (p *printer) ConnectionLost(error)             {}
 func dial(eng *twine.Engine, addr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	t, err := eng.Dial(addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &printer{} })).Await(ctx)
+	t, err := eng.Dial(addr, func(net.Addr) twine.Protocol { return &printer{} }).Await(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func main() {
 	}
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
-	factory := twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+	factory := func(net.Addr) twine.Protocol { return &echo{} }
 	if _, err := twtls.Listen(eng, ":8443", cfg, factory); err != nil {
 		log.Fatal(err)
 	}

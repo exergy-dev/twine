@@ -78,7 +78,7 @@ func (p *hookProto) ConnectionLost(err error) {
 }
 
 func hookFactory(build func() *hookProto) Factory {
-	return FactoryFunc(func(net.Addr) Protocol { return build() })
+	return func(net.Addr) Protocol { return build() }
 }
 
 // listen binds a TCP listener on loopback or fails the test.

@@ -62,7 +62,7 @@ func main() {
 		opts = append(opts, twine.PinLoops(cpus...))
 	}
 	eng := twine.New(opts...)
-	f := twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+	f := func(net.Addr) twine.Protocol { return &echo{} }
 	for i := 0; i < *ports; i++ {
 		if _, err := eng.ListenTCP(fmt.Sprintf("%s:%d", *host, *base+i), f, twine.Backlog(*backlog)); err != nil {
 			log.Fatal(err)

@@ -35,14 +35,14 @@ type client struct {
 }
 
 func newClient(room *proto.Broadcast) twine.Factory {
-	return twine.FactoryFunc(func(peer net.Addr) twine.Protocol {
+	return func(peer net.Addr) twine.Protocol {
 		c := &client{room: room, nick: peer.String()}
 		c.MaxLineLength = 1024
 		c.OnConnectionMade = c.connectionMade
 		c.LineReceived = c.lineReceived
 		c.OnConnectionLost = c.connectionLost
 		return c
-	})
+	}
 }
 
 func (c *client) connectionMade(t twine.Transport) {
