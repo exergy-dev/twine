@@ -153,8 +153,10 @@ func (l *Loop) InLoop() bool {
 
 // CallFromThread schedules fn to run on the loop. It is safe from any
 // goroutine, including the loop itself, and never blocks: when the lock-free
-// ring is full, tasks spill into a mutex-guarded slice. The function runs on
-// a later iteration, never re-entrantly. Wakeups are coalesced so N
+// ring is full, tasks spill into a mutex-guarded slice. The function runs
+// after the current callback returns (in this iteration's drain or a later
+// one), never re-entrantly, and calls from one goroutine run in order. Wakeups
+// are coalesced so N
 // concurrent calls cost at most one wakeup write, and no wakeup is written
 // while the loop is inside a callback (it drains the queue before it blocks
 // again), so a call from a callback costs one queue push. On the loop,
@@ -463,11 +465,7 @@ func (l *Loop) drainTasks() {
 	l.moreTasks = false
 	l.wakePending.Store(false)
 	budget := maxTasksPerIteration
-	// Only tasks already queued when the drain starts run now; a task that a
-	// task queues (a self-reposting tick, say) waits for the next iteration,
-	// as the CallFromThread contract promises. Len may miss a concurrent
-	// push, which then also waits; the check below keeps the loop awake.
-	for n := min(l.tasks.Len(), budget); n > 0; n-- {
+	for budget > 0 {
 		fn, ok := l.tasks.Pop()
 		if !ok {
 			break
@@ -497,7 +495,7 @@ func (l *Loop) drainTasks() {
 			l.runTask(fn)
 		}
 	}
-	if budget == 0 || l.tasks.Len() > 0 {
+	if budget == 0 {
 		l.moreTasks = true
 	}
 }
