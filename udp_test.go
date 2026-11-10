@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -360,4 +361,35 @@ func TestDatagramTransportClose(t *testing.T) {
 	if err := lst.Close(); err != nil {
 		t.Errorf("Listener.Close after DatagramTransport.Close: %v", err)
 	}
+}
+
+// ListenUDP rejects the TCP-only ListenOptions by name instead of ignoring
+// them, and still accepts SocketBuffers. The engine need not be running.
+func TestListenUDPRejectsTCPOnlyOptions(t *testing.T) {
+	e := New(Loops(1))
+	t.Cleanup(e.Stop)
+	for _, tc := range []struct {
+		name string
+		opt  ListenOption
+	}{
+		{"Backlog", Backlog(128)},
+		{"DeferAccept", DeferAccept(time.Second)},
+		{"BusyPoll", BusyPoll(50 * time.Microsecond)},
+		{"TCPNoDelay", TCPNoDelay(false)},
+	} {
+		lst, err := e.ListenUDP("127.0.0.1:0", newUDPEcho(), SocketBuffers(1<<16, 1<<16), tc.opt)
+		if err == nil {
+			lst.Close()
+			t.Errorf("ListenUDP with %s succeeded; want an error", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.name) {
+			t.Errorf("ListenUDP with %s: error %q does not name the option", tc.name, err)
+		}
+	}
+	lst, err := e.ListenUDP("127.0.0.1:0", newUDPEcho(), SocketBuffers(1<<16, 1<<16))
+	if err != nil {
+		t.Fatalf("ListenUDP with SocketBuffers only: %v", err)
+	}
+	lst.Close()
 }

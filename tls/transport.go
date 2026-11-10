@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -107,7 +106,7 @@ func (t *Transport) startHandshake() *twine.Future[struct{}] {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				res.Reject(&twine.PanicError{Value: r, Stack: debug.Stack()})
+				res.Reject(twine.NewPanicError(r))
 			}
 		}()
 		if err := t.tc.Handshake(); err != nil {
@@ -410,10 +409,7 @@ func (t *Transport) readError(err error) {
 // it in MetricsSnapshot.Panics.
 func (t *Transport) recoverInner() {
 	if r := recover(); r != nil {
-		pe, ok := r.(*twine.PanicError)
-		if !ok {
-			pe = &twine.PanicError{Value: r, Stack: debug.Stack()}
-		}
+		pe := twine.NewPanicError(r)
 		t.loop.ReportPanic(pe)
 		if t.lostErr == nil {
 			t.lostErr = pe

@@ -126,15 +126,12 @@ func TestAcceptEAGAIN(t *testing.T) {
 
 func TestConnect(t *testing.T) {
 	lfd, laddr := listen(t, "tcp4", "127.0.0.1:0")
-	fd, raddr, inProgress, err := Connect("tcp4", laddr.String(), "")
+	fd, inProgress, err := ConnectAddr("tcp4", laddr, nil)
 	if err != nil {
-		t.Fatalf("Connect: %v", err)
+		t.Fatalf("ConnectAddr: %v", err)
 	}
 	closeFD(t, fd)
 	checkNonblockCloexec(t, fd)
-	if raddr.Port != laddr.Port {
-		t.Fatalf("raddr = %v, want %v", raddr, laddr)
-	}
 	if inProgress {
 		waitFD(t, fd, unix.POLLOUT, 5*time.Second)
 	}
@@ -155,9 +152,9 @@ func TestConnect(t *testing.T) {
 
 func TestConnectWithLocal(t *testing.T) {
 	_, laddr := listen(t, "tcp4", "127.0.0.1:0")
-	fd, _, inProgress, err := Connect("tcp", laddr.String(), "127.0.0.1:0")
+	fd, inProgress, err := ConnectAddr("tcp", laddr, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
-		t.Fatalf("Connect: %v", err)
+		t.Fatalf("ConnectAddr: %v", err)
 	}
 	closeFD(t, fd)
 	if inProgress {
@@ -178,10 +175,10 @@ func TestConnectRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	unix.Close(lfd)
-	fd, _, inProgress, err := Connect("tcp4", laddr.String(), "")
+	fd, inProgress, err := ConnectAddr("tcp4", laddr, nil)
 	if err != nil {
 		if err != unix.ECONNREFUSED {
-			t.Fatalf("Connect: %v, want ECONNREFUSED", err)
+			t.Fatalf("ConnectAddr: %v, want ECONNREFUSED", err)
 		}
 		return
 	}
@@ -222,9 +219,9 @@ func TestListenIPv6(t *testing.T) {
 	if !laddr.IP.Equal(net.IPv6loopback) {
 		t.Fatalf("laddr = %v", laddr)
 	}
-	cfd, _, inProgress, err := Connect("tcp6", laddr.String(), "")
+	cfd, inProgress, err := ConnectAddr("tcp6", laddr, nil)
 	if err != nil {
-		t.Fatalf("Connect: %v", err)
+		t.Fatalf("ConnectAddr: %v", err)
 	}
 	closeFD(t, cfd)
 	if inProgress {
@@ -258,8 +255,8 @@ func TestListenErrors(t *testing.T) {
 	if _, _, err := ListenUDP("tcp", ":0", false); err == nil {
 		t.Error("ListenUDP(tcp) succeeded")
 	}
-	if _, _, _, err := Connect("udp", "127.0.0.1:1", ""); err == nil {
-		t.Error("Connect(udp) succeeded")
+	if _, _, err := ConnectAddr("udp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}, nil); err == nil {
+		t.Error("ConnectAddr(udp) succeeded")
 	}
 	if _, _, err := Listen("tcp4", "bad address", false, 0); err == nil {
 		t.Error("Listen(bad address) succeeded")

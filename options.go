@@ -6,14 +6,24 @@ import (
 	"time"
 )
 
-// Option configures an Engine. Options that take a size or a count treat 0
-// (and any negative value) as "use the default"; options that take a
-// duration say what 0 means.
+// Option configures an Engine.
+//
+// Zero-value rule: an option that takes a size or a count treats 0 (and any
+// negative value) as "use the default". For an option that takes a duration,
+// 0 is a real setting, not the default: Watchdog(0) disables the watchdog,
+// ShutdownTimeout(0) aborts unflushed connections at once, CloseLinger(0)
+// closes as soon as writes are flushed, and SpinIterations(0) blocks without
+// spinning (a count, but with the same rule; its default needs a negative
+// value). Among the DialOptions, DialTimeout(0) means no timeout. The other
+// packages state their own rules: http.Server durations treat 0 as the
+// default and a negative value as "off", and tls.HandshakeTimeout treats
+// d <= 0 as the default because a handshake cannot be unbounded.
 type Option func(*config)
 
 // ListenOption configures a listener created by ListenTCP or ListenUDP.
-// ListenUDP honours only SocketBuffers; the others apply to TCP listeners and
-// are ignored for UDP.
+// SocketBuffers applies to both; Backlog, DeferAccept, BusyPoll and
+// TCPNoDelay are TCP-only, and ListenUDP returns an error naming the option
+// when it is given one.
 type ListenOption func(*listenConfig)
 
 // DialOption configures an outbound connection created by Loop.ConnectTCP
@@ -193,26 +203,47 @@ type listenConfig struct {
 	backlog     int
 	rcvBuf      int
 	sndBuf      int
+	tcpOnly     string // name of the first TCP-only option given (ListenUDP rejects it)
+}
+
+// markTCPOnly records that a TCP-only option was used, so ListenUDP can
+// reject it by name instead of ignoring it.
+func (c *listenConfig) markTCPOnly(name string) {
+	if c.tcpOnly == "" {
+		c.tcpOnly = name
+	}
 }
 
 func defaultListenConfig() listenConfig {
 	return listenConfig{noDelay: true, backlog: defaultBacklog}
 }
 
-// TCPNoDelay sets TCP_NODELAY on accepted sockets. Default true. TCP only.
-func TCPNoDelay(on bool) ListenOption { return func(c *listenConfig) { c.noDelay = on } }
+// TCPNoDelay sets TCP_NODELAY on accepted sockets. Default true. TCP only:
+// ListenUDP returns an error when given it.
+func TCPNoDelay(on bool) ListenOption {
+	return func(c *listenConfig) { c.markTCPOnly("TCPNoDelay"); c.noDelay = on }
+}
 
 // DeferAccept sets TCP_DEFER_ACCEPT on the listening socket, so a connection
 // is accepted only once the client has sent data (Linux only; ignored
-// elsewhere). 0, the default, disables it. TCP only.
-func DeferAccept(d time.Duration) ListenOption { return func(c *listenConfig) { c.deferAccept = d } }
+// elsewhere). 0, the default, disables it. TCP only: ListenUDP returns an
+// error when given it.
+func DeferAccept(d time.Duration) ListenOption {
+	return func(c *listenConfig) { c.markTCPOnly("DeferAccept"); c.deferAccept = d }
+}
 
 // BusyPoll sets SO_BUSY_POLL on accepted sockets (Linux only; ignored
-// elsewhere). 0, the default, disables it. TCP only.
-func BusyPoll(d time.Duration) ListenOption { return func(c *listenConfig) { c.busyPoll = d } }
+// elsewhere). 0, the default, disables it. TCP only: ListenUDP returns an
+// error when given it.
+func BusyPoll(d time.Duration) ListenOption {
+	return func(c *listenConfig) { c.markTCPOnly("BusyPoll"); c.busyPoll = d }
+}
 
-// Backlog sets the listen(2) backlog. 0 means the default, 4096. TCP only.
-func Backlog(n int) ListenOption { return func(c *listenConfig) { c.backlog = n } }
+// Backlog sets the listen(2) backlog. 0 means the default, 4096. TCP only:
+// ListenUDP returns an error when given it.
+func Backlog(n int) ListenOption {
+	return func(c *listenConfig) { c.markTCPOnly("Backlog"); c.backlog = n }
+}
 
 // SocketBuffers sets SO_RCVBUF / SO_SNDBUF on accepted TCP sockets, or on the
 // UDP socket. 0 leaves the kernel default.

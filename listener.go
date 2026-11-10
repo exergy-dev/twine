@@ -11,18 +11,16 @@ import (
 )
 
 // listener is a TCP or UDP Listener. For TCP with ReusePort it owns one fd
-// per loop; otherwise a single fd on loop 0.
+// per loop; otherwise a single fd on loop 0. A UDP listener has one conn of
+// kind kindUDP and a nil factory; the datagram protocol lives on that conn.
 type listener struct {
 	eng     *Engine
 	addr    net.Addr
 	factory Factory
-	dgram   DatagramProtocol
 	lc      listenConfig
-	udp     bool
 
 	mu     sync.Mutex
-	fds    []int   // one per loop (or one)
-	conns  []*conn // the conn registered on each loop
+	conns  []*conn // the conn registered on each loop; c.fd is the socket
 	closed atomic.Bool
 }
 
@@ -77,10 +75,11 @@ func (e *Engine) newTCPListener(addr string, f Factory, lc listenConfig) (*liste
 	if perLoop {
 		n = len(e.loops)
 	}
+	var fds []int // sockets opened so far, closed if a later one fails
 	for i := 0; i < n; i++ {
 		fd, laddr, err := sock.Listen("tcp", addr, e.cfg.reusePort, lc.backlog)
 		if err != nil {
-			for _, fd := range lst.fds {
+			for _, fd := range fds {
 				_ = unix.Close(fd)
 			}
 			return nil, err
@@ -95,7 +94,7 @@ func (e *Engine) newTCPListener(addr string, f Factory, lc listenConfig) (*liste
 				addr = laddr.String()
 			}
 		}
-		lst.fds = append(lst.fds, fd)
+		fds = append(fds, fd)
 		lp := e.loops[i]
 		c := &conn{loop: lp, fd: int32(fd), kind: kindListener, lst: lst}
 		lst.conns = append(lst.conns, c)

@@ -152,7 +152,7 @@ func (f *Future[T]) dispatch() {
 func (f *Future[T]) guard(fn func()) (pe *PanicError) {
 	defer func() {
 		if r := recover(); r != nil {
-			pe = capturePanic(r)
+			pe = NewPanicError(r)
 			if f.loop != nil {
 				f.loop.logPanic("twine: panic in Future callback", pe)
 			}
@@ -333,7 +333,7 @@ func DeferToThread[T any](l *Loop, fn func() (T, error)) *Future[T] {
 	ok := l.eng.pool.submit(func() {
 		defer func() {
 			if rec := recover(); rec != nil {
-				r.Reject(capturePanic(rec))
+				r.Reject(NewPanicError(rec))
 			}
 		}()
 		v, err := fn()

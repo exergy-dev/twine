@@ -218,10 +218,12 @@ func ListenUDP(network, addr string, reusePort bool) (fd int, laddr *net.UDPAddr
 // ECONNABORTED are retried internally. The EAGAIN path does not allocate.
 func Accept(lfd int) (fd int, sa unix.Sockaddr, err error)
 
-// Connect creates a non-blocking socket and starts connecting; inProgress
-// is true for EINPROGRESS (the common case): wait for Writable, then call
-// ConnectError. local may be "" (no bind).
-func Connect(network, addr, local string) (fd int, raddr *net.TCPAddr, inProgress bool, err error)
+// ConnectAddr creates a non-blocking socket and starts connecting to the
+// already resolved raddr (the root package resolves names off the loop);
+// inProgress is true for EINPROGRESS (the common case): wait for Writable,
+// then call ConnectError. la may be nil (no bind); a nil or unspecified
+// raddr.IP dials the loopback address.
+func ConnectAddr(network string, raddr, la *net.TCPAddr) (fd int, inProgress bool, err error)
 // ConnectError reads SO_ERROR after a non-blocking connect; nil = connected.
 func ConnectError(fd int) error
 
@@ -273,7 +275,7 @@ golang.org/x/sys has no `Accept4` there. Batches use one
 errno below 256 does not allocate.
 
 Tests: listen on 127.0.0.1:0 and accept a net.Dial client with the peer
-address; Connect completes after Writable with a nil ConnectError; a closed
+address; ConnectAddr completes after Writable with a nil ConnectError; a closed
 port yields ECONNREFUSED; dual-stack and IPv6 listeners; UDP batch round
 trip of 10 datagrams through both RecvMmsg/SendMmsg and the portable loop;
 Accept EAGAIN and the mmsg paths at 0 allocs. Benchmarks:

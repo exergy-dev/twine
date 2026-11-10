@@ -48,7 +48,12 @@ var (
 	scratchMu sync.Mutex
 	// scratches is keyed by a weak pointer so that the map does not keep a
 	// stopped engine's loops alive; a cleanup removes the entry once the
-	// loop has been collected.
+	// loop has been collected. This passive pattern fits here because a
+	// loopScratch is just a buffer: it holds no reference to its loop, arms
+	// no timer and needs nothing to run when the loop stops, so removal at
+	// the next GC is soon enough. The http package's per-loop Date cache
+	// (http/date.go) owns a timer and calls back into its loop, so it uses
+	// an Engine.OnShutdown hook instead; see the comment on Server.dateFor.
 	scratches = map[weak.Pointer[twine.Loop]]*loopScratch{}
 )
 

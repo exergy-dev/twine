@@ -48,7 +48,7 @@ func (t *Timer) fire() {
 
 func (l *Loop) recoverTimer() {
 	if r := recover(); r != nil {
-		l.logPanic("twine: panic in timer callback", capturePanic(r))
+		l.logPanic("twine: panic in timer callback", NewPanicError(r))
 	}
 }
 

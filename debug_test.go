@@ -202,6 +202,27 @@ func (p *sleepyProto) ConnectionMade(t Transport) { p.t = t }
 func (p *sleepyProto) DataReceived(b []byte)      { time.Sleep(p.sleep); p.t.Write(b) }
 func (p *sleepyProto) ConnectionLost(error)       {}
 
+// slowCallbackFor waits for a "slow callback" warning attributed to the
+// protocol type want and returns it. Other callbacks (ConnectionMade on a
+// slow debug build, tasks) may be reported first and are skipped.
+func slowCallbackFor(t *testing.T, h *captureHandler, want string) capturedRecord {
+	t.Helper()
+	var found capturedRecord
+	ok := waitUntil(2*time.Second, func() bool {
+		for _, r := range h.matching("slow callback") {
+			if r.attrs["protocol"] == want {
+				found = r
+				return true
+			}
+		}
+		return false
+	})
+	if !ok {
+		t.Fatalf("no \"slow callback\" warning for %s; got %v", want, h.matching("slow callback"))
+	}
+	return found
+}
+
 func TestWatchdogSlowCallback(t *testing.T) {
 	h := &captureHandler{}
 	e := startEngine(t, Loops(1), Watchdog(time.Millisecond), Logger(slog.New(h)))
@@ -210,17 +231,10 @@ func TestWatchdogSlowCallback(t *testing.T) {
 
 	// One slow callback produces a warning naming the protocol type.
 	echoOnce(t, c, []byte("slow"))
-	if !waitUntil(2*time.Second, func() bool { return len(h.matching("slow callback")) > 0 }) {
-		t.Fatal("no \"slow callback\" warning after a 5ms DataReceived with Watchdog(1ms)")
-	}
-	recs := h.matching("slow callback")
-	r := recs[0]
+	wantType := fmt.Sprintf("%T", &sleepyProto{})
+	r := slowCallbackFor(t, h, wantType)
 	if r.level != slog.LevelWarn {
 		t.Errorf("slow callback logged at %v, want WARN", r.level)
-	}
-	wantType := fmt.Sprintf("%T", &sleepyProto{})
-	if r.attrs["protocol"] != wantType {
-		t.Errorf("warning protocol attr = %q, want %q (attrs %v)", r.attrs["protocol"], wantType, r.attrs)
 	}
 	if r.attrs["loop"] != "0" {
 		t.Errorf("warning loop attr = %q, want 0", r.attrs["loop"])
@@ -259,13 +273,7 @@ func TestWatchdogSlowCallbackAfterIdle(t *testing.T) {
 	time.Sleep(300 * time.Millisecond) // the watchdog is at its idle interval now
 	c := dialTCP(t, lst.Addr().String())
 	echoOnce(t, c, []byte("slow"))
-	if !waitUntil(2*time.Second, func() bool { return len(h.matching("slow callback")) > 0 }) {
-		t.Fatal("no \"slow callback\" warning for a 5ms DataReceived after an idle period")
-	}
-	r := h.matching("slow callback")[0]
-	if want := fmt.Sprintf("%T", &sleepyProto{}); r.attrs["protocol"] != want {
-		t.Errorf("warning protocol attr = %q, want %q (attrs %v)", r.attrs["protocol"], want, r.attrs)
-	}
+	slowCallbackFor(t, h, fmt.Sprintf("%T", &sleepyProto{}))
 }
 
 func TestWatchdogIdleBackoff(t *testing.T) {
@@ -297,8 +305,12 @@ func TestWatchdogIdleBackoff(t *testing.T) {
 	busy := e.wdSamples.Load() - s1
 	close(stop)
 	t.Logf("%d watchdog samples in 200ms busy", busy)
-	if busy < 50 {
-		t.Errorf("%d watchdog samples in 200ms on a busy loop; want about 200", busy)
+	// Under load (a timer keeping a loop iterating) the sampler is back at
+	// its 1 ms base: about 200 samples in 200 ms here, but a shared macOS
+	// runner has delivered as few as 44, so the bound only has to separate
+	// "busy" from the idle rate (about 4 samples in 200 ms).
+	if busy < 20 {
+		t.Errorf("%d watchdog samples in 200ms on a busy loop; want well above the idle rate of ~4", busy)
 	}
 }
 

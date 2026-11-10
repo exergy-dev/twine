@@ -84,6 +84,26 @@ func ExampleConnect() {
 	})
 }
 
+// The README's TLS snippet: the plaintext echo Protocol (echo, in
+// tls_test.go) served over TLS on :8443. It runs until killed, so the Example
+// that compiles it has no Output and is not run.
+func main() {
+	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+	eng := twine.New()
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	factory := twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+	if _, err := twtls.Listen(eng, ":8443", cfg, factory); err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(eng.Run(context.Background()))
+}
+
+// The smallest TLS listener: a plaintext Protocol, unchanged, behind Listen.
+func ExampleListen_echo() { main() }
+
 // alpnProto inspects the negotiated parameters when the handshake is done.
 type alpnProto struct{ lineEcho }
 

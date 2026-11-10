@@ -66,6 +66,9 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - `ErrNoFutures`, `ErrRunTwice` and `ErrNilProtocol` sentinels.
 - `Engine.Logger`, `Loop.ReportPanic`, and `poll` backend logging when a
   `twine_uring` build falls back to epoll.
+- `NewPanicError`, which wraps a recovered panic value with the current
+  stack the way the core does (the `tls` package uses it instead of
+  hand-built `PanicError` values).
 - proto: `ErrLineTooLong` and `ErrFrameTooLarge` are also available under
   `proto`; `FuzzAMP` and `FuzzLineReceiverRaw` fuzz targets; benchmarks.
 - tls: `HandshakeError`, `Transport.KernelOffload`, allocation gates and
@@ -116,12 +119,22 @@ v1.0.0, minor releases may break the API; every break is listed here.
 
 - `Loop.CallFromThread` no longer checks whether it is called on the loop
   (a thread-id read per call); every call goes through the task queue, and
-  no wakeup is written while the loop is inside a callback. From a callback,
-  `CallLater(0, fn)` is the cheaper way to defer work.
+  no wakeup is written while the loop is inside a callback. CallFromThread
+  is always correct, from any goroutine including the loop. `CallLater(0)`
+  is only for code on the loop that wants a `Timer` handle or the
+  next-iteration guarantee.
 - kTLS offload covers TLS 1.3 AES-GCM only; ChaCha20-Poly1305 connections
   stay on the memory BIO.
+- `Engine.ListenUDP` returns an error naming the option when given a
+  TCP-only `ListenOption` (`Backlog`, `DeferAccept`, `BusyPoll`,
+  `TCPNoDelay`) instead of silently ignoring it.
 - `docs/API.md` now lists interface methods, struct fields, constants and
   variables, and CI fails when it is stale.
+- The README teaches the API directly: after the echo server it shows a
+  client, a timer, blocking work, an HTTP server and a TLS listener, each a
+  compiled Example, then the ownership rules and the package table. The
+  Twisted-to-Twine table moved to `docs/TWISTED.md`, GC tuning to
+  `BENCHMARKS.md`, and the make-target list lives in `CONTRIBUTING.md`.
 - The design document and build log moved to `docs/history/`;
   `BENCHMARKS.md` keeps only current results.
 - CI tests Go 1.24, oldstable and stable on Linux and macOS, runs the

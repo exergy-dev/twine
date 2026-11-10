@@ -32,12 +32,11 @@ func (e *Engine) newUDPListener(addr string, p DatagramProtocol, lc listenConfig
 	if lc.rcvBuf > 0 || lc.sndBuf > 0 {
 		_ = sock.SetBuffers(fd, lc.rcvBuf, lc.sndBuf)
 	}
-	lst := &listener{eng: e, addr: laddr, dgram: p, lc: lc, udp: true}
+	lst := &listener{eng: e, addr: laddr, lc: lc}
 	lp := e.NextLoop()
 	c := &conn{loop: lp, fd: int32(fd), kind: kindUDP}
 	c.udp = &udpState{lst: lst, proto: p}
 	c.host = laddr
-	lst.fds = []int{fd}
 	lst.conns = []*conn{c}
 	lp.CallFromThread(func() { lp.registerUDP(c) })
 	return lst, nil

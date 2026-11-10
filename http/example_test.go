@@ -128,6 +128,24 @@ func ExampleRequestCtx_Error() {
 	// 401 Unauthorized example unauthorized
 }
 
+// The README's HTTP snippet: a program that serves one handler on :8080. It
+// runs until killed, so the Example that compiles it has no Output and is
+// not run.
+func main() {
+	eng := twine.New()
+	srv := &twhttp.Server{Handler: func(ctx *twhttp.RequestCtx) {
+		ctx.SetContentType("text/plain")
+		ctx.WriteString("hello from twine\n")
+	}}
+	if _, err := srv.Listen(eng, ":8080"); err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(eng.Run(context.Background()))
+}
+
+// Listen on :8080 with one Handler; the smallest HTTP server.
+func ExampleServer_Listen() { main() }
+
 // show prints the status, the Server header and the body of a response.
 func show(resp *http.Response, err error) {
 	if err != nil {

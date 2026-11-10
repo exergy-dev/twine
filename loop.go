@@ -97,6 +97,7 @@ type Loop struct {
 	lastCb        *conn
 	wdNs          int64
 	slowNs        atomic.Int64
+	slowEndNs     atomic.Int64 // when the span in slowNs ended (loop clock)
 	slowProto     atomic.Pointer[conn]
 	slowMulti     atomic.Bool
 }
@@ -126,8 +127,13 @@ func (l *Loop) ID() int { return l.id }
 func (l *Loop) Engine() *Engine { return l.eng }
 
 // Now returns the time cached at the start of the current iteration. It is
-// cheap and is what timers fire against.
-func (l *Loop) Now() time.Time { return l.now }
+// cheap and is what timers fire against. It must be called on the loop (the
+// cache is written by the loop goroutine without synchronisation); debug
+// builds panic when it is called from anywhere else.
+func (l *Loop) Now() time.Time {
+	l.assertInLoop()
+	return l.now
+}
 
 // Stopped reports whether the loop has exited. CallFromThread after this
 // point drops the function and counts it in MetricsSnapshot.BacklogDrops.
@@ -151,16 +157,16 @@ func (l *Loop) InLoop() bool {
 	return goid() == l.gid.Load()
 }
 
-// CallFromThread schedules fn to run on the loop. It is safe from any
-// goroutine, including the loop itself, and never blocks: when the lock-free
-// ring is full, tasks spill into a mutex-guarded slice. The function runs
-// after the current callback returns (in this iteration's drain or a later
-// one), never re-entrantly, and calls from one goroutine run in order. Wakeups
-// are coalesced so N
-// concurrent calls cost at most one wakeup write, and no wakeup is written
-// while the loop is inside a callback (it drains the queue before it blocks
-// again), so a call from a callback costs one queue push. On the loop,
-// CallLater(0, fn) is the cheaper way to defer work. After the loop has
+// CallFromThread schedules fn to run on the loop. It is always correct, from
+// any goroutine including the loop itself, and never blocks: when the
+// lock-free ring is full, tasks spill into a mutex-guarded slice. The
+// function runs after the current callback returns (in this iteration's
+// drain or a later one), never re-entrantly, and calls from one goroutine
+// run in order. Wakeups are coalesced so N concurrent calls cost at most one
+// wakeup write, and no wakeup is written while the loop is inside a callback
+// (it drains the queue before it blocks again), so a call from a callback
+// costs one queue push. CallLater(0, fn) is only for code on the loop that
+// wants a Timer handle or the next-iteration guarantee. After the loop has
 // exited fn is dropped (counted in MetricsSnapshot.BacklogDrops).
 func (l *Loop) CallFromThread(fn func()) {
 	if l.stopped.Load() {
@@ -517,6 +523,7 @@ func (l *Loop) noteSlowDispatch(d int64) {
 	if d <= l.slowNs.Load() {
 		return
 	}
+	l.slowEndNs.Store(l.nowNs)
 	l.slowNs.Store(d)
 	l.slowMulti.Store(l.dispatchCbs != 1)
 	l.slowProto.Store(l.lastCb)
@@ -524,7 +531,7 @@ func (l *Loop) noteSlowDispatch(d int64) {
 
 func (l *Loop) recoverTask() {
 	if r := recover(); r != nil {
-		l.logPanic("twine: panic in CallFromThread task", capturePanic(r))
+		l.logPanic("twine: panic in CallFromThread task", NewPanicError(r))
 	}
 }
 
@@ -727,7 +734,7 @@ func (l *Loop) endCallback() {
 // that connection only.
 func (l *Loop) recoverProto(c *conn) {
 	if r := recover(); r != nil {
-		pe := capturePanic(r)
+		pe := NewPanicError(r)
 		l.logPanic("twine: panic in protocol", pe, "fd", c.fd)
 		switch c.kind {
 		case kindUDP:
@@ -756,16 +763,6 @@ func (l *Loop) logPanic(msg string, pe *PanicError, attrs ...any) {
 // are not silent. Safe from any goroutine.
 func (l *Loop) ReportPanic(pe *PanicError) {
 	l.logPanic("twine: panic in protocol", pe)
-}
-
-// capturePanic builds a PanicError with the current stack.
-func capturePanic(r any) *PanicError {
-	if pe, ok := r.(*PanicError); ok {
-		return pe
-	}
-	buf := make([]byte, 16<<10)
-	n := runtime.Stack(buf, false)
-	return &PanicError{Value: r, Stack: buf[:n]}
 }
 
 // flushDirty issues one writev per dirty conn and updates write interest and
@@ -856,13 +853,14 @@ func (l *Loop) callConnectionLost(c *conn) {
 
 func (l *Loop) recoverLost(c *conn) {
 	if r := recover(); r != nil {
-		l.logPanic("twine: panic in ConnectionLost", capturePanic(r), "fd", c.fd)
+		l.logPanic("twine: panic in ConnectionLost", NewPanicError(r), "fd", c.fd)
 	}
 }
 
 // safeCall runs fn with panic recovery attributed to c.
 func (l *Loop) safeCall(c *conn, fn func()) {
 	l.cbStart.Store(l.nowNs)
+	l.cbProto.Store(c)
 	l.dispatchCbs++
 	l.lastCb = c
 	defer l.endCallback()

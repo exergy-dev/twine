@@ -29,6 +29,17 @@ type dateState struct {
 // Factory as well. A hook registered after shutdown has begun never runs;
 // that needs a connection made during shutdown on a loop with no cache,
 // and costs one stale map entry.
+//
+// This differs from the tls package's per-loop scratch buffer, which keys a
+// package-level map by weak.Pointer and lets a runtime.AddCleanup drop the
+// entry once the loop is collected. That works there because the buffer is
+// passive. The date cache owns a timer on its loop and calls loop.Now and
+// loop.CallLater from the timer callback, so it must hold the loop: a
+// weak-keyed map whose value refers to the key never sees the key die, and
+// a stopped engine's caches would stay until its loops were collected
+// rather than being dropped at Stop (TestDateCacheCleanup checks the
+// latter). The explicit hook is the simpler contract for a stateful,
+// per-Server cache.
 func (s *Server) dateFor(l *twine.Loop) *dateState {
 	s.mu.Lock()
 	d := s.dates[l]

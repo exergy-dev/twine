@@ -8,9 +8,11 @@ import (
 // Blocking wraps a Factory so that each connection's Protocol runs on its own
 // goroutine fed by a channel, at goroutine-per-connection cost. DataReceived
 // copies each chunk into the channel; the Transport the Protocol sees is a
-// thread-safe proxy that routes every call through CallFromThread. This is
-// the migration path for code that blocks or is not ready for callback style.
-// It works over any Transport, including the tls package's: wrap the inner
+// thread-safe proxy that routes every call through CallFromThread. Every
+// proxy method returns at once except Context and PendingWrite, which have a
+// result to return and so wait for a round trip to the loop. This is the
+// migration path for code that blocks or is not ready for callback style. It
+// works over any Transport, including the tls package's: wrap the inner
 // factory, as in tls.Server(cfg, twine.Blocking(f)).
 //
 // Backpressure: the channel holds up to 64 chunks; when it is full the loop
@@ -68,7 +70,7 @@ func (b *blockingProto) run() {
 		if r == nil {
 			return
 		}
-		pe := capturePanic(r)
+		pe := NewPanicError(r)
 		b.loop.ReportPanic(pe)
 		b.loop.CallFromThread(b.t.Abort)
 		// Drain so the loop's final ConnectionLost send never blocks, and
@@ -127,7 +129,10 @@ func (b *blockingProto) ConnectionLost(err error) {
 }
 
 // asyncTransport is a Transport proxy safe to call from any goroutine. Writes
-// copy their argument because they are delivered asynchronously.
+// copy their argument because they are delivered asynchronously. Every method
+// returns at once except Context and PendingWrite, which wait for a round
+// trip to the loop (see sync); GetPeer, GetHost and Loop answer from values
+// captured at ConnectionMade.
 type asyncTransport struct {
 	t          Transport
 	loop       *Loop
@@ -165,7 +170,8 @@ func (a *asyncTransport) PauseReading()       { a.call(a.t.PauseReading) }
 func (a *asyncTransport) ResumeReading()      { a.call(a.t.ResumeReading) }
 func (a *asyncTransport) UnregisterProducer() { a.call(a.t.UnregisterProducer) }
 
-// PendingWrite blocks the calling goroutine until the loop answers.
+// PendingWrite blocks the calling goroutine until the loop answers, as does
+// Context above.
 func (a *asyncTransport) PendingWrite() int {
 	return a.sync(func() any { return a.t.PendingWrite() }).(int)
 }

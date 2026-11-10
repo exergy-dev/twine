@@ -100,7 +100,7 @@ func TestSpinIterationsAuto(t *testing.T) {
 func TestDeferAccept(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	lst := listen(t, e, echoFactory(), DeferAccept(2*time.Second), BusyPoll(time.Microsecond))
-	checkDeferAccept(t, lst.(*listener).fds[0])
+	checkDeferAccept(t, int(lst.(*listener).conns[0].fd))
 	c := dialTCP(t, lst.Addr().String())
 	echoOnce(t, c, []byte("deferred"))
 }

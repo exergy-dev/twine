@@ -115,38 +115,13 @@ func Accept(lfd int) (fd int, sa unix.Sockaddr, err error) {
 	}
 }
 
-// Connect creates a non-blocking TCP socket and starts connecting to addr. It
-// returns inProgress=true for EINPROGRESS (the common case); the caller waits
-// for Writable (or Hangup/Error) and then calls ConnectError. local may be ""
-// (no bind). An empty host in addr dials the loopback address. On error the
-// socket is closed and fd is -1.
-func Connect(network, addr, local string) (fd int, raddr *net.TCPAddr, inProgress bool, err error) {
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-	default:
-		return -1, nil, false, net.UnknownNetworkError(network)
-	}
-	raddr, err = net.ResolveTCPAddr(network, addr)
-	if err != nil {
-		return -1, nil, false, err
-	}
-	var la *net.TCPAddr
-	if local != "" {
-		if la, err = net.ResolveTCPAddr(network, local); err != nil {
-			return -1, nil, false, err
-		}
-	}
-	fd, inProgress, err = ConnectAddr(network, raddr, la)
-	if err != nil {
-		return -1, nil, false, err
-	}
-	return fd, raddr, inProgress, nil
-}
-
-// ConnectAddr is Connect for addresses already resolved, so it never does a
-// name lookup (the root package resolves host names off the loop thread).
-// la may be nil (no bind). A nil or unspecified raddr.IP dials the loopback
-// address. On error the socket is closed and fd is -1.
+// ConnectAddr creates a non-blocking TCP socket and starts connecting to
+// raddr, which is already resolved: it never does a name lookup (the root
+// package resolves host names off the loop thread). It returns
+// inProgress=true for EINPROGRESS (the common case); the caller waits for
+// Writable (or Hangup/Error) and then calls ConnectError. la may be nil (no
+// bind). A nil or unspecified raddr.IP dials the loopback address. On error
+// the socket is closed and fd is -1.
 func ConnectAddr(network string, raddr, la *net.TCPAddr) (fd int, inProgress bool, err error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":

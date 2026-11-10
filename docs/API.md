@@ -154,6 +154,7 @@ type PanicError struct {
 	Value any
 	Stack []byte
 }
+func NewPanicError(v any) *PanicError
 func (e *PanicError) Error() string
 func (e *PanicError) Unwrap() error
 type Producer interface {

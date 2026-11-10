@@ -140,3 +140,11 @@ recorded before the rename print `client=tls` for `spin` in `pinned.txt`.
 `bench/echo_goroutine`, `bench/echo_gnet` and `bench/http_nethttp` take the
 same `-addr`/`-loops` flags as the twine servers. For separate-process
 numbers, pin the server and client to disjoint CPUs with `taskset`.
+
+## GC tuning
+
+Twine does not set `GOGC` or `GOMEMLIMIT`. For large connection counts we
+recommend `GOGC=200`–`400` together with a `GOMEMLIMIT` at roughly 80% of the
+container's memory. Per-connection state is pointer-light so GC scan cost
+grows slowly with connections; the slabs behind write rings are allocated
+once per loop and reused. The soak above ran with the defaults.

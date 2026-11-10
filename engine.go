@@ -18,12 +18,16 @@ type Engine struct {
 	listeners     []*listener
 	shutdownHooks []func()
 	state         atomic.Int32
-	ran           atomic.Bool   // Run got past its start (ErrRunTwice from then on)
-	wdSamples     atomic.Uint64 // watchdog samples taken (tests)
-	next          atomic.Uint32 // NextLoop: outbound connections, UDP sockets
-	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
-	stopCh        chan struct{}
-	doneCh        chan struct{}
+	ran           atomic.Bool // Run got past its start (ErrRunTwice from then on)
+	// wdSamples counts watchdog samples. Only TestWatchdogIdleBackoff reads
+	// it, but it stays a plain counter: the one Add per sample runs on the
+	// watchdog goroutine at most 1000 times a second, never on a loop, and
+	// a test-only hook would cost the same nil check for less clarity.
+	wdSamples  atomic.Uint64
+	next       atomic.Uint32 // NextLoop: outbound connections, UDP sockets
+	acceptNext atomic.Uint32 // acceptLoop: single-listener accept hand-off
+	stopCh     chan struct{}
+	doneCh     chan struct{}
 }
 
 const (
@@ -232,7 +236,9 @@ func (e *Engine) ListenTCP(addr string, f Factory, opts ...ListenOption) (Listen
 	return lst, nil
 }
 
-// ListenUDP binds a UDP socket on one loop and delivers datagrams to p.
+// ListenUDP binds a UDP socket on one loop and delivers datagrams to p. Of
+// the ListenOptions only SocketBuffers applies to UDP; a TCP-only option
+// (Backlog, DeferAccept, BusyPoll or TCPNoDelay) is an error that names it.
 func (e *Engine) ListenUDP(addr string, p DatagramProtocol, opts ...ListenOption) (Listener, error) {
 	if e.stopped() {
 		return nil, ErrEngineStopped
@@ -240,6 +246,9 @@ func (e *Engine) ListenUDP(addr string, p DatagramProtocol, opts ...ListenOption
 	lc := defaultListenConfig()
 	for _, o := range opts {
 		o(&lc)
+	}
+	if lc.tcpOnly != "" {
+		return nil, fmt.Errorf("twine: ListenUDP: %s is a TCP-only ListenOption", lc.tcpOnly)
 	}
 	lst, err := e.newUDPListener(addr, p, lc)
 	if err != nil {
