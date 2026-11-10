@@ -36,6 +36,10 @@ type Factory func(peer net.Addr) Protocol
 // counted in MetricsSnapshot.WriteAfterClose) instead of touching the next
 // connection.
 //
+// A Transport carries no user data. Per-connection state belongs in the
+// Protocol struct, which exists once per connection and whose methods are
+// the only code that runs for it.
+//
 // The Transport the core hands to ConnectionMade also has an FD() int
 // method, reachable by a type assertion to interface{ FD() int }. It returns
 // the socket descriptor (or -1 once closed) for kernel offload setup such as
@@ -63,11 +67,6 @@ type Transport interface {
 	// SetIdleTimeout arms an idle timer on the timing wheel; 0 disables.
 	// Any read or write resets it. Expiry aborts with ErrIdleTimeout.
 	SetIdleTimeout(d time.Duration)
-	// SetContext stores a per-connection user value. Storing a non-pointer
-	// value allocates; store pointers on hot paths.
-	SetContext(v any)
-	// Context returns the value stored by SetContext, or nil.
-	Context() any
 	// PauseReading drops read interest; DataReceived stops being called
 	// until ResumeReading (Twisted's pauseProducing on the transport).
 	PauseReading()

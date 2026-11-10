@@ -54,7 +54,6 @@ type conn struct {
 
 	idleTimeout time.Duration
 	peer, host  net.Addr
-	ctx         any
 	lostErr     error
 
 	producer  Producer
@@ -101,7 +100,6 @@ func (c *conn) reset() {
 	c.proto = nil
 	c.idleTimeout = 0
 	c.peer, c.host = nil, nil
-	c.ctx = nil
 	c.lostErr = nil
 	c.producer = nil
 	c.streaming = false

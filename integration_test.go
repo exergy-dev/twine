@@ -1158,7 +1158,6 @@ func TestStaleTransportHandle(t *testing.T) {
 		stale.Writev([]byte("STA"), []byte("LE"))
 		stale.SetIdleTimeout(time.Millisecond)
 		stale.PauseReading()
-		stale.SetContext("stale")
 		stale.LoseConnection()
 		stale.Abort()
 	})
@@ -1188,11 +1187,6 @@ func TestStaleTransportHandle(t *testing.T) {
 		t.Errorf("new connection lost (%v) after calls on a stale handle", err)
 	default:
 	}
-	var ctx any
-	onLoop(t, l, func() { ctx = fresh.Context() })
-	if ctx != nil {
-		t.Errorf("new connection's Context() = %v, set through a stale handle", ctx)
-	}
 }
 
 func isTimeout(err error) bool {
@@ -1219,21 +1213,15 @@ func TestWriteBufferLimit(t *testing.T) {
 // Transport accessors.
 // ---------------------------------------------------------------------------
 
-func TestTransportContextAndAddrs(t *testing.T) {
+func TestTransportAddrs(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	type info struct {
-		initial    any
-		roundTrip  bool
 		peer, host string
 	}
 	infoCh := make(chan info, 2)
 	lst := listen(t, e, hookFactory(func() *hookProto {
 		return &hookProto{made: func(_ *hookProto, tr Transport) {
-			in := info{initial: tr.Context()}
-			v := &struct{ n int }{42}
-			tr.SetContext(v)
-			got, _ := tr.Context().(*struct{ n int })
-			in.roundTrip = got == v
+			var in info
 			in.peer, in.host = tr.RemoteAddr().String(), tr.LocalAddr().String()
 			infoCh <- in
 			tr.LoseConnection()
@@ -1246,12 +1234,6 @@ func TestTransportContextAndAddrs(t *testing.T) {
 		case in = <-infoCh:
 		case <-time.After(5 * time.Second):
 			t.Fatal("not accepted")
-		}
-		if in.initial != nil {
-			t.Errorf("conn %d: initial Context() = %v, want nil", i, in.initial)
-		}
-		if !in.roundTrip {
-			t.Errorf("conn %d: Context() did not return the value given to SetContext", i)
 		}
 		if in.peer != c.LocalAddr().String() {
 			t.Errorf("conn %d: RemoteAddr = %s, want %s", i, in.peer, c.LocalAddr())

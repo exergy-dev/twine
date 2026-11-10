@@ -100,21 +100,6 @@ func (t *transport) SetIdleTimeout(d time.Duration) {
 	c.loop.wheel.Add(&c.idle, c.loop.nowNs+int64(d))
 }
 
-// SetContext stores a per-connection user value.
-func (t *transport) SetContext(v any) {
-	if t.gen == t.c.gen {
-		t.c.ctx = v
-	}
-}
-
-// Context returns the per-connection user value.
-func (t *transport) Context() any {
-	if t.gen != t.c.gen {
-		return nil
-	}
-	return t.c.ctx
-}
-
 // PauseReading drops read interest.
 func (t *transport) PauseReading() {
 	t.c.loop.assertInLoop()

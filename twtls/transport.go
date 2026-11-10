@@ -600,12 +600,6 @@ func (t *Transport) Loop() *twine.Loop { return t.loop }
 // traffic in either direction resets it.
 func (t *Transport) SetIdleTimeout(d time.Duration) { t.under.SetIdleTimeout(d) }
 
-// SetContext stores a per-connection user value on the underlying transport.
-func (t *Transport) SetContext(v any) { t.under.SetContext(v) }
-
-// Context returns the per-connection user value.
-func (t *Transport) Context() any { return t.under.Context() }
-
 // PauseReading stops plaintext delivery and drops read interest on the
 // socket. Ciphertext already received stays buffered until ResumeReading.
 func (t *Transport) PauseReading() {

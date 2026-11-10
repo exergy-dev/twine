@@ -15,7 +15,6 @@ type fakeTransport struct {
 	writes  int
 	aborted bool
 	closing bool
-	ctx     any
 }
 
 var _ twine.Transport = (*fakeTransport)(nil)
@@ -47,8 +46,6 @@ func (f *fakeTransport) RemoteAddr() net.Addr                  { return &net.TCP
 func (f *fakeTransport) LocalAddr() net.Addr                   { return &net.TCPAddr{} }
 func (f *fakeTransport) Loop() *twine.Loop                     { return nil }
 func (f *fakeTransport) SetIdleTimeout(time.Duration)          {}
-func (f *fakeTransport) SetContext(v any)                      { f.ctx = v }
-func (f *fakeTransport) Context() any                          { return f.ctx }
 func (f *fakeTransport) PauseReading()                         {}
 func (f *fakeTransport) ResumeReading()                        {}
 func (f *fakeTransport) RegisterProducer(twine.Producer, bool) {}

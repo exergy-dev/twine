@@ -179,8 +179,6 @@ type Transport interface {
 	LocalAddr() net.Addr
 	Loop() *Loop
 	SetIdleTimeout(d time.Duration)
-	SetContext(v any)
-	Context() any
 	PauseReading()
 	ResumeReading()
 	PendingWrite() int
@@ -415,7 +413,6 @@ type Transport struct {
 }
 func (t *Transport) Abort()
 func (t *Transport) ConnectionState() tls.ConnectionState
-func (t *Transport) Context() any
 func (t *Transport) KernelOffload() (tx, rx bool)
 func (t *Transport) LocalAddr() net.Addr
 func (t *Transport) Loop() *twine.Loop
@@ -425,7 +422,6 @@ func (t *Transport) PendingWrite() int
 func (t *Transport) RegisterProducer(p twine.Producer, streaming bool)
 func (t *Transport) RemoteAddr() net.Addr
 func (t *Transport) ResumeReading()
-func (t *Transport) SetContext(v any)
 func (t *Transport) SetIdleTimeout(d time.Duration)
 func (t *Transport) Underlying() twine.Transport
 func (t *Transport) UnregisterProducer()

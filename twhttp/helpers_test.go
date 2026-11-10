@@ -21,7 +21,6 @@ type fakeTransport struct {
 	aborted bool
 	paused  bool
 	idle    time.Duration
-	ctx     any
 }
 
 var (
@@ -42,8 +41,6 @@ func (f *fakeTransport) RemoteAddr() net.Addr                  { return fakePeer
 func (f *fakeTransport) LocalAddr() net.Addr                   { return fakeHost }
 func (f *fakeTransport) Loop() *twine.Loop                     { return f.loop }
 func (f *fakeTransport) SetIdleTimeout(d time.Duration)        { f.idle = d }
-func (f *fakeTransport) SetContext(v any)                      { f.ctx = v }
-func (f *fakeTransport) Context() any                          { return f.ctx }
 func (f *fakeTransport) PauseReading()                         { f.paused = true }
 func (f *fakeTransport) ResumeReading()                        { f.paused = false }
 func (f *fakeTransport) RegisterProducer(twine.Producer, bool) {}

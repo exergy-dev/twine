@@ -48,8 +48,8 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - http: a status below 200 is sent as 500; response headers with an
   invalid name are dropped; HEAD responses with an empty body carry no
   Content-Length; canned error responses carry Date and Server.
-- http: `RequestCtx.SetUserValue` and `UserValue` are removed; use
-  `Transport.SetContext` for per-connection state.
+- http: `RequestCtx.SetUserValue` and `UserValue` are removed; keep
+  per-connection state in your own Protocol struct.
 - `Any` with no inputs rejects with `ErrNoFutures` (it rejected with
   `ErrLoopStopped`). A second `Engine.Run`, including one after a completed
   run, returns `ErrRunTwice` (a run after a completed run returned nil).
