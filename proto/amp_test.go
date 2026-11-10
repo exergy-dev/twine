@@ -162,11 +162,11 @@ func TestAMPFramingLimits(t *testing.T) {
 	ft := newFake()
 	a.ConnectionMade(ft)
 	feed(a, twistedBox("_command", "x", "big", string(make([]byte, 100))))
-	if !ft.aborted || !errors.Is(a.Err(), twine.ErrFrameTooLarge) {
+	if !ft.aborted || !errors.Is(a.Err(), ErrFrameTooLarge) {
 		t.Fatalf("aborted %v err %v", ft.aborted, a.Err())
 	}
 	a.ConnectionLost(nil)
-	if !errors.Is(lost, twine.ErrFrameTooLarge) {
+	if !errors.Is(lost, ErrFrameTooLarge) {
 		t.Fatalf("lost %v", lost)
 	}
 }

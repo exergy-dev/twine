@@ -437,12 +437,6 @@ func (t *Transport) ConnectionState() tls.ConnectionState {
 // syscall.EIO. The mode is fixed when inner.ConnectionMade is called.
 func (t *Transport) KernelOffload() (tx, rx bool) { return t.offloaded, t.rxOffloaded }
 
-// KernelOffloaded reports whether kTLS offload of outgoing data (tx) is in
-// use.
-//
-// Deprecated: Use KernelOffload, which also reports the receive direction.
-func (t *Transport) KernelOffloaded() bool { return t.offloaded }
-
 // Underlying returns the raw (ciphertext) transport. Writing to it directly
 // corrupts the TLS stream; it is exposed for socket-level inspection and
 // metrics.

@@ -14,13 +14,6 @@ var (
 	// MetricsSnapshot.WriteAfterClose.
 	ErrClosed = errors.New("twine: transport closed")
 
-	// ErrLoopStopped reports work aimed at a loop that has exited. The core
-	// itself reports ErrEngineStopped for ConnectTCP, Dial, DeferToThread
-	// and Listen after Stop, and CallFromThread on an exited loop drops the
-	// function (counted in MetricsSnapshot.BacklogDrops); protocol libraries
-	// such as proto treat the two errors alike.
-	ErrLoopStopped = errors.New("twine: loop stopped")
-
 	// ErrWriteBufferFull aborts a connection whose pending writes exceed
 	// WriteBufferLimit.
 	ErrWriteBufferFull = errors.New("twine: write buffer full")
@@ -51,14 +44,6 @@ var (
 	// ErrRunTwice is returned by a second call to Engine.Run while the first
 	// is running or after it has returned. An Engine runs once.
 	ErrRunTwice = errors.New("twine: Engine.Run called twice")
-
-	// ErrLineTooLong aborts a LineReceiver connection whose line exceeds
-	// MaxLineLength.
-	ErrLineTooLong = errors.New("twine: line too long")
-
-	// ErrFrameTooLarge aborts a framing connection whose frame exceeds the
-	// configured maximum.
-	ErrFrameTooLarge = errors.New("twine: frame too large")
 
 	// ErrConnectionReset is passed to ConnectionLost when the peer resets the
 	// connection (ECONNRESET / EPIPE).

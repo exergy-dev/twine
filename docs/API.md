@@ -8,7 +8,6 @@ The API may change before v1.0.0; CHANGELOG.md records what changed.
 ```
 var (
 	ErrClosed = errors.New("twine: transport closed")
-	ErrLoopStopped = errors.New("twine: loop stopped")
 	ErrWriteBufferFull = errors.New("twine: write buffer full")
 	ErrAwaitOnLoop = errors.New("twine: Future.Await called on its own loop")
 	ErrIdleTimeout = errors.New("twine: idle timeout")
@@ -17,8 +16,6 @@ var (
 	ErrNilProtocol = errors.New("twine: factory returned a nil Protocol")
 	ErrNoFutures = errors.New("twine: Any called with no Futures")
 	ErrRunTwice = errors.New("twine: Engine.Run called twice")
-	ErrLineTooLong = errors.New("twine: line too long")
-	ErrFrameTooLarge = errors.New("twine: frame too large")
 	ErrConnectionReset = errors.New("twine: connection reset by peer")
 	ErrNotInLoop = errors.New("twine: method called off its owning loop")
 	ErrShutdown = errors.New("twine: engine shutdown")
@@ -220,8 +217,8 @@ var (
 	ErrBadArgs = errors.New("proto: invalid AMP arguments")
 )
 var (
-	ErrLineTooLong = twine.ErrLineTooLong
-	ErrFrameTooLarge = twine.ErrFrameTooLarge
+	ErrLineTooLong = errors.New("proto: line too long")
+	ErrFrameTooLarge = errors.New("proto: frame too large")
 	ErrMalformedNetstring = errors.New("proto: malformed netstring")
 	ErrMalformedFrame = errors.New("proto: malformed length-prefixed frame")
 )
@@ -420,7 +417,6 @@ func (t *Transport) Abort()
 func (t *Transport) ConnectionState() tls.ConnectionState
 func (t *Transport) Context() any
 func (t *Transport) KernelOffload() (tx, rx bool)
-func (t *Transport) KernelOffloaded() bool
 func (t *Transport) LocalAddr() net.Addr
 func (t *Transport) Loop() *twine.Loop
 func (t *Transport) LoseConnection()

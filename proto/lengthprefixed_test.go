@@ -5,8 +5,6 @@ import (
 	"errors"
 	"math/rand/v2"
 	"testing"
-
-	"github.com/exergy-dev/twine"
 )
 
 func newLP(lp *LengthPrefixed) (*fakeTransport, *collector) {
@@ -73,11 +71,11 @@ func TestLengthPrefixedLimits(t *testing.T) {
 	lp := &LengthPrefixed{MaxFrame: 3, OnConnectionLost: func(err error) { lost = err }}
 	ft, c := newLP(lp)
 	feed(lp, []byte{0, 0, 0, 3, 'a', 'b', 'c', 0, 0, 0, 4, 'x'}, 1)
-	if len(c.frames) != 1 || !ft.aborted || !errors.Is(lp.Err(), twine.ErrFrameTooLarge) {
+	if len(c.frames) != 1 || !ft.aborted || !errors.Is(lp.Err(), ErrFrameTooLarge) {
 		t.Fatalf("frames %q aborted %v err %v", c.frames, ft.aborted, lp.Err())
 	}
 	lp.ConnectionLost(nil)
-	if !errors.Is(lost, twine.ErrFrameTooLarge) {
+	if !errors.Is(lost, ErrFrameTooLarge) {
 		t.Fatalf("OnConnectionLost got %v", lost)
 	}
 
@@ -90,7 +88,7 @@ func TestLengthPrefixedLimits(t *testing.T) {
 
 	lp = &LengthPrefixed{PrefixLen: 1}
 	ft, _ = newLP(lp)
-	if err := lp.SendFrame(make([]byte, 256)); !errors.Is(err, twine.ErrFrameTooLarge) || len(ft.out) != 0 {
+	if err := lp.SendFrame(make([]byte, 256)); !errors.Is(err, ErrFrameTooLarge) || len(ft.out) != 0 {
 		t.Fatalf("oversized SendFrame: %v, wrote %d", err, len(ft.out))
 	}
 	if err := lp.SendFrame(make([]byte, 255)); err != nil {

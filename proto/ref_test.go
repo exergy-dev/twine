@@ -3,8 +3,6 @@ package proto
 import (
 	"bytes"
 	"encoding/binary"
-
-	"github.com/exergy-dev/twine"
 )
 
 // Reference decoders: deliberately naive whole-buffer implementations of the
@@ -20,13 +18,13 @@ func refLines(data, d []byte, max int) ([][]byte, error) {
 			break
 		}
 		if i > max {
-			return out, twine.ErrLineTooLong
+			return out, ErrLineTooLong
 		}
 		out = append(out, data[:i])
 		data = data[i+len(d):]
 	}
 	if len(data) > max+len(d)-1 {
-		return out, twine.ErrLineTooLong
+		return out, ErrLineTooLong
 	}
 	return out, nil
 }
@@ -43,7 +41,7 @@ func refNetstrings(data []byte, max int) ([][]byte, error) {
 			}
 			n = n*10 + int(data[i]-'0')
 			if n > max {
-				return out, twine.ErrFrameTooLarge
+				return out, ErrFrameTooLarge
 			}
 			i++
 		}
@@ -93,7 +91,7 @@ func refFrames(data []byte, prefix int, le, incl bool, max int) ([][]byte, error
 			n -= uint64(prefix)
 		}
 		if n > uint64(max) {
-			return out, twine.ErrFrameTooLarge
+			return out, ErrFrameTooLarge
 		}
 		data = data[prefix:]
 		if uint64(len(data)) < n {

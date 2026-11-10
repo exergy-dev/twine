@@ -120,7 +120,7 @@ func TestLineReceiverEchoIntegration(t *testing.T) {
 	}
 	select {
 	case err := <-lost:
-		if !errors.Is(err, twine.ErrLineTooLong) {
+		if !errors.Is(err, ErrLineTooLong) {
 			t.Fatalf("ConnectionLost(%v), want ErrLineTooLong", err)
 		}
 	case <-time.After(5 * time.Second):

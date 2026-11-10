@@ -238,7 +238,7 @@ func (rc *ReconnectingClient) connect() {
 		}
 		rc.inFlight = false
 		rc.setLastErr(err)
-		if rc.stopping || errors.Is(err, twine.ErrEngineStopped) || errors.Is(err, twine.ErrLoopStopped) {
+		if rc.stopping || errors.Is(err, twine.ErrEngineStopped) {
 			rc.giveUpWith(err)
 			return
 		}

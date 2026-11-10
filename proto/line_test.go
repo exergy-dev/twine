@@ -83,12 +83,12 @@ func TestLineReceiverMaxLength(t *testing.T) {
 	if len(c.frames) != 1 || string(c.frames[0]) != "1234" {
 		t.Fatalf("frames %q", c.frames)
 	}
-	if !ft.aborted || !errors.Is(lr.Err(), twine.ErrLineTooLong) {
+	if !ft.aborted || !errors.Is(lr.Err(), ErrLineTooLong) {
 		t.Fatalf("aborted %v err %v", ft.aborted, lr.Err())
 	}
 	// The core reports nil after Abort; the receiver substitutes its error.
 	lr.ConnectionLost(nil)
-	if !errors.Is(lost, twine.ErrLineTooLong) {
+	if !errors.Is(lost, ErrLineTooLong) {
 		t.Fatalf("OnConnectionLost got %v", lost)
 	}
 	feed(lr, []byte("x\r\n"))
@@ -106,7 +106,7 @@ func TestLineReceiverEndlessPartial(t *testing.T) {
 		t.Fatal("aborted at max+len(delim)-1")
 	}
 	feed(lr, []byte("x"))
-	if !ft.aborted || !errors.Is(lr.Err(), twine.ErrLineTooLong) {
+	if !ft.aborted || !errors.Is(lr.Err(), ErrLineTooLong) {
 		t.Fatalf("aborted %v err %v", ft.aborted, lr.Err())
 	}
 }
@@ -213,7 +213,7 @@ func TestLineReceiverReleasesLargeBuffer(t *testing.T) {
 }
 
 func TestErrorAliases(t *testing.T) {
-	if !errors.Is(ErrLineTooLong, twine.ErrLineTooLong) || !errors.Is(ErrFrameTooLarge, twine.ErrFrameTooLarge) {
+	if !errors.Is(ErrLineTooLong, ErrLineTooLong) || !errors.Is(ErrFrameTooLarge, ErrFrameTooLarge) {
 		t.Fatal("proto framing errors are not the twine ones")
 	}
 }
