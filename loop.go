@@ -97,6 +97,7 @@ type Loop struct {
 	lastCb        *conn
 	wdNs          int64
 	slowNs        atomic.Int64
+	slowEndNs     atomic.Int64 // when the span in slowNs ended (loop clock)
 	slowProto     atomic.Pointer[conn]
 	slowMulti     atomic.Bool
 }
@@ -522,6 +523,7 @@ func (l *Loop) noteSlowDispatch(d int64) {
 	if d <= l.slowNs.Load() {
 		return
 	}
+	l.slowEndNs.Store(l.nowNs)
 	l.slowNs.Store(d)
 	l.slowMulti.Store(l.dispatchCbs != 1)
 	l.slowProto.Store(l.lastCb)

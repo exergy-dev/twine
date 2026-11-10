@@ -44,6 +44,10 @@ func (e *Engine) watchdog() {
 	defer timer.Stop()
 	lastReport := make([]time.Time, len(e.loops))
 	lastIter := make([]uint64, len(e.loops))
+	// sampledAt is, per loop, when the sampler last reported a callback it
+	// caught running (loop clock): the span that callback ends up in is
+	// already reported and must not be reported again when it completes.
+	sampledAt := make([]time.Duration, len(e.loops))
 	for {
 		select {
 		case <-e.doneCh:
@@ -64,9 +68,13 @@ func (e *Engine) watchdog() {
 				// A dispatch that already finished, measured by the loop. While
 				// the per-loop rate limit is active the value stays put (the
 				// loop keeps the maximum), so it is reported at a later sample
-				// rather than lost.
+				// rather than lost. A span that contains the callback the
+				// sampler already reported while it ran is dropped instead.
 				idle = false
-				if now.Sub(lastReport[i]) >= time.Second && l.slowNs.CompareAndSwap(d, 0) {
+				end := time.Duration(l.slowEndNs.Load())
+				if end-time.Duration(d) <= sampledAt[i] {
+					l.slowNs.CompareAndSwap(d, 0)
+				} else if now.Sub(lastReport[i]) >= time.Second && l.slowNs.CompareAndSwap(d, 0) {
 					lastReport[i] = now
 					l.metrics.slowCallbacks.Add(1)
 					proto := "<task>"
@@ -90,6 +98,7 @@ func (e *Engine) watchdog() {
 				continue
 			}
 			lastReport[i] = now
+			sampledAt[i] = time.Since(l.epoch)
 			l.metrics.slowCallbacks.Add(1)
 			proto := "<none>"
 			if c := l.cbProto.Load(); c != nil {
