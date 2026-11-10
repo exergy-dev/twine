@@ -17,3 +17,7 @@ updates:
       - /bench
     schedule:
       interval: weekly
+    ignore:
+      # Same reason as the root module: the bench module must build with the
+      # Go 1.24 that CI tests, and newer x/sys releases require a newer Go.
+      - dependency-name: golang.org/x/sys
