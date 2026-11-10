@@ -130,6 +130,11 @@ v1.0.0, minor releases may break the API; every break is listed here.
   `TCPNoDelay`) instead of silently ignoring it.
 - `docs/API.md` now lists interface methods, struct fields, constants and
   variables, and CI fails when it is stale.
+- The README teaches the API directly: after the echo server it shows a
+  client, a timer, blocking work, an HTTP server and a TLS listener, each a
+  compiled Example, then the ownership rules and the package table. The
+  Twisted-to-Twine table moved to `docs/TWISTED.md`, GC tuning to
+  `BENCHMARKS.md`, and the make-target list lives in `CONTRIBUTING.md`.
 - The design document and build log moved to `docs/history/`;
   `BENCHMARKS.md` keeps only current results.
 - CI tests Go 1.24, oldstable and stable on Linux and macOS, runs the

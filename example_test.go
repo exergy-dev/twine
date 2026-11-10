@@ -1,6 +1,7 @@
 package twine_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -152,4 +153,118 @@ func ExampleBlocking() {
 	}
 	fmt.Println(string(reply))
 	// Output: QUIET PLEASE
+}
+
+// The README's client snippet. printer and dial are shown there verbatim
+// (readme_test.go checks that); the Example below runs them against an echo
+// server whose ConnectionLost stops the engine.
+
+type printer struct{ t twine.Transport }
+
+func (p *printer) ConnectionMade(t twine.Transport) { p.t = t }
+func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.LoseConnection() }
+func (p *printer) ConnectionLost(error)             {}
+
+func dial(eng *twine.Engine, addr string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	t, err := eng.Dial(addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &printer{} })).Await(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	t.Loop().CallFromThread(func() { t.Write([]byte("hello\n")) }) // Transport methods run on its loop
+}
+
+// stopOnLost is an echo server that stops the engine when its one client
+// hangs up.
+type stopOnLost struct {
+	echo
+	eng *twine.Engine
+}
+
+func (s *stopOnLost) ConnectionLost(error) { s.eng.Stop() }
+
+// A client program: Await is called from main (never from the loop), and the
+// Transport it returns is used through its loop.
+func ExampleEngine_Dial_await() {
+	eng := twine.New(twine.Loops(2))
+	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol {
+		return &stopOnLost{eng: eng}
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	wait := run(eng)
+
+	dial(eng, lst.Addr().String())
+	wait()
+	// Output: reply: hello
+}
+
+// The README's timer snippet.
+
+// after runs fn on loop once d has passed. CallLater is loop-only, so another
+// goroutine enters the loop through CallFromThread first.
+func after(loop *twine.Loop, d time.Duration, fn func()) {
+	loop.CallFromThread(func() { loop.CallLater(d, fn) })
+}
+
+// A timer armed from another goroutine.
+func ExampleLoop_CallLater_fromAnotherGoroutine() {
+	eng := twine.New(twine.Loops(1))
+	wait := run(eng)
+
+	loop := eng.Loops()[0]
+	after(loop, 10*time.Millisecond, func() {
+		fmt.Println("fired on the loop:", loop.InLoop())
+		eng.Stop()
+	})
+	wait()
+	// Output: fired on the loop: true
+}
+
+// The README's blocking-work snippet.
+
+type resolver struct{ t twine.Transport }
+
+func (r *resolver) ConnectionMade(t twine.Transport) { r.t = t }
+func (r *resolver) ConnectionLost(error)             {}
+
+// The lookup blocks, so it runs on the worker pool and answers on the loop.
+func (r *resolver) DataReceived(b []byte) {
+	host := strings.TrimSpace(string(b))
+	lookup := func() ([]string, error) { return net.LookupHost(host) }
+	twine.DeferToThread(r.t.Loop(), lookup).Then(func(addrs []string) {
+		r.t.Write([]byte(strings.Join(addrs, " ") + "\n"))
+	}).Catch(func(err error) {
+		r.t.Write([]byte(err.Error() + "\n"))
+	})
+}
+
+// A protocol that hands blocking work to the worker pool. The client asks for
+// an IP literal, which the resolver answers without a network lookup.
+func ExampleDeferToThread_resolver() {
+	eng := twine.New(twine.Loops(1))
+	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &resolver{} }))
+	if err != nil {
+		log.Fatal(err)
+	}
+	wait := run(eng)
+	defer wait()
+	defer eng.Stop()
+
+	c, err := net.Dial("tcp", lst.Addr().String())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Write([]byte("127.0.0.1\n")); err != nil {
+		log.Fatal(err)
+	}
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(line)
+	// Output: 127.0.0.1
 }
