@@ -131,6 +131,9 @@ func minAllocsPerRun(runs int, fn func()) float64 {
 // The measurement runs on the loop goroutine, with nothing else allocating
 // (AllocsPerRun counts process-wide).
 func TestRecordWriteAllocs(t *testing.T) {
+	if raceEnabled {
+		t.Skip("allocation counts are not stable under the race detector")
+	}
 	r := newRecordRig(t)
 	payload := bytes.Repeat([]byte("w"), recordPayload)
 	var allocs float64
@@ -146,6 +149,9 @@ func TestRecordWriteAllocs(t *testing.T) {
 // allocates at most maxReadAllocs (crypto/tls itself allocates in Conn.Read
 // before Go 1.27).
 func TestRecordReadAllocs(t *testing.T) {
+	if raceEnabled {
+		t.Skip("allocation counts are not stable under the race detector")
+	}
 	r := newRecordRig(t)
 	const runs = 50
 	// Each AllocsPerRun attempt consumes runs+1 records (one warm-up run).
