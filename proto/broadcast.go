@@ -41,11 +41,6 @@ type bgroup struct {
 	scratch []twine.Transport
 }
 
-// NewBroadcast returns an empty group; it is equivalent to new(Broadcast).
-func NewBroadcast() *Broadcast {
-	return &Broadcast{groups: make(map[*twine.Loop]*bgroup)}
-}
-
 // Add adds t to the group. Adding a member twice is a no-op.
 func (b *Broadcast) Add(t twine.Transport) {
 	l := t.Loop()

@@ -22,7 +22,7 @@ type member struct {
 func TestBroadcast(t *testing.T) {
 	loops := max(2, runtime.GOMAXPROCS(0))
 	e := startEngine(t, loops)
-	b := NewBroadcast()
+	b := &Broadcast{}
 	var forgetMu sync.Mutex
 	forgetPeer := "" // this member closes without calling Remove
 	lst, err := e.ListenTCP("127.0.0.1:0", func(peer net.Addr) twine.Protocol {
@@ -108,7 +108,7 @@ func TestBroadcast(t *testing.T) {
 }
 
 func TestBroadcastMembership(t *testing.T) {
-	b := NewBroadcast()
+	b := &Broadcast{}
 	f1, f2 := newFake(), newFake()
 	b.Add(f1)
 	b.Add(f2)

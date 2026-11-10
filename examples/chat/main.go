@@ -104,7 +104,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	room := proto.NewBroadcast()
+	room := &proto.Broadcast{} // the zero value is an empty group
 	eng := twine.New(twine.Loops(*loops))
 	lst, err := eng.ListenTCP(*addr, newClient(room))
 	if err != nil {

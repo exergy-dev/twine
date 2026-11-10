@@ -240,7 +240,6 @@ type Args map[string]string
 type Broadcast struct {
 	// Has unexported fields.
 }
-func NewBroadcast() *Broadcast
 func (b *Broadcast) Add(t twine.Transport)
 func (b *Broadcast) Len() int
 func (b *Broadcast) Remove(t twine.Transport)
