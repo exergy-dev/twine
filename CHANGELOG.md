@@ -120,6 +120,9 @@ v1.0.0, minor releases may break the API; every break is listed here.
   `CallLater(0, fn)` is the cheaper way to defer work.
 - kTLS offload covers TLS 1.3 AES-GCM only; ChaCha20-Poly1305 connections
   stay on the memory BIO.
+- `Engine.ListenUDP` returns an error naming the option when given a
+  TCP-only `ListenOption` (`Backlog`, `DeferAccept`, `BusyPoll`,
+  `TCPNoDelay`) instead of silently ignoring it.
 - `docs/API.md` now lists interface methods, struct fields, constants and
   variables, and CI fails when it is stale.
 - The design document and build log moved to `docs/history/`;

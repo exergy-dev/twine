@@ -232,7 +232,9 @@ func (e *Engine) ListenTCP(addr string, f Factory, opts ...ListenOption) (Listen
 	return lst, nil
 }
 
-// ListenUDP binds a UDP socket on one loop and delivers datagrams to p.
+// ListenUDP binds a UDP socket on one loop and delivers datagrams to p. Of
+// the ListenOptions only SocketBuffers applies to UDP; a TCP-only option
+// (Backlog, DeferAccept, BusyPoll or TCPNoDelay) is an error that names it.
 func (e *Engine) ListenUDP(addr string, p DatagramProtocol, opts ...ListenOption) (Listener, error) {
 	if e.stopped() {
 		return nil, ErrEngineStopped
@@ -240,6 +242,9 @@ func (e *Engine) ListenUDP(addr string, p DatagramProtocol, opts ...ListenOption
 	lc := defaultListenConfig()
 	for _, o := range opts {
 		o(&lc)
+	}
+	if lc.tcpOnly != "" {
+		return nil, fmt.Errorf("twine: ListenUDP: %s is a TCP-only ListenOption", lc.tcpOnly)
 	}
 	lst, err := e.newUDPListener(addr, p, lc)
 	if err != nil {
