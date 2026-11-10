@@ -297,8 +297,12 @@ func TestWatchdogIdleBackoff(t *testing.T) {
 	busy := e.wdSamples.Load() - s1
 	close(stop)
 	t.Logf("%d watchdog samples in 200ms busy", busy)
-	if busy < 50 {
-		t.Errorf("%d watchdog samples in 200ms on a busy loop; want about 200", busy)
+	// Under load (a timer keeping a loop iterating) the sampler is back at
+	// its 1 ms base: about 200 samples in 200 ms here, but a shared macOS
+	// runner has delivered as few as 44, so the bound only has to separate
+	// "busy" from the idle rate (about 4 samples in 200 ms).
+	if busy < 20 {
+		t.Errorf("%d watchdog samples in 200ms on a busy loop; want well above the idle rate of ~4", busy)
 	}
 }
 
