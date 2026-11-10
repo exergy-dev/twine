@@ -159,12 +159,10 @@ func (rc *ReconnectingClient) Start() {
 	rc.onLoop(func() {
 		if !rc.hooked {
 			rc.hooked = true
-			if e := rc.loop.Engine(); e != nil {
-				// Hooks run on the Run goroutine before the loops are told
-				// to shut down, so this task runs before any connection is
-				// closed.
-				e.OnShutdown(func() { rc.loop.CallFromThread(rc.engineStopping) })
-			}
+			// Hooks run on the Run goroutine before the loops are told to
+			// shut down, so this task runs before any connection is closed.
+			// (Every Loop belongs to an Engine; Engine() is never nil.)
+			rc.loop.Engine().OnShutdown(func() { rc.loop.CallFromThread(rc.engineStopping) })
 		}
 		if rc.stopping || (rc.started && !rc.stopped) {
 			return

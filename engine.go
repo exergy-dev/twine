@@ -18,12 +18,16 @@ type Engine struct {
 	listeners     []*listener
 	shutdownHooks []func()
 	state         atomic.Int32
-	ran           atomic.Bool   // Run got past its start (ErrRunTwice from then on)
-	wdSamples     atomic.Uint64 // watchdog samples taken (tests)
-	next          atomic.Uint32 // NextLoop: outbound connections, UDP sockets
-	acceptNext    atomic.Uint32 // acceptLoop: single-listener accept hand-off
-	stopCh        chan struct{}
-	doneCh        chan struct{}
+	ran           atomic.Bool // Run got past its start (ErrRunTwice from then on)
+	// wdSamples counts watchdog samples. Only TestWatchdogIdleBackoff reads
+	// it, but it stays a plain counter: the one Add per sample runs on the
+	// watchdog goroutine at most 1000 times a second, never on a loop, and
+	// a test-only hook would cost the same nil check for less clarity.
+	wdSamples  atomic.Uint64
+	next       atomic.Uint32 // NextLoop: outbound connections, UDP sockets
+	acceptNext atomic.Uint32 // acceptLoop: single-listener accept hand-off
+	stopCh     chan struct{}
+	doneCh     chan struct{}
 }
 
 const (
