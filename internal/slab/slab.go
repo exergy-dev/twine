@@ -25,11 +25,15 @@ const (
 	MaxClass = 256 << 10
 )
 
-// Classes are the slab sizes, ascending. Read-only.
-var Classes = [...]int{class4K, class16K, class64K, MaxClass}
+// classes are the slab sizes, ascending; Classes returns a copy.
+var classes = [...]int{class4K, class16K, class64K, MaxClass}
 
 // numClasses is the number of size classes.
-const numClasses = len(Classes)
+const numClasses = len(classes)
+
+// Classes returns the slab sizes, ascending. The array is a copy, so callers
+// cannot change the allocator's classes.
+func Classes() [numClasses]int { return classes }
 
 // initialFreeSlots is the preallocated capacity of each class free list.
 const initialFreeSlots = 64
@@ -108,9 +112,9 @@ func (a *Allocator) Get(n int) []byte {
 		return b
 	}
 	a.misses++
-	a.inUse += Classes[i]
+	a.inUse += classes[i]
 	a.noteHighWater()
-	return make([]byte, Classes[i])
+	return make([]byte, classes[i])
 }
 
 // Put returns b (identified by cap) to its class free list. Slices whose cap

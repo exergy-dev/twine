@@ -135,7 +135,7 @@ func (r *Ring) grow(need int) *segment {
 // nextClass returns the class one step above size, or the largest class if
 // size is already the largest.
 func nextClass(size int) int {
-	cs := slab.Classes
+	cs := slab.Classes()
 	for i := 0; i < len(cs)-1; i++ {
 		if size <= cs[i] {
 			return cs[i+1]

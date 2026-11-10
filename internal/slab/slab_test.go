@@ -74,11 +74,11 @@ func TestReuseAndStats(t *testing.T) {
 func TestZeroAlloc(t *testing.T) {
 	a := New()
 	// Warm every class so the free lists are non-empty.
-	for _, c := range Classes {
+	for _, c := range classes {
 		a.Put(a.Get(c))
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		for _, c := range Classes {
+		for _, c := range classes {
 			a.Put(a.Get(c))
 		}
 	})
@@ -142,7 +142,7 @@ func TestQuickAccounting(t *testing.T) {
 			free := 0
 			for i, fl := range a.free {
 				for _, b := range fl {
-					if len(b) != Classes[i] {
+					if len(b) != classes[i] {
 						return false
 					}
 					free += len(b)
