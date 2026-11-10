@@ -130,6 +130,12 @@ func Listen(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, 
 	return e.ListenTCP(addr, f.build, f.opts.listenOpts...)
 }
 
+// Dial is Connect on a loop of e chosen with e.NextLoop: the usual way to
+// open an outbound TLS connection when no particular loop is wanted.
+func Dial(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport] {
+	return Connect(e.NextLoop(), addr, cfg, inner, opts...)
+}
+
 // Connect dials addr from loop l and runs a TLS client handshake. The Future
 // resolves with the *Transport (as a twine.Transport) after the handshake has
 // completed and inner.ConnectionMade has returned; it rejects with the dial

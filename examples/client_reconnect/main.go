@@ -50,7 +50,7 @@ func main() {
 	defer stop()
 
 	eng := twine.New(twine.Loops(1))
-	rc := proto.NewReconnectingClient(eng.NextLoop(), *addr, newLineClient,
+	rc := proto.NewReconnectingClient(eng, *addr, newLineClient,
 		proto.InitialDelay(*initial),
 		proto.MaxDelay(*maxDelay),
 		proto.MaxRetries(*retries),

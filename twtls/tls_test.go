@@ -817,7 +817,7 @@ func TestClientDialError(t *testing.T) {
 	e := startEngine(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err = twtls.Connect(e.NextLoop(), addr, &tls.Config{InsecureSkipVerify: true}, echoFactory()).Await(ctx)
+	_, err = twtls.Dial(e, addr, &tls.Config{InsecureSkipVerify: true}, echoFactory()).Await(ctx)
 	if err == nil {
 		t.Fatal("Connect to closed port succeeded")
 	}

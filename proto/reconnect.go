@@ -74,8 +74,8 @@ func DialOptions(opts ...twine.DialOption) ReconnectOption {
 // consecutive retry waits a uniformly random time in [0, min(MaxDelay,
 // InitialDelay*Factor^(n-1))].
 //
-// Pass eng.NextLoop() as the loop unless the connection must share a loop
-// with other state. The wrapped Factory builds the protocol for every
+// The client lives on one loop of its Engine, picked with NextLoop when it
+// is created. The wrapped Factory builds the protocol for every
 // successful connect; wrap it with twtls.Client (package
 // github.com/exergy-dev/twine/twtls) to get a reconnecting TLS client. The
 // client interposes a thin wrapper protocol to observe the connection's
@@ -117,11 +117,11 @@ type ReconnectingClient struct {
 	lastErr   atomic.Pointer[error]
 }
 
-// NewReconnectingClient returns a client that will connect to addr on l
-// using f. Call Start to begin.
-func NewReconnectingClient(l *twine.Loop, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient {
+// NewReconnectingClient returns a client that will connect to addr using f,
+// on a loop of e chosen once with e.NextLoop. Call Start to begin.
+func NewReconnectingClient(e *twine.Engine, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient {
 	rc := &ReconnectingClient{
-		loop:    l,
+		loop:    e.NextLoop(),
 		addr:    addr,
 		factory: f,
 		initial: DefaultInitialDelay,

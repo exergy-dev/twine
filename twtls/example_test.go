@@ -62,9 +62,10 @@ func ExampleServer() {
 	log.Fatal(eng.Run(context.Background()))
 }
 
-// Connect dials, completes the handshake, and resolves with the TLS
-// Transport once the inner protocol's ConnectionMade has run.
-func ExampleConnect() {
+// Dial dials from one of the engine's loops, completes the handshake, and
+// resolves with the TLS Transport once the inner protocol's ConnectionMade
+// has run. Connect does the same on a loop of your choice.
+func ExampleDial() {
 	eng := twine.New()
 	go func() { _ = eng.Run(context.Background()) }()
 	defer eng.Stop()
@@ -72,7 +73,7 @@ func ExampleConnect() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// ServerName defaults to the host part of the address.
-	t, err := twtls.Connect(eng.NextLoop(), "example.com:443", &tls.Config{},
+	t, err := twtls.Dial(eng, "example.com:443", &tls.Config{},
 		func(net.Addr) twine.Protocol { return &lineEcho{} }).Await(ctx)
 	if err != nil {
 		log.Fatal(err) // a dial error or a *twtls.HandshakeError

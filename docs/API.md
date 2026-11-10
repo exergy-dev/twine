@@ -302,7 +302,7 @@ func OnStateChange(fn func(connected bool, err error)) ReconnectOption
 type ReconnectingClient struct {
 	// Has unexported fields.
 }
-func NewReconnectingClient(l *twine.Loop, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient
+func NewReconnectingClient(e *twine.Engine, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient
 func (rc *ReconnectingClient) Attempts() int
 func (rc *ReconnectingClient) Connected() bool
 func (rc *ReconnectingClient) GaveUp() bool
@@ -392,6 +392,7 @@ const DefaultHandshakeTimeout = 10 * time.Second
 var ErrHandshakeTimeout = errors.New("tls: handshake timeout")
 func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
 func Connect(l *twine.Loop, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
+func Dial(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
 func KTLSAvailable() bool
 func Listen(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) (twine.Listener, error)
 func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory

@@ -43,7 +43,7 @@ func TestReconnectingClient(t *testing.T) {
 		c.LineReceived = func(l []byte) { lines <- string(l) }
 		return c
 	}
-	rc := NewReconnectingClient(e.Loops()[0], addr, clientFactory,
+	rc := NewReconnectingClient(e, addr, clientFactory,
 		InitialDelay(10*time.Millisecond), MaxDelay(40*time.Millisecond),
 		DialOptions(twine.DialTimeout(5*time.Second)),
 		OnStateChange(func(up bool, err error) { states <- stateEvent{up, err} }))
@@ -142,7 +142,7 @@ func expectLine(t *testing.T, ch <-chan string, want string) {
 func TestReconnectingClientMaxRetries(t *testing.T) {
 	e := startEngine(t, 1)
 	states := make(chan stateEvent, 8)
-	rc := NewReconnectingClient(e.Loops()[0], freeAddr(t), func(net.Addr) twine.Protocol { return nil },
+	rc := NewReconnectingClient(e, freeAddr(t), func(net.Addr) twine.Protocol { return nil },
 		InitialDelay(time.Millisecond), MaxRetries(3),
 		OnStateChange(func(up bool, err error) { states <- stateEvent{up, err} }))
 	rc.Start()
@@ -184,7 +184,7 @@ func TestReconnectingClientEngineStop(t *testing.T) {
 				defer lst.Close()
 			}
 			states := make(chan stateEvent, 64)
-			rc := NewReconnectingClient(e.Loops()[1], addr, func(net.Addr) twine.Protocol { return &LineReceiver{} },
+			rc := NewReconnectingClient(e, addr, func(net.Addr) twine.Protocol { return &LineReceiver{} },
 				InitialDelay(time.Hour), // a retry would never fire before the test ends
 				OnStateChange(func(up bool, err error) { states <- stateEvent{up, err} }))
 			rc.Start()
@@ -224,7 +224,7 @@ func TestReconnectingClientEngineStop(t *testing.T) {
 
 func TestReconnectingClientResetDelay(t *testing.T) {
 	e := startEngine(t, 1)
-	rc := NewReconnectingClient(e.Loops()[0], freeAddr(t), func(net.Addr) twine.Protocol { return nil },
+	rc := NewReconnectingClient(e, freeAddr(t), func(net.Addr) twine.Protocol { return nil },
 		InitialDelay(time.Millisecond), MaxDelay(time.Millisecond))
 	rc.Start()
 	waitFor(t, "failed retries", func() bool { return rc.Attempts() >= 3 })
@@ -238,7 +238,9 @@ func TestReconnectingClientResetDelay(t *testing.T) {
 }
 
 func TestReconnectingClientBackoff(t *testing.T) {
-	rc := NewReconnectingClient(nil, "127.0.0.1:1", nil,
+	e := twine.New(twine.Loops(1)) // never run; the client only needs a loop to belong to
+	defer e.Stop()
+	rc := NewReconnectingClient(e, "127.0.0.1:1", nil,
 		InitialDelay(100*time.Millisecond), Factor(2), MaxDelay(time.Second))
 	for n, want := range []time.Duration{100, 100, 200, 400, 800, 1000, 1000} {
 		want *= time.Millisecond
@@ -258,7 +260,7 @@ func TestReconnectingClientBackoff(t *testing.T) {
 	if !lo || !hi {
 		t.Fatal("jitter does not span [0, ceiling]")
 	}
-	d := NewReconnectingClient(nil, "", nil)
+	d := NewReconnectingClient(e, "", nil)
 	if d.initial != time.Second || d.max != time.Minute || d.factor != 1.6 {
 		t.Fatalf("defaults %v %v %v", d.initial, d.max, d.factor)
 	}

@@ -152,7 +152,7 @@ func ExampleReconnectingClient() {
 		c.LineReceived = func(line []byte) { log.Printf("recv: %s", line) }
 		return c
 	}
-	rc := proto.NewReconnectingClient(eng.NextLoop(), "127.0.0.1:9001", newClient,
+	rc := proto.NewReconnectingClient(eng, "127.0.0.1:9001", newClient,
 		proto.InitialDelay(500*time.Millisecond),
 		proto.MaxRetries(10),
 		proto.OnStateChange(func(connected bool, err error) {

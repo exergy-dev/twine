@@ -16,7 +16,7 @@
 //	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2", "http/1.1"}}
 //	lst, err := twtls.Listen(eng, ":8443", cfg, myFactory, twtls.OnHandshakeError(logIt))
 //
-//	fut := twtls.Connect(eng.NextLoop(), "example.com:443", &tls.Config{}, clientFactory)
+//	fut := twtls.Dial(eng, "example.com:443", &tls.Config{}, clientFactory)
 //
 // Server and Client wrap any twine.Factory. The inner protocol's
 // ConnectionMade is called only after the handshake has completed, with a
