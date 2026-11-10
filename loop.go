@@ -463,7 +463,11 @@ func (l *Loop) drainTasks() {
 	l.moreTasks = false
 	l.wakePending.Store(false)
 	budget := maxTasksPerIteration
-	for budget > 0 {
+	// Only tasks already queued when the drain starts run now; a task that a
+	// task queues (a self-reposting tick, say) waits for the next iteration,
+	// as the CallFromThread contract promises. Len may miss a concurrent
+	// push, which then also waits; the check below keeps the loop awake.
+	for n := min(l.tasks.Len(), budget); n > 0; n-- {
 		fn, ok := l.tasks.Pop()
 		if !ok {
 			break
@@ -493,7 +497,7 @@ func (l *Loop) drainTasks() {
 			l.runTask(fn)
 		}
 	}
-	if budget == 0 {
+	if budget == 0 || l.tasks.Len() > 0 {
 		l.moreTasks = true
 	}
 }
