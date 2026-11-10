@@ -210,8 +210,10 @@ func TestUDPBatchWriteTo(t *testing.T) {
 			t.Errorf("missing %s", k)
 		}
 	}
-	if sent := e.Loops()[0].Metrics().DatagramsSent; sent < 200 {
-		t.Errorf("DatagramsSent = %d, want >= 200", sent)
+	// The counter is added to after sendmmsg returns, so the client can read
+	// the last datagrams before the loop has counted them.
+	if !waitUntil(2*time.Second, func() bool { return e.Loops()[0].Metrics().DatagramsSent >= 200 }) {
+		t.Errorf("DatagramsSent = %d, want >= 200", e.Loops()[0].Metrics().DatagramsSent)
 	}
 }
 
