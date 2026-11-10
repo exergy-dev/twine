@@ -6,51 +6,32 @@ import (
 	"time"
 )
 
-// LoopMetrics holds per-loop counters. They are updated on the loop without
-// contention and may be read from any goroutine via Snapshot.
-type LoopMetrics struct {
-	// Connections is the number of currently open connections (gauge).
-	Connections atomic.Uint64
-	// Accepts is the number of accepted connections.
-	Accepts atomic.Uint64
-	// Closes is the number of closed connections.
-	Closes atomic.Uint64
-	// Reads is the number of read(2) calls that returned data.
-	Reads atomic.Uint64
-	// ReadBytes is the number of bytes read.
-	ReadBytes atomic.Uint64
-	// WriteBytes is the number of bytes written.
-	WriteBytes atomic.Uint64
-	// Writev is the number of flush writev(2) calls.
-	Writev atomic.Uint64
-	// WriteDirectHit is the number of writes that bypassed the ring.
-	WriteDirectHit atomic.Uint64
-	// WriteAfterClose is the number of writes on closed or stale transports (ErrClosed).
-	WriteAfterClose atomic.Uint64
-	// TimersFired is the number of timers fired.
-	TimersFired atomic.Uint64
-	// TasksRun is the number of CallFromThread tasks run.
-	TasksRun atomic.Uint64
-	// Wakeups is the number of eventfd wakeups issued.
-	Wakeups atomic.Uint64
-	// WakeupsCoalesced is the number of wakeups avoided by coalescing.
-	WakeupsCoalesced atomic.Uint64
-	// Iterations: loop iterations.
-	Iterations atomic.Uint64
-	// PollBlockNanos is the number of nanoseconds spent blocked in poll.
-	PollBlockNanos atomic.Uint64
-	// Panics is the number of recovered panics.
-	Panics atomic.Uint64
-	// BacklogDrops is the number of tasks dropped after loop exit.
-	BacklogDrops atomic.Uint64
-	// AcceptErrors is the number of accept(2) errors.
-	AcceptErrors atomic.Uint64
-	// Datagrams is the number of datagrams received.
-	Datagrams atomic.Uint64
-	// DatagramsSent is the number of datagrams sent.
-	DatagramsSent atomic.Uint64
-	// SlowCallbacks is the number of watchdog reports.
-	SlowCallbacks atomic.Uint64
+// loopMetrics holds a loop's counters. The loop updates them without
+// contention; Loop.Metrics copies them into a MetricsSnapshot from any
+// goroutine. Each counter is documented on the MetricsSnapshot field of the
+// same name.
+type loopMetrics struct {
+	connections      atomic.Uint64
+	accepts          atomic.Uint64
+	closes           atomic.Uint64
+	reads            atomic.Uint64
+	readBytes        atomic.Uint64
+	writeBytes       atomic.Uint64
+	writev           atomic.Uint64
+	writeDirectHit   atomic.Uint64
+	writeAfterClose  atomic.Uint64
+	timersFired      atomic.Uint64
+	tasksRun         atomic.Uint64
+	wakeups          atomic.Uint64
+	wakeupsCoalesced atomic.Uint64
+	iterations       atomic.Uint64
+	pollBlockNanos   atomic.Uint64
+	panics           atomic.Uint64
+	backlogDrops     atomic.Uint64
+	acceptErrors     atomic.Uint64
+	datagrams        atomic.Uint64
+	datagramsSent    atomic.Uint64
+	slowCallbacks    atomic.Uint64
 
 	// Published by the loop at the end of each iteration.
 	slabInUse     atomic.Int64
@@ -60,9 +41,10 @@ type LoopMetrics struct {
 	iterHist histogram
 }
 
-// MetricsSnapshot is a plain copy of LoopMetrics plus derived values.
+// MetricsSnapshot is a point-in-time copy of one loop's counters plus
+// derived values. Counters only grow; gauges are marked as such.
 type MetricsSnapshot struct {
-	// LoopID: index of the loop within its Engine.
+	// LoopID is the index of the loop within its Engine.
 	LoopID int
 	// Connections is the number of currently open connections (gauge).
 	Connections uint64
@@ -90,7 +72,7 @@ type MetricsSnapshot struct {
 	Wakeups uint64
 	// WakeupsCoalesced is the number of wakeups avoided by coalescing.
 	WakeupsCoalesced uint64
-	// Iterations: loop iterations.
+	// Iterations is the number of loop iterations.
 	Iterations uint64
 	// PollBlockNanos is the number of nanoseconds spent blocked in poll.
 	PollBlockNanos uint64
@@ -107,46 +89,47 @@ type MetricsSnapshot struct {
 	// SlowCallbacks is the number of watchdog reports.
 	SlowCallbacks uint64
 
-	// Iteration duration percentiles over the last 10 seconds.
-	// IterationP50: iteration duration p50 over the last 10 s.
+	// IterationP50 is the median loop iteration duration over the last 10
+	// seconds (log2 buckets, so it is an upper bound within a factor of 2).
 	IterationP50 time.Duration
-	// IterationP99: iteration duration p99 over the last 10 s.
+	// IterationP99 is the 99th-percentile loop iteration duration over the
+	// last 10 seconds, with the same resolution as IterationP50.
 	IterationP99 time.Duration
-	// IterationMax: longest iteration over the last 10 s.
+	// IterationMax is the longest loop iteration over the last 10 seconds.
 	IterationMax time.Duration
 
-	// Memory.
-	// SlabInUse: slab bytes handed out to rings.
+	// SlabInUse is the number of slab bytes held by write rings (gauge).
 	SlabInUse int
-	// SlabFree: slab bytes sitting in free lists.
+	// SlabFree is the number of slab bytes sitting in free lists (gauge).
 	SlabFree int
-	// RingHighWater: largest pending-write backlog seen.
+	// RingHighWater is the largest pending-write backlog of any connection
+	// on the loop since it started, in bytes.
 	RingHighWater int
 }
 
-func (m *LoopMetrics) snapshot() MetricsSnapshot {
+func (m *loopMetrics) snapshot() MetricsSnapshot {
 	s := MetricsSnapshot{
-		Connections:      m.Connections.Load(),
-		Accepts:          m.Accepts.Load(),
-		Closes:           m.Closes.Load(),
-		Reads:            m.Reads.Load(),
-		ReadBytes:        m.ReadBytes.Load(),
-		WriteBytes:       m.WriteBytes.Load(),
-		Writev:           m.Writev.Load(),
-		WriteDirectHit:   m.WriteDirectHit.Load(),
-		WriteAfterClose:  m.WriteAfterClose.Load(),
-		TimersFired:      m.TimersFired.Load(),
-		TasksRun:         m.TasksRun.Load(),
-		Wakeups:          m.Wakeups.Load(),
-		WakeupsCoalesced: m.WakeupsCoalesced.Load(),
-		Iterations:       m.Iterations.Load(),
-		PollBlockNanos:   m.PollBlockNanos.Load(),
-		Panics:           m.Panics.Load(),
-		BacklogDrops:     m.BacklogDrops.Load(),
-		AcceptErrors:     m.AcceptErrors.Load(),
-		Datagrams:        m.Datagrams.Load(),
-		DatagramsSent:    m.DatagramsSent.Load(),
-		SlowCallbacks:    m.SlowCallbacks.Load(),
+		Connections:      m.connections.Load(),
+		Accepts:          m.accepts.Load(),
+		Closes:           m.closes.Load(),
+		Reads:            m.reads.Load(),
+		ReadBytes:        m.readBytes.Load(),
+		WriteBytes:       m.writeBytes.Load(),
+		Writev:           m.writev.Load(),
+		WriteDirectHit:   m.writeDirectHit.Load(),
+		WriteAfterClose:  m.writeAfterClose.Load(),
+		TimersFired:      m.timersFired.Load(),
+		TasksRun:         m.tasksRun.Load(),
+		Wakeups:          m.wakeups.Load(),
+		WakeupsCoalesced: m.wakeupsCoalesced.Load(),
+		Iterations:       m.iterations.Load(),
+		PollBlockNanos:   m.pollBlockNanos.Load(),
+		Panics:           m.panics.Load(),
+		BacklogDrops:     m.backlogDrops.Load(),
+		AcceptErrors:     m.acceptErrors.Load(),
+		Datagrams:        m.datagrams.Load(),
+		DatagramsSent:    m.datagramsSent.Load(),
+		SlowCallbacks:    m.slowCallbacks.Load(),
 	}
 	s.IterationP50, s.IterationP99, s.IterationMax = m.iterHist.percentiles()
 	s.SlabInUse = int(m.slabInUse.Load())

@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command loadgen opens N TCP connections to a tunsink/baseline server and
 // streams length-prefixed IPv4/UDP packets as fast as the server accepts
 // them for a fixed duration, then reports the sent rate.
@@ -17,7 +19,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,9 +79,9 @@ func main() {
 		wg.Add(1)
 		go func(c net.Conn) {
 			defer wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			for time.Now().Before(stopAt) {
-				c.SetWriteDeadline(stopAt)
+				_ = c.SetWriteDeadline(stopAt)
 				if _, err := c.Write(frame); err != nil {
 					return
 				}
@@ -91,6 +92,6 @@ func main() {
 	wg.Wait()
 	el := time.Since(start).Seconds()
 	n := sent.Load()
-	fmt.Fprintf(os.Stdout, "loadgen conns=%d size=%d sent=%d frames/s=%.0f MB/s=%.1f\n",
+	fmt.Printf("loadgen conns=%d size=%d sent=%d frames/s=%.0f MB/s=%.1f\n",
 		*conns, *size, n, float64(n)/el, float64(n)*float64(*size)/el/1e6)
 }

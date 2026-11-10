@@ -1,5 +1,7 @@
+//go:build linux
+
 // Command http_twine is the twine/http plaintext hello-world server used by
-// the HTTP benchmarks (design Section 12 http_plaintext). Drive it with
+// the HTTP benchmarks (http_plaintext in BENCHMARKS.md). Drive it with
 // bench/httpclient or wrk.
 package main
 

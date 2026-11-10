@@ -43,7 +43,7 @@ func (p *lineEcho) line(b []byte) {
 	t := p.Transport()
 	// Two writes: the reply is assembled by the kernel/ring, not by us.
 	t.Write(echoPrefix)
-	p.SendLine(t, b)
+	p.SendLine(b)
 }
 
 func TestLineReceiverEchoIntegration(t *testing.T) {
@@ -136,7 +136,7 @@ func TestNetstringIntegration(t *testing.T) {
 	e := startEngine(t, 2)
 	lst, err := e.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol {
 		p := &NetstringReceiver{}
-		p.StringReceived = func(s []byte) { p.SendString(nil, bytes.ToUpper(s)) }
+		p.StringReceived = func(s []byte) { p.SendString(bytes.ToUpper(s)) }
 		return p
 	}))
 	if err != nil {
@@ -177,7 +177,7 @@ func TestLengthPrefixedIntegration(t *testing.T) {
 	lst, err := e.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol {
 		p := &LengthPrefixed{}
 		p.FrameReceived = func(f []byte) {
-			if err := p.SendFrame(nil, f); err != nil {
+			if err := p.SendFrame(f); err != nil {
 				panic(err)
 			}
 		}

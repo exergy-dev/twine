@@ -1,24 +1,39 @@
 // Package slab is a size-classed []byte allocator owned by a single event
 // loop.
 //
-// Slabs come in four classes (4 KiB, 16 KiB, 64 KiB, 256 KiB). Each class has
-// a free list that is a preallocated slice of []byte, so taking a slab from a
-// non-empty free list and returning one to a free list with spare capacity
-// never allocates. Requests larger than the largest class get a fresh,
-// non-pooled slice rounded up to a multiple of 256 KiB.
+// Slabs come in four classes (4 KiB, 16 KiB, 64 KiB, 256 KiB = MaxClass).
+// Each class has a free list that is a preallocated slice of []byte, so
+// taking a slab from a non-empty free list and returning one to a free list
+// with spare capacity never allocates. Requests larger than MaxClass are a
+// caller bug: the only caller, ring, never asks for more than MaxClass.
 //
 // An Allocator is not goroutine-safe: each loop owns its own instance.
+//
+// Built with -tags twine_debug, Get reports an n above MaxClass and Put
+// reports a slab that is already on its free list (a double Put, which
+// would hand one buffer to two owners) with a descriptive panic.
 package slab
 
-// Classes are the slab sizes, ascending.
-var Classes = [...]int{4 << 10, 16 << 10, 64 << 10, 256 << 10}
+import "github.com/exergy-dev/twine/internal/debugtag"
+
+// Class sizes, ascending.
+const (
+	class4K  = 4 << 10
+	class16K = 16 << 10
+	class64K = 64 << 10
+	// MaxClass is the largest class size and the largest n Get accepts.
+	MaxClass = 256 << 10
+)
+
+// classes are the slab sizes, ascending; Classes returns a copy.
+var classes = [...]int{class4K, class16K, class64K, MaxClass}
 
 // numClasses is the number of size classes.
-const numClasses = len(Classes)
+const numClasses = len(classes)
 
-// maxClass is the largest class size; oversize requests are rounded up to a
-// multiple of it.
-const maxClass = 256 << 10
+// Classes returns the slab sizes, ascending. The array is a copy, so callers
+// cannot change the allocator's classes.
+func Classes() [numClasses]int { return classes }
 
 // initialFreeSlots is the preallocated capacity of each class free list.
 const initialFreeSlots = 64
@@ -47,16 +62,16 @@ func New() *Allocator {
 }
 
 // classIndex returns the index of the smallest class >= n, or -1 if n is
-// larger than every class. n <= 0 maps to the smallest class.
+// larger than MaxClass. n <= 0 maps to the smallest class.
 func classIndex(n int) int {
 	switch {
-	case n <= Classes[0]:
+	case n <= class4K:
 		return 0
-	case n <= Classes[1]:
+	case n <= class16K:
 		return 1
-	case n <= Classes[2]:
+	case n <= class64K:
 		return 2
-	case n <= Classes[3]:
+	case n <= MaxClass:
 		return 3
 	}
 	return -1
@@ -66,44 +81,28 @@ func classIndex(n int) int {
 // -1 if c is not a class size.
 func exactClassIndex(c int) int {
 	switch c {
-	case Classes[0]:
+	case class4K:
 		return 0
-	case Classes[1]:
+	case class16K:
 		return 1
-	case Classes[2]:
+	case class64K:
 		return 2
-	case Classes[3]:
+	case MaxClass:
 		return 3
 	}
 	return -1
 }
 
-// ClassFor returns the class size for n or -1 if larger than all classes.
-// n <= 0 maps to the smallest class.
-func ClassFor(n int) int {
-	i := classIndex(n)
-	if i < 0 {
-		return -1
-	}
-	return Classes[i]
-}
-
-// Get returns a slice with len == cap == the smallest class >= n. n larger
-// than the largest class returns a fresh make([]byte, n) rounded up to a
-// multiple of 256 KiB that is not pooled (Put frees it to the GC). Get from a
-// non-empty free list does not allocate. The contents of a reused slab are
-// not cleared.
+// Get returns a slice with len == cap == the smallest class >= n. n must be
+// at most MaxClass; a larger n panics. Get from a non-empty free list does
+// not allocate. The contents of a reused slab are not cleared.
 func (a *Allocator) Get(n int) []byte {
+	if debugtag.On && n > MaxClass {
+		panic("slab: Get larger than MaxClass")
+	}
 	a.gets++
 	i := classIndex(n)
-	if i < 0 {
-		size := (n + maxClass - 1) / maxClass * maxClass
-		a.misses++
-		a.inUse += size
-		a.noteHighWater()
-		return make([]byte, size)
-	}
-	fl := a.free[i]
+	fl := a.free[i] // i == -1 (n > MaxClass) panics here
 	if k := len(fl); k > 0 {
 		b := fl[k-1]
 		fl[k-1] = nil
@@ -113,30 +112,31 @@ func (a *Allocator) Get(n int) []byte {
 		return b
 	}
 	a.misses++
-	a.inUse += Classes[i]
+	a.inUse += classes[i]
 	a.noteHighWater()
-	return make([]byte, Classes[i])
+	return make([]byte, classes[i])
 }
 
 // Put returns b (identified by cap) to its class free list. Slices whose cap
-// is not a class are dropped. Put never allocates once a free list has been
-// grown (free lists are slices of []byte that grow by append; New
-// preallocates 64 slots per class).
+// is not a class size are dropped without touching the byte counters. Put
+// never allocates once a free list has been grown (free lists are slices of
+// []byte that grow by append; New preallocates 64 slots per class).
 //
-// Put must only be given slices obtained from Get, each at most once. A slice
-// whose cap is larger than the largest class and a multiple of 256 KiB is
-// assumed to be an oversize slice from Get: it is dropped to the GC and its
-// size is removed from InUse. Any other non-class slice is dropped without
-// touching the byte counters.
+// Put must only be given slices obtained from Get, each at most once.
 func (a *Allocator) Put(b []byte) {
 	a.puts++
 	c := cap(b)
 	i := exactClassIndex(c)
 	if i < 0 {
-		if c > maxClass && c%maxClass == 0 {
-			a.inUse -= c
-		}
 		return
+	}
+	if debugtag.On {
+		p := &b[:c][0]
+		for _, f := range a.free[i] {
+			if &f[0] == p {
+				panic("slab: double Put")
+			}
+		}
 	}
 	a.free[i] = append(a.free[i], b[:c])
 	a.inUse -= c
@@ -169,27 +169,5 @@ func (a *Allocator) Stats() Stats {
 		Gets:      a.gets,
 		Puts:      a.puts,
 		Misses:    a.misses,
-	}
-}
-
-// Trim releases free slabs above keep bytes per class back to the GC: each
-// class keeps at most keep/classSize free slabs. keep <= 0 releases every
-// free slab. The free lists keep their backing arrays, so later Puts do not
-// allocate.
-func (a *Allocator) Trim(keep int) {
-	if keep < 0 {
-		keep = 0
-	}
-	for i := range a.free {
-		fl := a.free[i]
-		n := keep / Classes[i]
-		if len(fl) <= n {
-			continue
-		}
-		for j := n; j < len(fl); j++ {
-			a.freeBytes -= len(fl[j])
-			fl[j] = nil
-		}
-		a.free[i] = fl[:n]
 	}
 }

@@ -10,12 +10,21 @@ import (
 // copies each chunk into the channel; the Transport the Protocol sees is a
 // thread-safe proxy that routes every call through CallFromThread. This is
 // the migration path for code that blocks or is not ready for callback style.
+// It works over any Transport, including the tls package's: wrap the inner
+// factory, as in tls.Server(cfg, twine.Blocking(f)).
 //
 // Backpressure: the channel holds up to 64 chunks; when it is full the loop
-// pauses reading until the goroutine catches up.
+// pauses reading until the goroutine catches up. A panic in the wrapped
+// Protocol is logged and counted like a loop-resident one, aborts only its
+// connection, and reaches its ConnectionLost as a *PanicError. If f returns
+// nil for a connection, so does the wrapped factory.
 func Blocking(f Factory) Factory {
 	return FactoryFunc(func(peer net.Addr) Protocol {
-		return &blockingProto{inner: f.BuildProtocol(peer)}
+		inner := f.BuildProtocol(peer)
+		if inner == nil {
+			return nil
+		}
+		return &blockingProto{inner: inner}
 	})
 }
 
@@ -27,7 +36,8 @@ type blockingEvent struct {
 
 type blockingProto struct {
 	inner Protocol
-	t     *transport
+	t     Transport // the underlying transport; loop-affine
+	loop  *Loop
 	proxy *asyncTransport
 	ch    chan blockingEvent
 	// paused reading because the channel filled
@@ -39,8 +49,11 @@ type blockingProto struct {
 const blockingDepth = 64
 
 func (b *blockingProto) ConnectionMade(t Transport) {
-	b.t = t.(*transport)
-	b.proxy = &asyncTransport{c: b.t}
+	b.t = t
+	b.loop = t.Loop()
+	// The addresses are captured here, on the loop, because the proxy
+	// returns them on the protocol's goroutine.
+	b.proxy = &asyncTransport{t: t, loop: b.loop, peer: t.GetPeer(), host: t.GetHost()}
 	// +1 so the final ConnectionLost event never blocks the loop when the
 	// goroutine is behind by a full window.
 	b.ch = make(chan blockingEvent, blockingDepth+1)
@@ -49,28 +62,28 @@ func (b *blockingProto) ConnectionMade(t Transport) {
 
 func (b *blockingProto) run() {
 	// A panic in the wrapped protocol aborts only this connection, as it
-	// would for a loop-resident protocol (design Section 8 rule 8).
+	// would for a loop-resident protocol.
 	defer func() {
-		if r := recover(); r != nil {
-			pe := capturePanic(r)
-			b.t.c.loop.CallFromThread(func() {
-				if b.t.live() {
-					b.t.c.lostErr = pe
-					b.t.c.abortNoCallback()
-				}
-			})
-			// Drain so the loop's final ConnectionLost send never blocks,
-			// and deliver it to the inner protocol.
-			for ev := range b.ch {
-				if ev.lost {
-					func() {
-						defer func() { _ = recover() }()
-						b.inner.ConnectionLost(ev.err)
-					}()
-					return
-				}
-				b.t.c.loop.CallFromThread(b.consumed)
+		r := recover()
+		if r == nil {
+			return
+		}
+		pe := capturePanic(r)
+		b.loop.ReportPanic(pe)
+		b.loop.CallFromThread(b.t.Abort)
+		// Drain so the loop's final ConnectionLost send never blocks, and
+		// deliver the panic to the inner protocol in place of whatever the
+		// abort reported (nil for the core, a truncation error under TLS).
+		for ev := range b.ch {
+			if ev.lost {
+				err := error(pe)
+				func() {
+					defer func() { _ = recover() }()
+					b.inner.ConnectionLost(err)
+				}()
+				return
 			}
+			b.loop.CallFromThread(b.consumed)
 		}
 	}()
 	b.inner.ConnectionMade(b.proxy)
@@ -80,7 +93,7 @@ func (b *blockingProto) run() {
 			return
 		}
 		b.inner.DataReceived(ev.data)
-		b.t.c.loop.CallFromThread(b.consumed)
+		b.loop.CallFromThread(b.consumed)
 	}
 }
 
@@ -116,15 +129,17 @@ func (b *blockingProto) ConnectionLost(err error) {
 // asyncTransport is a Transport proxy safe to call from any goroutine. Writes
 // copy their argument because they are delivered asynchronously.
 type asyncTransport struct {
-	c *transport
+	t          Transport
+	loop       *Loop
+	peer, host net.Addr
 }
 
-func (a *asyncTransport) call(fn func()) { a.c.c.loop.CallFromThread(fn) }
+func (a *asyncTransport) call(fn func()) { a.loop.CallFromThread(fn) }
 
 func (a *asyncTransport) Write(b []byte) {
 	cp := make([]byte, len(b))
 	copy(cp, b)
-	a.call(func() { a.c.Write(cp) })
+	a.call(func() { a.t.Write(cp) })
 }
 
 func (a *asyncTransport) Writev(bs ...[]byte) {
@@ -136,36 +151,37 @@ func (a *asyncTransport) Writev(bs ...[]byte) {
 	for _, b := range bs {
 		cp = append(cp, b...)
 	}
-	a.call(func() { a.c.Write(cp) })
+	a.call(func() { a.t.Write(cp) })
 }
 
-func (a *asyncTransport) LoseConnection()     { a.call(a.c.LoseConnection) }
-func (a *asyncTransport) Abort()              { a.call(a.c.Abort) }
-func (a *asyncTransport) GetPeer() net.Addr   { return a.c.GetPeer() }
-func (a *asyncTransport) GetHost() net.Addr   { return a.c.GetHost() }
-func (a *asyncTransport) Loop() *Loop         { return a.c.Loop() }
-func (a *asyncTransport) SetContext(v any)    { a.call(func() { a.c.SetContext(v) }) }
-func (a *asyncTransport) Context() any        { return a.sync(func() any { return a.c.Context() }) }
-func (a *asyncTransport) PauseReading()       { a.call(a.c.PauseReading) }
-func (a *asyncTransport) ResumeReading()      { a.call(a.c.ResumeReading) }
-func (a *asyncTransport) UnregisterProducer() { a.call(a.c.UnregisterProducer) }
+func (a *asyncTransport) LoseConnection()     { a.call(a.t.LoseConnection) }
+func (a *asyncTransport) Abort()              { a.call(a.t.Abort) }
+func (a *asyncTransport) GetPeer() net.Addr   { return a.peer }
+func (a *asyncTransport) GetHost() net.Addr   { return a.host }
+func (a *asyncTransport) Loop() *Loop         { return a.loop }
+func (a *asyncTransport) SetContext(v any)    { a.call(func() { a.t.SetContext(v) }) }
+func (a *asyncTransport) Context() any        { return a.sync(a.t.Context) }
+func (a *asyncTransport) PauseReading()       { a.call(a.t.PauseReading) }
+func (a *asyncTransport) ResumeReading()      { a.call(a.t.ResumeReading) }
+func (a *asyncTransport) UnregisterProducer() { a.call(a.t.UnregisterProducer) }
 
 // PendingWrite blocks the calling goroutine until the loop answers.
 func (a *asyncTransport) PendingWrite() int {
-	return a.sync(func() any { return a.c.PendingWrite() }).(int)
+	return a.sync(func() any { return a.t.PendingWrite() }).(int)
 }
 
 func (a *asyncTransport) SetIdleTimeout(d time.Duration) {
-	a.call(func() { a.c.SetIdleTimeout(d) })
+	a.call(func() { a.t.SetIdleTimeout(d) })
 }
 
 func (a *asyncTransport) RegisterProducer(p Producer, streaming bool) {
-	a.call(func() { a.c.RegisterProducer(p, streaming) })
+	a.call(func() { a.t.RegisterProducer(p, streaming) })
 }
 
-// sync runs fn on the loop and waits for its result.
+// sync runs fn on the loop and waits for its result. Once the loop has
+// exited nothing else touches the transport, so fn runs on the caller.
 func (a *asyncTransport) sync(fn func() any) any {
-	l := a.c.c.loop
+	l := a.loop
 	if l.InLoop() {
 		return fn()
 	}

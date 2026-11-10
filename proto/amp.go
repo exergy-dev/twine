@@ -80,16 +80,34 @@ func (e *RemoteError) Is(target error) bool {
 }
 
 // AMP implements Twisted's Asynchronous Messaging Protocol: request/response
-// multiplexing with 32-bit ask ids. Embed it, set Handle, and use Call.
+// multiplexing with 32-bit ask ids. Embed it, set Handle, and use Call. A
+// handler answers synchronously with a resolved Future, or later, for
+// example from the worker pool:
+//
+//	p.Handle = func(cmd string, args proto.Args) *twine.Future[proto.Args] {
+//		switch cmd {
+//		case "Echo": // answered at once
+//			return twine.Resolved[proto.Args](nil, args)
+//		case "Lookup": // blocking work runs on the worker pool
+//			return twine.DeferToThread(loop, func() (proto.Args, error) { return lookup(args) })
+//		}
+//		return nil // the peer gets an UNHANDLED error
+//	}
 //
 // The wire format is Twisted's BinaryBoxProtocol, so a Twine AMP peer
 // interoperates with twisted.protocols.amp.AMP: a box is a sequence of
 // key/value strings, each with a 2-byte big-endian length prefix (framed by
-// an embedded LengthPrefixed with PrefixLen 2), terminated by an empty key.
+// an internal LengthPrefixed with PrefixLen 2), terminated by an empty key.
 // Keys are at most 255 bytes and values at most 65535. A request carries
 // _command and, unless no answer is wanted, _ask (a hex counter); the reply
 // carries _answer with the same tag, or _error with _error_code and
 // _error_description.
+//
+// There is no schema layer: Twisted's Command classes and argument types
+// (Integer, String, Unicode, Boolean, ...) have no counterpart, and values
+// are the raw byte strings on the wire. To interoperate with a Twisted
+// peer, encode values as its argument types do: an Integer is its decimal
+// text (strconv.Itoa), a Boolean is "True" or "False", Unicode is UTF-8.
 //
 // Handler outcomes map to replies as follows: a resolved Future sends its
 // Args as the answer; a rejected Future sends an _error box with the
@@ -99,7 +117,7 @@ func (e *RemoteError) Is(target error) bool {
 // nil) or UNKNOWN (for a panic). Requests without _ask get no reply.
 //
 // A box whose encoded size exceeds MaxBoxSize, or with a key longer than
-// 255 bytes, aborts the connection with twine.ErrFrameTooLarge.
+// 255 bytes, aborts the connection with ErrFrameTooLarge.
 type AMP struct {
 	// Handle serves an incoming command. It runs on the loop. args excludes
 	// the reserved keys. The returned Future may be settled later and on any
@@ -115,8 +133,7 @@ type AMP struct {
 	// MaxBoxSize limits one incoming box's encoded size. Default 1 MiB.
 	MaxBoxSize int
 
-	lp      LengthPrefixed
-	t       twine.Transport
+	lp      LengthPrefixed // holds the transport
 	box     Args
 	key     string
 	haveKey bool
@@ -125,13 +142,14 @@ type AMP struct {
 	pending map[uint32]twine.Resolver[Args]
 	lost    error // non-nil once the connection is gone
 	out     []byte
+	hdr     [16]byte  // _ask pair of an outgoing request
+	iov     [2][]byte // Writev argument; a literal through the interface would allocate
 }
 
 var _ twine.Protocol = (*AMP)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (a *AMP) ConnectionMade(t twine.Transport) {
-	a.t = t
 	a.lp.PrefixLen = 2
 	a.lp.MaxFrame = ampMaxValueLen
 	a.lp.FrameReceived = a.frameReceived
@@ -158,6 +176,7 @@ func (a *AMP) ConnectionLost(err error) {
 	pending := a.pending
 	a.pending = nil
 	a.box = nil
+	a.lp.buf = nil
 	for _, r := range pending {
 		r.Reject(a.lost)
 	}
@@ -167,7 +186,7 @@ func (a *AMP) ConnectionLost(err error) {
 }
 
 // Transport returns the transport stored by ConnectionMade.
-func (a *AMP) Transport() twine.Transport { return a.t }
+func (a *AMP) Transport() twine.Transport { return a.lp.t }
 
 // Err returns the framing error that made the protocol abort, or nil.
 func (a *AMP) Err() error { return a.lp.err }
@@ -178,7 +197,7 @@ func (a *AMP) Pending() int { return len(a.pending) }
 // onLoop runs fn on the transport's loop: inline when already there (or
 // when there is no loop, as with test transports).
 func (a *AMP) onLoop(fn func()) {
-	l := a.t.Loop()
+	l := a.lp.t.Loop()
 	if l == nil || l.InLoop() {
 		fn()
 		return
@@ -189,24 +208,27 @@ func (a *AMP) onLoop(fn func()) {
 // loopGone reports whether the transport's loop has exited, in which case
 // CallFromThread would drop work and a Future would never settle.
 func (a *AMP) loopGone() bool {
-	l := a.t.Loop()
+	l := a.lp.t.Loop()
 	return l != nil && l.Stopped()
 }
 
 // Call sends cmd with args and returns a Future for the answer. It may be
-// called from any goroutine once ConnectionMade has happened-before the
-// call (for example, when signalled from OnConnectionMade); the request is written on the transport's loop
-// and the Future's callbacks run there. The Future rejects with a
+// called from any goroutine once ConnectionMade has happened-before the call
+// (for example, when signalled from OnConnectionMade). args is encoded
+// before Call returns, so the map may be reused at once; the request is
+// written on the transport's loop and the Future's callbacks run there.
+// The Future rejects with a
 // *RemoteError (errors.Is ErrRemote) when the peer answers with an error,
 // with ErrConnectionLost when the connection goes away first, with
 // ErrNotConnected before ConnectionMade, and with ErrBadArgs for invalid
 // args.
 func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
-	if a.t == nil {
+	if a.lp.t == nil {
 		return twine.Rejected[Args](nil, ErrNotConnected)
 	}
-	fut, res := twine.NewFuture[Args](a.t.Loop())
-	if err := validateArgs(cmd, args); err != nil {
+	fut, res := twine.NewFuture[Args](a.lp.t.Loop())
+	body, err := encodeRequest(cmd, args)
+	if err != nil {
 		res.Reject(err)
 		return fut
 	}
@@ -234,8 +256,7 @@ func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
 			}
 		}
 		a.pending[id] = res
-		var tag [8]byte
-		a.send(ampAsk, string(strconv.AppendUint(tag[:0], uint64(id), 16)), ampCommand, cmd, args)
+		a.writeRequest(id, body)
 	})
 	return fut
 }
@@ -245,40 +266,75 @@ func (a *AMP) Call(cmd string, args Args) *twine.Future[Args] {
 // ErrBadArgs, ErrNotConnected or ErrConnectionLost (the last only when
 // called on the loop) and is otherwise fire-and-forget.
 func (a *AMP) CallNoAnswer(cmd string, args Args) error {
-	if a.t == nil {
+	if a.lp.t == nil {
 		return ErrNotConnected
 	}
-	if err := validateArgs(cmd, args); err != nil {
+	body, err := encodeRequest(cmd, args)
+	if err != nil {
 		return err
 	}
-	if l := a.t.Loop(); (l == nil || l.InLoop()) && a.lost != nil {
+	if l := a.lp.t.Loop(); (l == nil || l.InLoop()) && a.lost != nil {
 		return a.lost
 	}
 	a.onLoop(func() {
 		if a.lost == nil {
-			a.send(ampCommand, cmd, "", "", args)
+			a.lp.t.Write(body)
 		}
 	})
 	return nil
 }
 
-func validateArgs(cmd string, args Args) error {
-	if len(cmd) > ampMaxValueLen {
-		return fmt.Errorf("%w: command name too long", ErrBadArgs)
+// encodeRequest validates cmd and args and encodes the _command pair, every
+// argument and the box terminator into a new buffer. It runs on the
+// caller's goroutine, so the caller may reuse args as soon as Call returns.
+func encodeRequest(cmd string, args Args) ([]byte, error) {
+	n, err := validateArgs(cmd, args)
+	if err != nil {
+		return nil, err
 	}
+	b := make([]byte, 0, 4+len(ampCommand)+len(cmd)+n+2)
+	b = appendPair(b, ampCommand, cmd)
+	for k, v := range args {
+		b = appendPair(b, k, v)
+	}
+	return append(b, 0, 0), nil
+}
+
+// writeRequest writes the _ask pair for id and a body from encodeRequest
+// with one Writev. Loop-affine.
+func (a *AMP) writeRequest(id uint32, body []byte) {
+	h := append(a.hdr[:0], 0, byte(len(ampAsk)))
+	h = append(h, ampAsk...)
+	h = append(h, 0, 0)
+	n := len(h)
+	h = strconv.AppendUint(h, uint64(id), 16)
+	h[n-1] = byte(len(h) - n)
+	a.iov[0], a.iov[1] = h, body
+	a.lp.t.Writev(a.iov[:]...)
+	a.iov = [2][]byte{}
+}
+
+// validateArgs checks cmd and args against the wire limits and returns the
+// encoded size of args.
+func validateArgs(cmd string, args Args) (int, error) {
+	if len(cmd) > ampMaxValueLen {
+		return 0, fmt.Errorf("%w: command name too long", ErrBadArgs)
+	}
+	n := 0
 	for k, v := range args {
 		switch {
 		case k == "":
-			return fmt.Errorf("%w: empty key", ErrBadArgs)
+			return 0, fmt.Errorf("%w: empty key", ErrBadArgs)
 		case len(k) > ampMaxKeyLen:
-			return fmt.Errorf("%w: key %.32q... longer than 255 bytes", ErrBadArgs, k)
+			return 0, fmt.Errorf("%w: key %.32q... longer than 255 bytes", ErrBadArgs, k)
 		case len(v) > ampMaxValueLen:
-			return fmt.Errorf("%w: value of %q longer than 65535 bytes", ErrBadArgs, k)
+			return 0, fmt.Errorf("%w: value of %q longer than 65535 bytes", ErrBadArgs, k)
 		case isReserved(k):
-			return fmt.Errorf("%w: reserved key %q", ErrBadArgs, k)
+			return 0, fmt.Errorf("%w: reserved key %q", ErrBadArgs, k)
 		}
+		n += 4 + len(k) + len(v)
 	}
-	return nil
+	return n, nil
 }
 
 func isReserved(k string) bool {
@@ -290,8 +346,12 @@ func isReserved(k string) bool {
 }
 
 // send encodes one box (k1/v1 and k2/v2 when non-empty, then args) and
-// writes it with a single Write. Loop-affine.
+// writes it with a single Write, unless the connection is gone (a handler
+// may answer after that). Loop-affine.
 func (a *AMP) send(k1, v1, k2, v2 string, args Args) {
+	if a.lost != nil {
+		return
+	}
 	out := a.out[:0]
 	out = appendPair(out, k1, v1)
 	if k2 != "" {
@@ -301,7 +361,7 @@ func (a *AMP) send(k1, v1, k2, v2 string, args Args) {
 		out = appendPair(out, k, v)
 	}
 	out = append(out, 0, 0)
-	a.t.Write(out)
+	a.lp.t.Write(out)
 	if cap(out) > retainLimit {
 		out = nil
 	}
@@ -319,7 +379,7 @@ func appendPair(b []byte, k, v string) []byte {
 func (a *AMP) frameReceived(f []byte) {
 	a.boxSize += 2 + len(f)
 	if a.boxSize > a.maxBox() {
-		a.lp.fail(twine.ErrFrameTooLarge)
+		a.lp.fail(ErrFrameTooLarge)
 		return
 	}
 	if a.haveKey {
@@ -337,11 +397,31 @@ func (a *AMP) frameReceived(f []byte) {
 		return
 	}
 	if len(f) > ampMaxKeyLen {
-		a.lp.fail(twine.ErrFrameTooLarge)
+		a.lp.fail(ErrFrameTooLarge)
 		return
 	}
-	a.key = string(f)
+	a.key = internKey(f)
 	a.haveKey = true
+}
+
+// internKey returns f as a string, without allocating for the reserved
+// keys every request and answer carries.
+func internKey(f []byte) string {
+	switch string(f) {
+	case ampAsk:
+		return ampAsk
+	case ampAnswer:
+		return ampAnswer
+	case ampCommand:
+		return ampCommand
+	case ampError:
+		return ampError
+	case ampErrorCode:
+		return ampErrorCode
+	case ampErrorDesc:
+		return ampErrorDesc
+	}
+	return string(f)
 }
 
 func (a *AMP) maxBox() int {
@@ -397,7 +477,7 @@ func (a *AMP) dispatch(box Args) {
 	}
 	fut.Then(func(res Args) {
 		a.onLoop(func() {
-			if err := validateArgs("", res); err != nil {
+			if _, err := validateArgs("", res); err != nil {
 				a.sendError(tag, &RemoteError{Code: UnknownErrorCode, Description: err.Error()})
 				return
 			}
@@ -426,9 +506,6 @@ func (a *AMP) callHandler(cmd string, args Args) (fut *twine.Future[Args], err e
 }
 
 func (a *AMP) sendError(tag string, re *RemoteError) {
-	if a.lost != nil {
-		return
-	}
 	code := re.Code
 	if code == "" {
 		code = UnknownErrorCode

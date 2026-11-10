@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command twineload is an event-loop load generator built on twine itself,
 // cheaper per message than a goroutine-per-connection client. It opens -conns
 // connections spread over -loops loops (optionally pinned), keeps exactly one
@@ -173,6 +175,9 @@ func respLen(b []byte) int {
 	cl := 0
 	for len(hdr) > 0 {
 		i := bytes.Index(hdr, []byte("\r\n"))
+		if i < 0 { // unreachable: hdr ends in CRLF
+			break
+		}
 		line := hdr[:i]
 		hdr = hdr[i+2:]
 		if len(line) > 15 && (line[0]|0x20) == 'c' && bytes.EqualFold(line[:15], []byte("content-length:")) {

@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command server is the twine echo server for the 1M idle-connection soak
 // (design Phase 6). It listens on -ports consecutive ports so that one
 // process can hold 1M connections within the 1,048,576 fd limit and the

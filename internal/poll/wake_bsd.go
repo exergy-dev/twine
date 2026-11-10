@@ -30,7 +30,7 @@ func (w *waker) open(kq int) error {
 	return nil
 }
 
-// wake triggers the user event: a single kevent(2).
+// wake triggers the user event: a single kevent(2), retried on EINTR.
 func (w *waker) wake() error {
 	for {
 		_, err := unix.Kevent(w.kq, w.trig[:], nil, nil)

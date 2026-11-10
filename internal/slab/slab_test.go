@@ -31,32 +31,13 @@ func TestGetSizes(t *testing.T) {
 	}
 }
 
-func TestOversize(t *testing.T) {
-	a := New()
-	for _, c := range []struct{ n, want int }{
-		{256<<10 + 1, 512 << 10},
-		{512 << 10, 512 << 10},
-		{1<<20 + 7, 5 * 256 << 10},
-	} {
-		b := a.Get(c.n)
-		if len(b) != c.want || cap(b) != c.want {
-			t.Fatalf("Get(%d): len %d cap %d, want %d", c.n, len(b), cap(b), c.want)
+func TestOversizePanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Get(MaxClass+1) did not panic")
 		}
-		if s := a.Stats(); s.InUse != c.want {
-			t.Fatalf("InUse after oversize Get = %d, want %d", s.InUse, c.want)
-		}
-		a.Put(b)
-		s := a.Stats()
-		if s.InUse != 0 || s.Free != 0 {
-			t.Fatalf("oversize Put pooled it: %+v", s)
-		}
-	}
-	// A second oversize Get must make() again (never pooled).
-	before := a.Stats().Misses
-	a.Put(a.Get(300 << 10))
-	if a.Stats().Misses != before+1 {
-		t.Fatal("oversize Get was served from a pool")
-	}
+	}()
+	New().Get(MaxClass + 1)
 }
 
 func TestPutDropsForeign(t *testing.T) {
@@ -90,49 +71,14 @@ func TestReuseAndStats(t *testing.T) {
 	}
 }
 
-func TestTrim(t *testing.T) {
-	a := New()
-	var held [][]byte
-	for i := 0; i < 10; i++ {
-		held = append(held, a.Get(4096), a.Get(256<<10))
-	}
-	for _, b := range held {
-		a.Put(b)
-	}
-	if s := a.Stats(); s.Free != 10*(4096+256<<10) || s.Allocated != s.Free {
-		t.Fatalf("before trim: %+v", s)
-	}
-	a.Trim(3 * 4096) // keeps 3 x 4K, 0 x 256K
-	s := a.Stats()
-	if s.Free != 3*4096 || len(a.free[0]) != 3 || len(a.free[3]) != 0 {
-		t.Fatalf("after trim: %+v lens %d %d", s, len(a.free[0]), len(a.free[3]))
-	}
-	if s.Allocated != 10*(4096+256<<10) {
-		t.Fatalf("Allocated is a high water mark, got %d", s.Allocated)
-	}
-	if cap(a.free[3]) < initialFreeSlots {
-		t.Fatal("Trim dropped the free list backing array")
-	}
-	for _, b := range a.free[3][:cap(a.free[3])] {
-		if b != nil {
-			t.Fatal("Trim left a reference to a released slab")
-		}
-	}
-	a.Trim(0)
-	if s := a.Stats(); s.Free != 0 {
-		t.Fatalf("Trim(0) left %d free", s.Free)
-	}
-	a.Trim(-1)
-}
-
 func TestZeroAlloc(t *testing.T) {
 	a := New()
 	// Warm every class so the free lists are non-empty.
-	for _, c := range Classes {
+	for _, c := range classes {
 		a.Put(a.Get(c))
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		for _, c := range Classes {
+		for _, c := range classes {
 			a.Put(a.Get(c))
 		}
 	})
@@ -166,7 +112,7 @@ func TestQuickAccounting(t *testing.T) {
 		hwm := 0
 		for _, op := range ops {
 			if op%3 != 0 || len(held) == 0 {
-				n := int(op>>2) % (600 << 10)
+				n := int(op>>2) % (MaxClass + 1)
 				b := a.Get(n)
 				if len(b) < n || len(b) != cap(b) {
 					return false
@@ -196,7 +142,7 @@ func TestQuickAccounting(t *testing.T) {
 			free := 0
 			for i, fl := range a.free {
 				for _, b := range fl {
-					if len(b) != Classes[i] {
+					if len(b) != classes[i] {
 						return false
 					}
 					free += len(b)

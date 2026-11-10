@@ -5,8 +5,7 @@
 // circular buffer. Writes go only to the tail segment and reads only come
 // from the head segment, so only the head can hold data that wraps around
 // the end of its slab, and only when it is also the tail. A connection whose
-// pending bytes stay within one 4 KiB slab therefore never calls the
-// allocator after its first write.
+// pending bytes stay within 4 KiB therefore uses a single 4 KiB segment.
 //
 // Growth policy: when the tail segment is full (or there is none), a new
 // segment is taken whose class is the smallest that fits the bytes still to
@@ -15,16 +14,28 @@
 // geometric floor keeps a backlog built from many small writes in few
 // segments; writes larger than 256 KiB span several 256 KiB segments.
 //
-// A Ring holds no segment until its first non-empty Write. Consume keeps the
-// last segment (emptied) for reuse; Reset returns every segment.
+// An empty Ring holds no segment: none before its first non-empty Write, and
+// the Consume that brings Len to 0 returns the last segment to the allocator,
+// so an idle connection pins no slab. Taking a slab from, and returning one
+// to, the allocator's free list does not allocate, so a write/drain cycle
+// stays allocation-free. Reset drops all data and returns every segment.
 //
-// Not goroutine-safe.
+// Not goroutine-safe. Built with -tags twine_debug, Write and Consume verify
+// the segment chain after every call and panic on an inconsistency.
 package ring
 
 import (
+	"github.com/exergy-dev/twine/internal/debugtag"
 	"github.com/exergy-dev/twine/internal/slab"
 	"golang.org/x/sys/unix"
 )
+
+// noCopy makes go vet's copylocks check report a Ring copied by value. Its
+// methods are never called.
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
 
 // segment is one slab in the chain, used as a circular buffer: the readable
 // bytes are buf[r:r+n] taken modulo len(buf).
@@ -39,11 +50,12 @@ type segment struct {
 // Init. Not goroutine-safe. A Ring must not be copied after Init: it holds a
 // pointer to its own embedded first segment.
 type Ring struct {
-	alloc     *slab.Allocator
-	head      *segment
-	tail      *segment
-	length    int
-	highWater int
+	_ noCopy // first: a trailing zero-size field would be padded
+
+	alloc  *slab.Allocator
+	head   *segment
+	tail   *segment
+	length int
 
 	// spare is a free list of segment structs (linked through next) reused
 	// before allocating a new one. It survives Reset and Init.
@@ -57,15 +69,13 @@ type Ring struct {
 
 // Init binds r to an allocator. Init may be called on a Ring embedded in a
 // pooled conn struct repeatedly (after Reset). If r still holds segments
-// they are first returned to the allocator they came from. Init resets the
-// high water mark.
+// they are first returned to the allocator they came from.
 func (r *Ring) Init(a *slab.Allocator) {
 	if r.head != nil {
 		r.Reset()
 	}
 	r.alloc = a
 	r.length = 0
-	r.highWater = 0
 }
 
 // Len returns readable bytes.
@@ -78,9 +88,6 @@ func (r *Ring) Write(b []byte) {
 		return
 	}
 	r.length += len(b)
-	if r.length > r.highWater {
-		r.highWater = r.length
-	}
 	for len(b) > 0 {
 		s := r.tail
 		if s == nil || s.n == len(s.buf) {
@@ -99,14 +106,15 @@ func (r *Ring) Write(b []byte) {
 		s.n += c
 		b = b[c:]
 	}
+	if debugtag.On {
+		r.mustVerify()
+	}
 }
 
 // grow appends a new empty tail segment sized for need more bytes and
 // returns it.
 func (r *Ring) grow(need int) *segment {
-	if need > slab.Classes[len(slab.Classes)-1] {
-		need = slab.Classes[len(slab.Classes)-1]
-	}
+	need = min(need, slab.MaxClass)
 	if r.tail != nil {
 		if floor := nextClass(len(r.tail.buf)); need < floor {
 			need = floor
@@ -127,7 +135,7 @@ func (r *Ring) grow(need int) *segment {
 // nextClass returns the class one step above size, or the largest class if
 // size is already the largest.
 func nextClass(size int) int {
-	cs := slab.Classes
+	cs := slab.Classes()
 	for i := 0; i < len(cs)-1; i++ {
 		if size <= cs[i] {
 			return cs[i+1]
@@ -199,24 +207,15 @@ func (r *Ring) Iovecs(dst []unix.Iovec) []unix.Iovec {
 	return dst[:i]
 }
 
-// Peek returns the first contiguous readable region (nil when empty).
-func (r *Ring) Peek() []byte {
-	s := r.head
-	if s == nil || s.n == 0 {
-		return nil
-	}
-	end := s.r + s.n
-	if end > len(s.buf) {
-		end = len(s.buf)
-	}
-	return s.buf[s.r:end:end]
-}
-
 // Consume drops n bytes from the front (n <= Len). Segments that become empty
-// are returned to the allocator, except the last one, which is kept (reset to
-// empty) so the next Write needs no allocation. Consume panics if n < 0 or
-// n > Len.
-func (r *Ring) Consume(n int) {
+// are returned to the allocator, including the last one when Len reaches 0,
+// so an empty Ring holds no slab. Consume panics if n < 0 or n > Len. The
+// twine_debug build verifies the invariants afterwards (consume_debug.go);
+// the release wrapper in consume_release.go keeps Consume's code free of the
+// deferred check.
+//
+// consume is the implementation behind Consume.
+func (r *Ring) consume(n int) {
 	if n < 0 || n > r.length {
 		panic("ring: Consume out of range")
 	}
@@ -233,18 +232,18 @@ func (r *Ring) Consume(n int) {
 			return
 		}
 		n -= c
-		s.n = 0
-		s.r = 0
-		if s.next == nil {
-			return // last segment: keep it, empty
-		}
-		r.head = s.next
+		next := s.next
 		r.releaseSeg(s)
+		r.head = next
+		if next == nil {
+			r.tail = nil // drained: Len is 0
+			return
+		}
 	}
 }
 
-// Reset drops all data and returns every segment to the allocator. The high
-// water mark is kept; segment structs stay pooled in r for reuse.
+// Reset drops all data and returns every segment to the allocator. Segment
+// structs stay pooled in r for reuse.
 func (r *Ring) Reset() {
 	for s := r.head; s != nil; {
 		next := s.next
@@ -255,8 +254,41 @@ func (r *Ring) Reset() {
 	r.length = 0
 }
 
-// HighWater returns the maximum Len observed since Init/ResetHighWater.
-func (r *Ring) HighWater() int { return r.highWater }
+// verify checks the segment chain and returns a description of the first
+// inconsistency found, or "".
+func (r *Ring) verify() string {
+	if (r.head == nil) != (r.tail == nil) {
+		return "ring: head and tail disagree on emptiness"
+	}
+	total := 0
+	for s := r.head; s != nil; s = s.next {
+		if s.n < 0 || s.n > len(s.buf) || s.r < 0 || s.r >= len(s.buf) {
+			return "ring: segment offsets out of bounds"
+		}
+		if s != r.head && s.r != 0 {
+			return "ring: non-head segment has a read offset"
+		}
+		if s != r.tail && s != r.head && s.n != len(s.buf) {
+			return "ring: middle segment not full"
+		}
+		if s.n == 0 {
+			return "ring: empty segment in the chain"
+		}
+		if s.next == nil && s != r.tail {
+			return "ring: tail is not the last segment"
+		}
+		total += s.n
+	}
+	if total != r.length {
+		return "ring: Len does not match the bytes in the segments"
+	}
+	return ""
+}
 
-// ResetHighWater sets the high water mark to the current Len.
-func (r *Ring) ResetHighWater() { r.highWater = r.length }
+// mustVerify panics if verify finds an inconsistency. Write and Consume call
+// it when built with -tags twine_debug.
+func (r *Ring) mustVerify() {
+	if msg := r.verify(); msg != "" {
+		panic(msg)
+	}
+}

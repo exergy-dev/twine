@@ -21,7 +21,7 @@ func socketpairConn(t testing.TB, l *Loop, p Protocol) (*conn, int) {
 			panic(err)
 		}
 	}
-	c := l.attachTCP(fds[0], &net.TCPAddr{}, &net.TCPAddr{}, FactoryFunc(func(net.Addr) Protocol { return p }), false)
+	c := l.attachTCP(fds[0], &net.TCPAddr{}, &net.TCPAddr{}, FactoryFunc(func(net.Addr) Protocol { return p }))
 	return c, fds[1]
 }
 
@@ -176,6 +176,24 @@ func TestTimerFireZeroAlloc(t *testing.T) {
 	}
 	if due != 0 {
 		t.Errorf("CallLater(0) insert+fire allocates %v (want 0)", due)
+	}
+}
+
+// goid is the InLoop fallback where no thread id is available (OpenBSD,
+// DragonFly), so there it sits on the CallFromThread push path and must not
+// allocate.
+func TestGoidZeroAlloc(t *testing.T) {
+	want := goid()
+	if want <= 0 {
+		t.Fatalf("goid() = %d", want)
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if g := goid(); g != want {
+			t.Fatalf("goid() = %d, want %d", g, want)
+		}
+	})
+	if allocs != 0 {
+		t.Errorf("goid allocates: %v", allocs)
 	}
 }
 

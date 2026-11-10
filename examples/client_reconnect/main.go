@@ -1,16 +1,18 @@
 // Command client_reconnect demonstrates proto.ReconnectingClient: it keeps a
-// line-based connection to --addr alive, reconnecting with exponential
+// line-based connection to -addr alive, reconnecting with exponential
 // backoff and full jitter, and prints every state change and received line.
 //
-//	go run ./examples/chat --addr :9001 &
-//	go run ./examples/client_reconnect --addr localhost:9001
+//	go run ./examples/chat -addr :9001 &
+//	go run ./examples/client_reconnect -addr localhost:9001
 //
-// Stop and restart the server to watch it reconnect. Ctrl-C stops trying and
-// exits.
+// Stop and restart the server to watch it reconnect. Ctrl-C stops the engine
+// and exits. With -retries N the client gives up, and the program exits,
+// after N+1 consecutive failed attempts.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -30,8 +32,8 @@ type lineClient struct {
 
 func newLineClient(net.Addr) twine.Protocol {
 	c := &lineClient{}
-	c.OnConnectionMade = func(t twine.Transport) {
-		c.SendLine(t, []byte("hello from client_reconnect"))
+	c.OnConnectionMade = func(twine.Transport) {
+		c.SendLine([]byte("hello from client_reconnect"))
 	}
 	c.LineReceived = func(line []byte) { log.Printf("recv: %s", line) }
 	return c
@@ -48,47 +50,26 @@ func main() {
 	defer stop()
 
 	eng := twine.New(twine.Loops(1))
-	var rc *proto.ReconnectingClient
-	rc = proto.NewReconnectingClient(eng.Loops()[0], *addr, twine.FactoryFunc(newLineClient),
+	rc := proto.NewReconnectingClient(eng.NextLoop(), *addr, twine.FactoryFunc(newLineClient),
 		proto.InitialDelay(*initial),
 		proto.MaxDelay(*maxDelay),
 		proto.MaxRetries(*retries),
 		proto.DialOptions(twine.DialTimeout(5*time.Second)),
-		proto.OnStateChange(func(connected bool) {
-			// Runs on the client's loop, so loop-affine accessors are safe.
-			if connected {
-				log.Printf("state: connected to %s (attempt %d)", *addr, rc.Attempts())
-				return
+		proto.OnStateChange(func(connected bool, err error) {
+			// Runs on the client's loop.
+			switch {
+			case connected:
+				log.Printf("state: connected to %s", *addr)
+			case ctx.Err() != nil:
+				log.Print("state: stopped")
+			case errors.Is(err, proto.ErrGaveUp):
+				log.Printf("state: %v", err)
+				eng.Stop()
+			default:
+				log.Printf("state: disconnected (%v); retrying", err)
 			}
-			log.Printf("state: disconnected (%v); retrying", rc.LastError())
 		}))
 	rc.Start()
-
-	go func() {
-		// Report attempts that never got as far as a connection.
-		t := time.NewTicker(5 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				if !rc.Connected() {
-					log.Printf("state: not connected after %d attempt(s)", rc.Attempts())
-				}
-				if rc.GaveUp() {
-					log.Print("giving up")
-					stop()
-					return
-				}
-			}
-		}
-	}()
-
-	go func() {
-		<-ctx.Done()
-		rc.StopTrying()
-	}()
 	if err := eng.Run(ctx); err != nil {
 		log.Print(err)
 	}

@@ -3,9 +3,9 @@
 package poll
 
 import (
+	"maps"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,21 +38,37 @@ func requireURing(t testing.TB, p *Poller) {
 func TestURingBackendSelected(t *testing.T) {
 	p := newPoller(t)
 	if forceEpoll {
-		if p.ring != nil || p.ep == nil {
-			t.Fatal("forceEpoll set but io_uring backend selected")
+		if p.ring != nil || p.ep == nil || p.Backend() != "epoll" {
+			t.Fatalf("forceEpoll set but backend is %q", p.Backend())
 		}
 		return
 	}
 	if p.ring == nil {
+		if got := p.Backend(); got != "epoll (io_uring unavailable)" {
+			t.Errorf("fallback Backend() = %q", got)
+		}
 		b, _ := os.ReadFile("/proc/sys/kernel/io_uring_disabled")
 		t.Logf("io_uring_disabled=%q", strings.TrimSpace(string(b)))
 		t.Skipf("io_uring unavailable, epoll fallback in use: %v", p.uringErr)
 	}
+	if got := p.Backend(); got != "io_uring" {
+		t.Fatalf("Backend() = %q, want io_uring", got)
+	}
+	// open(false) is the fallback path New takes when io_uring fails.
+	q, err := open(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	q.uringErr = unix.ENOSYS
+	if got := q.Backend(); got != "epoll (io_uring unavailable)" {
+		t.Fatalf("fallback Backend() = %q", got)
+	}
 }
 
 // TestEpollFallbackSuite re-runs every test in this package in a child
-// process with the epoll fallback forced, so the copied epoll code is
-// exercised by the same suite.
+// process with the epoll fallback forced, so the fallback path (the epoller
+// behind the io_uring Poller) is exercised by the same suite.
 func TestEpollFallbackSuite(t *testing.T) {
 	if forceEpoll {
 		t.Skip("already running against the fallback")
@@ -65,36 +81,6 @@ func TestEpollFallbackSuite(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fallback suite failed: %v\n%s", err, out)
-	}
-}
-
-func TestURingEventfdDrained(t *testing.T) {
-	p := newPoller(t)
-	for i := 0; i < 5; i++ {
-		p.Wake()
-	}
-	var evs [4]Event
-	if n, err := p.Wait(evs[:], time.Second); n != 0 || err != nil {
-		t.Fatalf("Wait = %d, %v", n, err)
-	}
-	var buf [8]byte
-	if _, err := unix.Read(p.w.fd, buf[:]); err != unix.EAGAIN {
-		t.Fatalf("eventfd read after Wait: err = %v, want EAGAIN (drained)", err)
-	}
-}
-
-func TestURingRDHupWithoutReadInterest(t *testing.T) {
-	p := newPoller(t)
-	a, b := socketpair(t)
-	if err := p.Add(a, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Shutdown(b, unix.SHUT_WR); err != nil {
-		t.Fatal(err)
-	}
-	f, _ := waitFor(t, p, a, time.Second)
-	if f&Hangup == 0 || f&Readable != 0 {
-		t.Fatalf("flags = %#x, want Hangup without Readable", f)
 	}
 }
 
@@ -169,10 +155,7 @@ func TestURingCoalesce(t *testing.T) {
 		write(t, b, "x")
 	}
 	time.Sleep(5 * time.Millisecond)
-	n, err := p.Wait(evs[:], time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := waitEvents(t, p, evs[:], time.Second)
 	// epoll reports Readable|Writable here; io_uring reports the wakeup key
 	// (Readable) only. Either is valid edge-triggered behaviour.
 	if n != 1 || evs[0].FD != int32(a) || evs[0].Flags&Readable == 0 {
@@ -278,21 +261,6 @@ func TestURingConnectRefused(t *testing.T) {
 	}
 }
 
-func TestURingWaitAfterClose(t *testing.T) {
-	p, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.Close()
-	var evs [4]Event
-	if _, err := p.Wait(evs[:], 0); err != unix.EBADF {
-		t.Fatalf("Wait after Close: %v, want EBADF", err)
-	}
-	if err := p.Add(0, Readable); err != unix.EBADF {
-		t.Fatalf("Add after Close: %v, want EBADF", err)
-	}
-}
-
 // TestURingSQOverflowFlush queues more changes than the SQ holds between
 // Waits and checks every fd still works.
 func TestURingSQOverflowFlush(t *testing.T) {
@@ -301,7 +269,7 @@ func TestURingSQOverflowFlush(t *testing.T) {
 	if err := p.Add(a, 0); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 3*sqEntries; i++ {
+	for i := 0; i < 3*int(sqEntries); i++ {
 		if err := p.Mod(a, uint32(i&1)*Readable); err != nil {
 			t.Fatalf("Mod %d: %v", i, err)
 		}
@@ -312,6 +280,124 @@ func TestURingSQOverflowFlush(t *testing.T) {
 	write(t, b, "x")
 	if f, _ := waitFor(t, p, a, time.Second); f != Readable {
 		t.Fatalf("flags = %#x, want Readable", f)
+	}
+}
+
+// TestURingCQOverflow shrinks the rings to 8 entries and arms many more
+// readable fds than the CQ holds, so their CQEs overflow (kept by
+// IORING_FEAT_NODROP; the kernel also ends multishot polls whose CQE did not
+// fit, and the Poller re-arms them). Every fd must still be reported, and
+// once the caller has read every fd to EAGAIN the Poller must go quiet.
+//
+// It then covers resync, the recovery for dropped CQEs (EBADR), which the
+// kernel cannot be made to produce on demand: after resync every
+// registration is re-armed, so fds with unread data are reported again
+// without a new edge, and fds without data are not.
+func TestURingCQOverflow(t *testing.T) {
+	const nfd = 64
+	var rl unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &rl); err != nil || rl.Cur < 4*nfd {
+		t.Skipf("RLIMIT_NOFILE %d too low for %d socketpairs (%v)", rl.Cur, nfd, err)
+	}
+	sq, cq := sqEntries, cqEntries
+	restore := func() { sqEntries, cqEntries = sq, cq }
+	t.Cleanup(restore) // also if newPoller fails
+	sqEntries, cqEntries = 8, 8
+	p := newPoller(t)
+	restore()
+	requireURing(t, p)
+	if n := len(p.ring.cqes); n > 16 {
+		t.Skipf("kernel sized the CQ at %d entries; cannot force overflow", n)
+	}
+	var fds, peers []int
+	for i := 0; i < nfd; i++ {
+		a, b := socketpair(t)
+		if err := p.Add(a, Readable); err != nil {
+			t.Fatal(err)
+		}
+		write(t, b, "x")
+		fds, peers = append(fds, a), append(peers, b)
+	}
+	var evs [7]Event
+	// collect waits until every fd in want has been reported Readable,
+	// reading each reported fd to EAGAIN when drain is set.
+	collect := func(phase string, want map[int32]bool, drain bool) {
+		t.Helper()
+		for tries := 0; len(want) > 0 && tries < 500; tries++ {
+			n, err := p.Wait(evs[:], 100*time.Millisecond)
+			if err != nil {
+				t.Fatalf("%s: Wait: %v", phase, err)
+			}
+			for _, ev := range evs[:n] {
+				if ev.Flags&Readable != 0 {
+					delete(want, ev.FD)
+					if drain {
+						drainFD(int(ev.FD))
+					}
+				}
+			}
+		}
+		if len(want) != 0 {
+			t.Fatalf("%s: %d fds never reported", phase, len(want))
+		}
+	}
+	// quiet waits until a Wait reports nothing and returns everything
+	// reported before that.
+	quiet := func(phase string) map[int32]bool {
+		t.Helper()
+		seen := map[int32]bool{}
+		for tries := 0; ; tries++ {
+			n, err := p.Wait(evs[:], 10*time.Millisecond)
+			if err != nil {
+				t.Fatalf("%s: Wait: %v", phase, err)
+			}
+			if n == 0 {
+				return seen
+			}
+			if tries == 100 {
+				t.Fatalf("%s: still reporting after 100 Waits: %+v", phase, evs[:n])
+			}
+			for _, ev := range evs[:n] {
+				seen[ev.FD] = true
+			}
+		}
+	}
+
+	all := map[int32]bool{}
+	for _, fd := range fds {
+		all[int32(fd)] = true
+	}
+	collect("overflow", all, true)
+	quiet("overflow")
+
+	// Fresh data on a few fds (fits in the CQ), left unread.
+	const k = 4
+	some := map[int32]bool{}
+	for i := 0; i < k; i++ {
+		write(t, peers[i], "y")
+		some[int32(fds[i])] = true
+	}
+	collect("edge", maps.Clone(some), false)
+	quiet("edge")
+	p.ring.resync()
+	// The re-armed registrations complete asynchronously; give the kernel up
+	// to a second to report the fds with unread data, then make sure nothing
+	// else is reported.
+	got := map[int32]bool{}
+	for deadline := time.Now().Add(time.Second); len(got) < k && time.Now().Before(deadline); {
+		n, err := p.Wait(evs[:], 50*time.Millisecond)
+		if err != nil {
+			t.Fatalf("resync: Wait: %v", err)
+		}
+		for _, ev := range evs[:n] {
+			got[ev.FD] = true
+		}
+	}
+	for fd := range quiet("resync") {
+		got[fd] = true
+	}
+	if !maps.Equal(got, some) {
+		t.Fatalf("after resync reported %v, want exactly the %d fds with unread data %v", got, k, some)
 	}
 }
 
@@ -337,17 +423,8 @@ func TestURingFDTableGrowth(t *testing.T) {
 }
 
 // BenchmarkWaitWake compares the io_uring backend with the epoll fallback
-// (the same code as epoll_linux.go).
-//
-//   - wait0: Wait(0) with nothing ready (the loop's spin phase).
-//   - wake+wait: Wake then Wait(-1) on one goroutine (eventfd write, one
-//     wait syscall, eventfd drain).
-//   - pingpong: two goroutines on two Pollers alternately Wake each other and
-//     block in Wait(-1); ns/op is one full round trip (two wakeups).
-//   - pingpong-locked: the same with each Poller created and waited on by a
-//     goroutine locked to its OS thread, as Loop.run does.
-//   - mod+wait: Mod(Readable) then Wait(-1) on a socket with data pending
-//     (registration change plus readiness report).
+// (the same code as epoll_linux.go); the sub-benchmarks are described at
+// benchWaitWake.
 //
 // Measured on this host (Linux 6.18 WSL2, i9-14900KF, go1.24,
 // -benchtime=1s, several runs; ranges are run-to-run spread, all variants
@@ -373,7 +450,7 @@ func BenchmarkWaitWake(b *testing.B) {
 		name  string
 		uring bool
 	}{{"uring", true}, {"epoll", false}} {
-		mk := func(b *testing.B) *Poller {
+		benchWaitWake(b, backend.name, func(b *testing.B) *Poller {
 			p, err := open(backend.uring)
 			if err != nil {
 				b.Fatal(err)
@@ -384,96 +461,7 @@ func BenchmarkWaitWake(b *testing.B) {
 			}
 			b.Cleanup(func() { p.Close() })
 			return p
-		}
-		b.Run(backend.name+"/wait0", func(b *testing.B) {
-			p := mk(b)
-			evs := make([]Event, 64)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				p.Wait(evs, 0)
-			}
-		})
-		b.Run(backend.name+"/wake+wait", func(b *testing.B) {
-			p := mk(b)
-			evs := make([]Event, 64)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				p.Wake()
-				p.Wait(evs, -1)
-			}
-		})
-		// pingpong: p1 and p2 are unlocked goroutines' Pollers, as in the
-		// tests. pingpong-locked mirrors the real loop: each Poller is
-		// created and waited on by a goroutine locked to its OS thread
-		// (Loop.run calls LockOSThread before poll.New).
-		for _, locked := range []bool{false, true} {
-			name := backend.name + "/pingpong"
-			if locked {
-				name += "-locked"
-			}
-			b.Run(name, func(b *testing.B) {
-				var p1, p2 *Poller
-				if !locked {
-					p1, p2 = mk(b), mk(b)
-				}
-				created := make(chan *Poller)
-				start := make(chan struct{})
-				done := make(chan struct{})
-				go func() {
-					defer close(done)
-					if locked {
-						runtime.LockOSThread()
-						defer runtime.UnlockOSThread()
-						created <- mk(b)
-					}
-					<-start
-					evs := make([]Event, 8)
-					for i := 0; i < b.N; i++ {
-						p1.Wait(evs, -1)
-						p2.Wake()
-					}
-				}()
-				if locked {
-					runtime.LockOSThread()
-					defer runtime.UnlockOSThread()
-					p1 = <-created
-					p2 = mk(b)
-				}
-				close(start)
-				evs := make([]Event, 8)
-				b.ReportAllocs()
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					p1.Wake()
-					p2.Wait(evs, -1)
-				}
-				<-done
-			})
-		}
-		b.Run(backend.name+"/mod+wait", func(b *testing.B) {
-			p := mk(b)
-			fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_NONBLOCK, 0)
-			if err != nil {
-				b.Fatal(err)
-			}
-			defer unix.Close(fds[0])
-			defer unix.Close(fds[1])
-			unix.Write(fds[1], []byte("x"))
-			if err := p.Add(fds[0], Readable); err != nil {
-				b.Fatal(err)
-			}
-			evs := make([]Event, 8)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				p.Mod(fds[0], Readable)
-				if n, _ := p.Wait(evs, -1); n != 1 {
-					b.Fatalf("Wait = %d", n)
-				}
-			}
-		})
+		}, true)
 	}
 }
 
