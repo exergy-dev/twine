@@ -45,8 +45,8 @@ jobs:
           go-version: stable
       - run: sudo modprobe tls
       - name: KTLS tests exist (so the next step cannot pass vacuously)
-        run: go test -list KTLS ./tls | grep '^Test'
-      - run: TWINE_REQUIRE_KTLS=1 go test -count=1 -v -run KTLS ./tls
+        run: go test -list KTLS ./twtls | grep '^Test'
+      - run: TWINE_REQUIRE_KTLS=1 go test -count=1 -v -run KTLS ./twtls
 
   lint:
     runs-on: ubuntu-latest

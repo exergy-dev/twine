@@ -32,5 +32,5 @@ terms, and [API.md](API.md) lists the whole exported surface.
 | `AMP` | `proto.AMP` | Request/response multiplexing over length-prefixed frames. |
 | `DatagramProtocol` | `twine.DatagramProtocol` | `DatagramReceived(b []byte, addr)`. |
 | `reactor.spawnProcess` | out of scope | Use `os/exec` from a goroutine. |
-| `twisted.internet.ssl` | `tls` package | Memory-BIO over `crypto/tls`; handshake off-loop. |
+| `twisted.internet.ssl` | `twtls` package | Memory-BIO over `crypto/tls`; handshake off-loop. |
 | `reactor.addSystemEventTrigger` | `engine.OnShutdown(f)` | — |

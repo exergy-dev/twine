@@ -76,8 +76,8 @@ func DialOptions(opts ...twine.DialOption) ReconnectOption {
 //
 // Pass eng.NextLoop() as the loop unless the connection must share a loop
 // with other state. The wrapped Factory builds the protocol for every
-// successful connect; wrap it with tls.Client (package
-// github.com/exergy-dev/twine/tls) to get a reconnecting TLS client. The
+// successful connect; wrap it with twtls.Client (package
+// github.com/exergy-dev/twine/twtls) to get a reconnecting TLS client. The
 // client interposes a thin wrapper protocol to observe the connection's
 // life. A successful connect resets the backoff automatically (Twisted's
 // convention is for the protocol to call resetDelay once connected; Twine

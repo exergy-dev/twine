@@ -15,8 +15,8 @@ import (
 // closes as soon as writes are flushed, and SpinIterations(0) blocks without
 // spinning (a count, but with the same rule; its default needs a negative
 // value). Among the DialOptions, DialTimeout(0) means no timeout. The other
-// packages state their own rules: http.Server durations treat 0 as the
-// default and a negative value as "off", and tls.HandshakeTimeout treats
+// packages state their own rules: twhttp.Server durations treat 0 as the
+// default and a negative value as "off", and twtls.HandshakeTimeout treats
 // d <= 0 as the default because a handshake cannot be unbounded.
 type Option func(*config)
 

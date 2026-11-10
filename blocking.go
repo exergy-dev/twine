@@ -12,8 +12,8 @@ import (
 // proxy method returns at once except Context and PendingWrite, which have a
 // result to return and so wait for a round trip to the loop. This is the
 // migration path for code that blocks or is not ready for callback style. It
-// works over any Transport, including the tls package's: wrap the inner
-// factory, as in tls.Server(cfg, twine.Blocking(f)).
+// works over any Transport, including the twtls package's: wrap the inner
+// factory, as in twtls.Server(cfg, twine.Blocking(f)).
 //
 // Backpressure: the channel holds up to 64 chunks; when it is full the loop
 // pauses reading until the goroutine catches up. A panic in the wrapped

@@ -133,17 +133,16 @@ func (r *resolver) DataReceived(b []byte) {
 
 ## An HTTP server
 
-The `http` and `tls` packages share their names with `net/http` and
-`crypto/tls`. Import them as `twhttp` and `twtls`, so the standard packages
-keep their usual names:
+The HTTP and TLS packages are named `twhttp` and `twtls`, so they sit next
+to `net/http` and `crypto/tls` in an import block without aliases:
 
 ```go
 import (
 	"crypto/tls"
 	"net/http"
 
-	twhttp "github.com/exergy-dev/twine/http"
-	twtls "github.com/exergy-dev/twine/tls"
+	"github.com/exergy-dev/twine/twhttp"
+	"github.com/exergy-dev/twine/twtls"
 )
 ```
 
@@ -216,8 +215,8 @@ loop-affinity assertions, read-buffer poisoning and Future creation stacks.
 | `twine` | Engine, Loop, Protocol/Transport/Factory, Future, timers, CallFromThread, DeferToThread, UDP, per-loop metrics, watchdog, `Blocking` adapter |
 | `metrics` | Prometheus text-format handler over the engine's per-loop metrics (kept out of the root package so `net/http` is linked only when you use it) |
 | `proto` | `LineReceiver`, `NetstringReceiver`, `LengthPrefixed`, `AMP`, `ReconnectingClient`, `Broadcast` |
-| `http` | HTTP/1.1 server with no per-request allocation in the steady state (`Server`, `RequestCtx`), plus `Adapt(net/http.Handler)`, a migration bridge that allocates per request |
-| `tls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Listen`, `Connect`) and opt-in kTLS offload |
+| `twhttp` | HTTP/1.1 server with no per-request allocation in the steady state (`Server`, `RequestCtx`), plus `Adapt(net/http.Handler)`, a migration bridge that allocates per request |
+| `twtls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Listen`, `Connect`) and opt-in kTLS offload |
 | `internal/*` | poller (epoll/kqueue/io_uring), sockets, slab allocator, write ring, MPSC queue, timing wheel |
 | `bench` | separate module with the comparison harness (goroutine-per-conn, gnet, net/http); Linux only |
 | `examples` | `echo`, `chat`, `http_hello`, `udp_echo` and `client_reconnect` |
@@ -234,7 +233,7 @@ Two features are **Linux-only and experimental**:
   for TLS 1.3 connections using AES-GCM. The record keys are read from
   `crypto/tls` by reflection and checked at runtime on every access; any
   mismatch, TLS 1.2, any other cipher suite (including ChaCha20-Poly1305) or
-  a kernel refusal stays on the memory BIO. See `tls/doc.go` for the exact
+  a kernel refusal stays on the memory BIO. See `twtls/doc.go` for the exact
   scope. CI loads the kernel `tls` module on an Ubuntu runner and fails if
   the kTLS tests cannot offload.
 

@@ -329,7 +329,7 @@ func (e *RemoteError) Error() string
 func (e *RemoteError) Is(target error) bool
 ```
 
-## github.com/exergy-dev/twine/http
+## github.com/exergy-dev/twine/twhttp
 
 ```
 const (
@@ -342,7 +342,7 @@ const (
 	DefaultIdleTimeout = 90 * time.Second
 	DefaultReadTimeout = 60 * time.Second
 )
-func Adapt(h nethttp.Handler) func(*RequestCtx)
+func Adapt(h http.Handler) func(*RequestCtx)
 type RequestCtx struct {
 	// Has unexported fields.
 }
@@ -395,16 +395,16 @@ func (s *Server) Factory() twine.Factory
 func (s *Server) Listen(e *twine.Engine, addr string, opts ...twine.ListenOption) (twine.Listener, error)
 ```
 
-## github.com/exergy-dev/twine/tls
+## github.com/exergy-dev/twine/twtls
 
 ```
 const DefaultHandshakeTimeout = 10 * time.Second
 var ErrHandshakeTimeout = errors.New("tls: handshake timeout")
-func Client(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory
-func Connect(l *twine.Loop, addr string, cfg *ctls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
+func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
+func Connect(l *twine.Loop, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
 func KTLSAvailable() bool
-func Listen(e *twine.Engine, addr string, cfg *ctls.Config, inner twine.Factory, opts ...Option) (twine.Listener, error)
-func Server(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory
+func Listen(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) (twine.Listener, error)
+func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
 type HandshakeError struct {
 	Peer net.Addr
 	Err error
@@ -421,7 +421,7 @@ type Transport struct {
 	// Has unexported fields.
 }
 func (t *Transport) Abort()
-func (t *Transport) ConnectionState() ctls.ConnectionState
+func (t *Transport) ConnectionState() tls.ConnectionState
 func (t *Transport) Context() any
 func (t *Transport) GetHost() net.Addr
 func (t *Transport) GetPeer() net.Addr

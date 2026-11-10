@@ -105,7 +105,7 @@ type Producer interface {
 
 // Consumer is the write side of a connection that a Producer feeds
 // (Twisted's IConsumer). Transport embeds it, so every Transport is a
-// Consumer; wrappers such as the tls package's Transport implement it too.
+// Consumer; wrappers such as the twtls package's Transport implement it too.
 type Consumer interface {
 	// RegisterProducer attaches p. With streaming true (a push producer) p
 	// writes on its own and is paused and resumed around the WriteHighWater

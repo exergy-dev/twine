@@ -104,7 +104,7 @@ fuzz:
 	$(GO) test ./proto -run='^$$' -fuzz='^FuzzNetstring$$'       -fuzztime=$(FUZZTIME)
 	$(GO) test ./proto -run='^$$' -fuzz='^FuzzLengthPrefixed$$'  -fuzztime=$(FUZZTIME)
 	$(GO) test ./proto -run='^$$' -fuzz='^FuzzAMP$$'             -fuzztime=$(FUZZTIME)
-	$(GO) test ./http  -run='^$$' -fuzz='^FuzzParseRequest$$'    -fuzztime=$(FUZZTIME)
+	$(GO) test ./twhttp -run='^$$' -fuzz='^FuzzParseRequest$$'   -fuzztime=$(FUZZTIME)
 
 # Benchmarks: root module micro-benchmarks plus the bench/ harness module
 # (Linux only).
