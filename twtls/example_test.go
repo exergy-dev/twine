@@ -20,18 +20,18 @@ func (p *lineEcho) ConnectionMade(t twine.Transport) { p.t = t }
 func (p *lineEcho) DataReceived(b []byte)            { p.t.Write(b) }
 func (p *lineEcho) ConnectionLost(error)             {}
 
-// Serve TLS on :8443. Listen rejects a Config without a certificate, like
-// crypto/tls.Listen. Core listener options go through WithListenOptions.
-func ExampleListen() {
+// Serve TLS on :8443: Server wraps the plaintext factory and Engine.ListenTCP
+// binds the port, with the TLS options on Server and the listener options on
+// ListenTCP. Server panics on a Config without a certificate, the Config
+// crypto/tls.Listen rejects.
+func ExampleServer() {
 	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
 		log.Fatal(err)
 	}
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}}
-	_, err = twtls.Listen(eng, ":8443", cfg,
-		func(net.Addr) twine.Protocol { return &lineEcho{} },
-		twtls.WithListenOptions(twine.Backlog(4096)),
+	f := twtls.Server(cfg, func(net.Addr) twine.Protocol { return &lineEcho{} },
 		twtls.HandshakeTimeout(5*time.Second),
 		twtls.OnHandshakeError(func(err error) {
 			var he *twtls.HandshakeError
@@ -39,15 +39,15 @@ func ExampleListen() {
 				log.Printf("TLS handshake with %v failed: %v", he.Peer, he.Err)
 			}
 		}))
-	if err != nil {
+	if _, err := eng.ListenTCP(":8443", f, twine.Backlog(4096)); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))
 }
 
-// Server wraps a factory for use with Engine.ListenTCP directly; core
-// listener options are then passed to ListenTCP itself.
-func ExampleServer() {
+// KernelOffload asks for kTLS where the kernel supports it; connections it
+// cannot offload stay on the memory BIO.
+func ExampleKernelOffload() {
 	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
 		log.Fatal(err)
@@ -55,8 +55,8 @@ func ExampleServer() {
 	eng := twine.New()
 	f := twtls.Server(&tls.Config{Certificates: []tls.Certificate{cert}},
 		func(net.Addr) twine.Protocol { return &lineEcho{} },
-		twtls.KernelOffload(true)) // kTLS where the kernel supports it
-	if _, err := eng.ListenTCP(":8443", f, twine.TCPNoDelay(true), twine.Backlog(4096)); err != nil {
+		twtls.KernelOffload(true))
+	if _, err := eng.ListenTCP(":8443", f, twine.TCPNoDelay(true)); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))
@@ -96,14 +96,14 @@ func main() {
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 	factory := func(net.Addr) twine.Protocol { return &echo{} }
-	if _, err := twtls.Listen(eng, ":8443", cfg, factory); err != nil {
+	if _, err := eng.ListenTCP(":8443", twtls.Server(cfg, factory)); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))
 }
 
-// The smallest TLS listener: a plaintext Protocol, unchanged, behind Listen.
-func ExampleListen_echo() { main() }
+// The smallest TLS listener: a plaintext Protocol, unchanged, behind Server.
+func ExampleServer_echo() { main() }
 
 // alpnProto inspects the negotiated parameters when the handshake is done.
 type alpnProto struct{ lineEcho }
@@ -131,8 +131,8 @@ func ExampleTransport_ConnectionState() {
 	}
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"twine/1"}}
-	if _, err := twtls.Listen(eng, ":8443", cfg,
-		func(net.Addr) twine.Protocol { return &alpnProto{} }); err != nil {
+	f := twtls.Server(cfg, func(net.Addr) twine.Protocol { return &alpnProto{} })
+	if _, err := eng.ListenTCP(":8443", f); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))

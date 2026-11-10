@@ -167,9 +167,10 @@ func main() {
 
 ## A TLS listener
 
-`twtls.Listen` wraps a plaintext `Factory`: the `echo` Protocol above runs
-unchanged, seeing decrypted bytes. The handshake runs off the loop; like
-`crypto/tls.Listen`, it rejects a config with no certificate.
+`twtls.Server` wraps a plaintext `Factory` for `ListenTCP`: the `echo`
+Protocol above runs unchanged, seeing decrypted bytes. The handshake runs off
+the loop. Like `crypto/tls.Listen`, it refuses a config with no certificate
+(`Server` panics).
 
 ```go
 func main() {
@@ -180,7 +181,7 @@ func main() {
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 	factory := func(net.Addr) twine.Protocol { return &echo{} }
-	if _, err := twtls.Listen(eng, ":8443", cfg, factory); err != nil {
+	if _, err := eng.ListenTCP(":8443", twtls.Server(cfg, factory)); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))
@@ -218,7 +219,7 @@ loop-affinity assertions, read-buffer poisoning and Future creation stacks.
 | `metrics` | Prometheus text-format handler over the engine's per-loop metrics (kept out of the root package so `net/http` is linked only when you use it) |
 | `proto` | `LineReceiver`, `NetstringReceiver`, `LengthPrefixed`, `AMP`, `ReconnectingClient`, `Broadcast` |
 | `twhttp` | HTTP/1.1 server with no per-request allocation in the steady state (`Server`, `RequestCtx`), plus `Adapt(net/http.Handler)`, a migration bridge that allocates per request |
-| `twtls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Listen`, `Connect`) and opt-in kTLS offload |
+| `twtls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Dial`, `Connect`) and opt-in kTLS offload |
 | `internal/*` | poller (epoll/kqueue/io_uring), sockets, slab allocator, write ring, MPSC queue, timing wheel |
 | `bench` | separate module with the comparison harness (goroutine-per-conn, gnet, net/http); Linux only |
 | `examples` | `echo`, `chat`, `http_hello`, `udp_echo` and `client_reconnect` |

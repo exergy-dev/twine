@@ -109,9 +109,9 @@ func echoFactory() twine.Factory {
 
 func listen(t testing.TB, e *twine.Engine, cfg *tls.Config, f twine.Factory, opts ...twtls.Option) string {
 	t.Helper()
-	lst, err := twtls.Listen(e, "127.0.0.1:0", cfg, f, opts...)
+	lst, err := e.ListenTCP("127.0.0.1:0", twtls.Server(cfg, f, opts...))
 	if err != nil {
-		t.Fatalf("Listen: %v", err)
+		t.Fatalf("ListenTCP: %v", err)
 	}
 	return lst.Addr().String()
 }
@@ -766,23 +766,19 @@ func TestClientWithConnectTCP(t *testing.T) {
 	}
 }
 
-// TestServerConfigWithoutCertificate: Listen rejects, and Server panics on,
-// a Config that cannot serve a handshake, as crypto/tls.Listen does.
+// TestServerConfigWithoutCertificate: Server panics on a Config that cannot
+// serve a handshake, the one crypto/tls.Listen rejects.
 func TestServerConfigWithoutCertificate(t *testing.T) {
 	e := startEngine(t)
 	for _, cfg := range []*tls.Config{nil, {}, {NextProtos: []string{"h2"}}} {
-		lst, err := twtls.Listen(e, "127.0.0.1:0", cfg, echoFactory())
-		if err == nil {
-			lst.Close()
-			t.Fatalf("Listen(%v) succeeded without a certificate", cfg)
-		}
-		if !strings.Contains(err.Error(), "neither Certificates, GetCertificate, nor GetConfigForClient") {
-			t.Fatalf("Listen error %q", err)
-		}
 		func() {
 			defer func() {
-				if recover() == nil {
+				r := recover()
+				if r == nil {
 					t.Fatalf("Server(%v) did not panic", cfg)
+				}
+				if err, ok := r.(error); !ok || !strings.Contains(err.Error(), "neither Certificates, GetCertificate, nor GetConfigForClient") {
+					t.Fatalf("Server(%v) panicked with %v", cfg, r)
 				}
 			}()
 			twtls.Server(cfg, echoFactory())
@@ -967,9 +963,14 @@ func TestReentrantWriteFromProducer(t *testing.T) {
 	e := startEngine(t, twine.WriteHighWater(64<<10), twine.WriteLowWater(16<<10))
 	prod := &reentrantProducer{}
 	const total = 2 << 20
-	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
+	f := twtls.Server(serverConfig(t), func(net.Addr) twine.Protocol {
 		return &producerProto{prod: prod, total: total}
-	}, twtls.WithListenOptions(twine.SocketBuffers(0, 16<<10)))
+	})
+	lst, err := e.ListenTCP("127.0.0.1:0", f, twine.SocketBuffers(0, 16<<10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := lst.Addr().String()
 	c := dial(t, addr, nil)
 	defer c.Close()
 	time.Sleep(50 * time.Millisecond) // let the ring fill past the high-water mark

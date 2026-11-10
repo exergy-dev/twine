@@ -12,14 +12,13 @@ import (
 // long.
 const DefaultHandshakeTimeout = 10 * time.Second
 
-// Option configures Server, Client, Listen and Connect.
+// Option configures Server, Client, Connect and Dial.
 type Option func(*options)
 
 type options struct {
 	kernelOffload    bool
 	onHandshakeError func(err error)
 	handshakeTimeout time.Duration
-	listenOpts       []twine.ListenOption
 	dialOpts         []twine.DialOption
 }
 
@@ -42,7 +41,7 @@ func buildOptions(opts []Option) options {
 // Transport.KernelOffload reports the mode in use; see the package
 // documentation, "Kernel TLS", for the exact rules and limitations. The
 // kernel capability probes run once per process, when the first factory
-// with KernelOffload(true) is built (by Server, Client, Listen or Connect).
+// with KernelOffload(true) is built (by Server, Client, Connect or Dial).
 func KernelOffload(on bool) Option { return func(o *options) { o.kernelOffload = on } }
 
 // OnHandshakeError registers fn to be called, on the connection's loop, when
@@ -66,14 +65,9 @@ func HandshakeTimeout(d time.Duration) Option {
 	return func(o *options) { o.handshakeTimeout = d }
 }
 
-// WithListenOptions passes core listener options through Listen to
-// twine.Engine.ListenTCP. It is ignored by Server, Client and Connect.
-func WithListenOptions(lo ...twine.ListenOption) Option {
-	return func(o *options) { o.listenOpts = append(o.listenOpts, lo...) }
-}
-
-// WithDialOptions passes core dial options through Connect to
-// twine.Loop.ConnectTCP. It is ignored by Server, Client and Listen.
+// WithDialOptions passes core dial options through Connect and Dial to
+// twine.Loop.ConnectTCP. It is ignored by Server and Client, whose listener
+// options go to twine.Engine.ListenTCP directly.
 func WithDialOptions(do ...twine.DialOption) Option {
 	return func(o *options) { o.dialOpts = append(o.dialOpts, do...) }
 }

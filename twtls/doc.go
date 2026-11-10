@@ -14,7 +14,7 @@
 //	)
 //
 //	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2", "http/1.1"}}
-//	lst, err := twtls.Listen(eng, ":8443", cfg, myFactory, twtls.OnHandshakeError(logIt))
+//	lst, err := eng.ListenTCP(":8443", twtls.Server(cfg, myFactory, twtls.OnHandshakeError(logIt)))
 //
 //	fut := twtls.Dial(eng, "example.com:443", &tls.Config{}, clientFactory)
 //

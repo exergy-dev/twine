@@ -88,10 +88,12 @@ func newFactory(cfg *tls.Config, inner twine.Factory, client bool, opts []Option
 // Server wraps inner so that every connection it serves speaks TLS as the
 // server side, using cfg. cfg must be able to serve a handshake: it must set
 // Certificates, GetCertificate or GetConfigForClient, and Server panics
-// otherwise (Listen returns that condition as an error instead).
+// otherwise (the condition crypto/tls.Listen reports as an error).
 // inner.ConnectionMade is called with a *Transport once the handshake has
 // completed; DataReceived then carries plaintext. The returned Factory is
-// used with twine.Engine.ListenTCP.
+// used with twine.Engine.ListenTCP, which takes the listener options:
+//
+//	eng.ListenTCP(":8443", twtls.Server(cfg, f, twtls.HandshakeTimeout(5*time.Second)), twine.Backlog(4096))
 func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory {
 	if !canServe(cfg) {
 		panic(errNoCertificate)
@@ -117,17 +119,6 @@ func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory 
 		cfg = &tls.Config{}
 	}
 	return newFactory(cfg, inner, true, opts).build
-}
-
-// Listen is ListenTCP with a Server factory. Core listener options are passed
-// with WithListenOptions. Like crypto/tls.Listen it returns an error when cfg
-// is nil or sets none of Certificates, GetCertificate and GetConfigForClient.
-func Listen(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) (twine.Listener, error) {
-	if !canServe(cfg) {
-		return nil, errNoCertificate
-	}
-	f := newFactory(cfg, inner, false, opts)
-	return e.ListenTCP(addr, f.build, f.opts.listenOpts...)
 }
 
 // Dial is Connect on a loop of e chosen with e.NextLoop: the usual way to

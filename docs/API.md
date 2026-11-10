@@ -394,7 +394,6 @@ func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
 func Connect(l *twine.Loop, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
 func Dial(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
 func KTLSAvailable() bool
-func Listen(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) (twine.Listener, error)
 func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
 type HandshakeError struct {
 	Peer net.Addr
@@ -407,7 +406,6 @@ func HandshakeTimeout(d time.Duration) Option
 func KernelOffload(on bool) Option
 func OnHandshakeError(fn func(err error)) Option
 func WithDialOptions(do ...twine.DialOption) Option
-func WithListenOptions(lo ...twine.ListenOption) Option
 type Transport struct {
 	// Has unexported fields.
 }
