@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// Micro-benchmarks for design Section 12 (timers_1m, callfromthread) and the
+// Micro-benchmarks for the timers_1m and callfromthread targets (see
+// docs/history/design.md Section 12) and the
 // Phase 3 acceptance gates. The network harness lives in the bench module.
 
 // benchNoop is the timer callback; hoisted so CallLater never sees a fresh
@@ -31,19 +32,6 @@ func benchDelays(n int, span time.Duration) []time.Duration {
 	return d
 }
 
-// benchOnLoop runs fn on l and waits for it, with a timeout generous enough
-// for setup of a million timers plus a full benchtime.
-func benchOnLoop(b *testing.B, l *Loop, fn func()) {
-	b.Helper()
-	done := make(chan struct{})
-	l.CallFromThread(func() { defer close(done); fn() })
-	select {
-	case <-done:
-	case <-time.After(5 * time.Minute):
-		b.Fatal("loop did not run benchmark task")
-	}
-}
-
 // BenchmarkTimers1M measures CallLater on a wheel holding 1M live timers.
 // insert+cancel: one op is CallLater followed by Stop (the Phase 3 gate is
 // <= 50 ns and 0 allocs). fire: one op is one timer expiring and running its
@@ -53,7 +41,7 @@ func BenchmarkTimers1M(b *testing.B) {
 		e := startEngine(b, Loops(1))
 		l := e.loops[0]
 		delays := benchDelays(4096, time.Hour)
-		benchOnLoop(b, l, func() {
+		onLoop(b, l, func() {
 			for i := 0; i < liveTimers; i++ {
 				l.CallLater(delays[i&4095]+time.Hour, benchNoop)
 			}
@@ -74,7 +62,7 @@ func BenchmarkTimers1M(b *testing.B) {
 		e := startEngine(b, Loops(1))
 		l := e.loops[0]
 		delays := benchDelays(4096, time.Second)
-		benchOnLoop(b, l, func() {
+		onLoop(b, l, func() {
 			// Drive the wheel with a synthetic clock: each batch is
 			// scheduled within 1 s of now and fired by advancing 2 s. The
 			// engine is discarded afterwards, so leaving its wheel ahead of
@@ -220,7 +208,7 @@ func crossThreadBench(b *testing.B, window int, submit func(fn func())) {
 	}
 }
 
-// BenchmarkCallFromThread is design Section 12 callfromthread: 16 producer
+// BenchmarkCallFromThread is the callfromthread target: 16 producer
 // goroutines push a preallocated func to one loop. wakeups/op is the eventfd
 // writes per call (the Phase 3 gate is <= 0.1). window=2048 bounds each
 // producer's outstanding tasks so the MPSC ring never fills; flood lets
@@ -338,7 +326,7 @@ func BenchmarkFutureResolve(b *testing.B) {
 		l := e.loops[0]
 		var sum int
 		cb := func(v int) { sum += v }
-		benchOnLoop(b, l, func() {
+		onLoop(b, l, func() {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

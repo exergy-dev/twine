@@ -1,8 +1,9 @@
-// Command echo is the reference twine echo server from design Section 6.4,
-// with flags for the listen address and loop count, an optional runtime
-// trace, and graceful shutdown on SIGINT/SIGTERM.
+// Command echo is the reference twine echo server: every chunk a client sends
+// is written straight back. Flags set the listen address and loop count, an
+// optional runtime trace is written on request, and SIGINT/SIGTERM shut it
+// down gracefully.
 //
-//	go run ./examples/echo -addr :9000 -loops 4 --trace echo.trace
+//	go run ./examples/echo -addr :9000 -loops 4 -trace echo.trace
 //	go tool trace echo.trace
 package main
 

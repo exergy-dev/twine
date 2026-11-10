@@ -14,7 +14,7 @@ const DefaultMaxNetstring = 1 << 20
 // "len:data," framing (http://cr.yp.to/proto/netstrings.txt) and calls
 // StringReceived for each payload. Embed it and set the callback fields.
 //
-// A declared length above MaxLength aborts with twine.ErrFrameTooLarge as
+// A declared length above MaxLength aborts with ErrFrameTooLarge as
 // soon as the length digits exceed it. Malformed input (an empty length, a
 // non-digit before ':', a leading zero in a multi-digit length, or a byte
 // other than ',' after the payload) aborts with ErrMalformedNetstring. In
@@ -33,14 +33,12 @@ type NetstringReceiver struct {
 	// framing error recorded before an abort, or the core's error otherwise.
 	OnConnectionLost func(err error)
 
-	t      twine.Transport
-	err    error
+	stream // buf holds a partial payload
 	state  uint8
 	digits int // length digits seen in the current header
 	n      int // declared payload length
-	buf    []byte
 	hdr    [24]byte
-	iov    [3][]byte
+	iov    [3][]byte // Writev argument; a literal through the interface would allocate
 }
 
 const (
@@ -55,22 +53,13 @@ var comma = []byte{','}
 
 // ConnectionMade implements twine.Protocol.
 func (ns *NetstringReceiver) ConnectionMade(t twine.Transport) {
-	ns.t = t
-	if ns.OnConnectionMade != nil {
-		ns.OnConnectionMade(t)
-	}
+	ns.made(t, ns.OnConnectionMade)
 }
 
 // ConnectionLost implements twine.Protocol. It substitutes the recorded
 // framing error, if any, and calls OnConnectionLost.
 func (ns *NetstringReceiver) ConnectionLost(err error) {
-	if ns.err != nil {
-		err = ns.err
-	}
-	ns.buf = nil
-	if ns.OnConnectionLost != nil {
-		ns.OnConnectionLost(err)
-	}
+	ns.lost(err, ns.OnConnectionLost)
 }
 
 // Transport returns the transport stored by ConnectionMade.
@@ -79,15 +68,12 @@ func (ns *NetstringReceiver) Transport() twine.Transport { return ns.t }
 // Err returns the framing error that made the receiver abort, or nil.
 func (ns *NetstringReceiver) Err() error { return ns.err }
 
-// SendString writes s as a netstring with a single Writev. When t is nil the
-// stored transport is used. It does not allocate.
-func (ns *NetstringReceiver) SendString(t twine.Transport, s []byte) {
-	if t == nil {
-		t = ns.t
-	}
+// SendString writes s as a netstring to the transport stored by
+// ConnectionMade, with a single Writev. It does not allocate.
+func (ns *NetstringReceiver) SendString(s []byte) {
 	h := append(strconv.AppendInt(ns.hdr[:0], int64(len(s)), 10), ':')
 	ns.iov[0], ns.iov[1], ns.iov[2] = h, s, comma
-	t.Writev(ns.iov[:]...)
+	ns.t.Writev(ns.iov[:]...)
 	ns.iov = [3][]byte{}
 }
 
@@ -96,14 +82,6 @@ func (ns *NetstringReceiver) maxLen() int {
 		return DefaultMaxNetstring
 	}
 	return ns.MaxLength
-}
-
-func (ns *NetstringReceiver) fail(err error) {
-	ns.err = err
-	ns.buf = ns.buf[:0]
-	if ns.t != nil {
-		ns.t.Abort()
-	}
 }
 
 // DataReceived implements twine.Protocol.
@@ -123,7 +101,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 				ns.n = ns.n*10 + int(c-'0')
 				ns.digits++
 				if ns.n > max {
-					ns.fail(twine.ErrFrameTooLarge)
+					ns.fail(ErrFrameTooLarge)
 					return
 				}
 			case c == ':' && ns.digits > 0:
@@ -143,10 +121,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 					continue
 				}
 				ns.state = nsData
-				if cap(ns.buf) < ns.n {
-					ns.buf = make([]byte, 0, ns.n)
-				}
-				ns.buf = ns.buf[:0]
+				ns.buf.reserve(ns.n)
 			default:
 				ns.fail(ErrMalformedNetstring)
 				return
@@ -170,11 +145,7 @@ func (ns *NetstringReceiver) DataReceived(b []byte) {
 			if ns.StringReceived != nil {
 				ns.StringReceived(s)
 			}
-			if cap(ns.buf) > retainLimit {
-				ns.buf = nil // do not pin a large buffer per connection
-			} else {
-				ns.buf = ns.buf[:0]
-			}
+			ns.buf.reset()
 		}
 	}
 }

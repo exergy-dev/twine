@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command idle1m opens N idle TCP connections (default 1,000,000) to the
 // twine echo server in bench/idle1m/server and holds them, sampling the
 // server's RSS and the host's free memory every -sample. It aborts (closing
@@ -298,6 +300,6 @@ loop:
 		}
 	}
 	if strings.HasPrefix(reason, "ABORT") {
-		os.Exit(2)
+		os.Exit(2) //nolint:gocritic // the deferred ticker stop does not matter at exit
 	}
 }

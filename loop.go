@@ -13,9 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// maxEvents is the size of the stack-resident event array handed to Wait.
-const maxEvents = 256
-
 // maxTasksPerIteration bounds task-queue draining so I/O is never starved.
 const maxTasksPerIteration = 1024
 
@@ -44,12 +41,11 @@ type Loop struct {
 	overflowMu     sync.Mutex
 	overflow       []func()
 	overflowActive atomic.Bool
-	local          []func() // tasks queued by the loop itself
-	moreTasks      bool     // drain hit the per-iteration cap
+	moreTasks      bool // drain hit the per-iteration cap
 
 	// Identity.
-	tid      atomic.Int64 // kernel thread id when locked
-	gid      atomic.Int64 // goroutine id fallback
+	tid      atomic.Int64 // kernel thread id of the locked loop thread
+	gid      atomic.Int64 // goroutine id (InLoop fallback, watchdog stack filter)
 	started  atomic.Bool
 	stopped  atomic.Bool
 	wakeBusy atomic.Int32 // CallFromThread callers inside Wake
@@ -60,10 +56,10 @@ type Loop struct {
 	wheel  *wheel.Wheel
 	epoch  time.Time
 	now    time.Time
-	nowNs  int64
+	nowNs  int64 // monotonic ns since epoch at iteration start; timers use it
 
 	rdbuf  []byte
-	events [maxEvents]poll.Event
+	events [poll.MaxEvents]poll.Event
 	iovecs [64]unix.Iovec
 
 	conns     []*conn // indexed by fd
@@ -87,9 +83,22 @@ type Loop struct {
 	exitCh       chan struct{}
 
 	// Observability.
-	metrics LoopMetrics
+	metrics loopMetrics
 	cbStart atomic.Int64 // monotonic ns when the current callback began; 0 when idle
 	cbProto atomic.Pointer[conn]
+	// Completed slow dispatches, measured by the loop itself from clock reads
+	// it already makes: dispatchStart is the time the last poll returned,
+	// dispatchCbs counts the callbacks run since, lastCb is the connection of
+	// the most recent one (nil for a task). slowNs holds the longest span at
+	// or above the watchdog threshold since the watchdog last looked, and
+	// slowProto the connection to blame when exactly one callback ran.
+	dispatchStart int64
+	dispatchCbs   int
+	lastCb        *conn
+	wdNs          int64
+	slowNs        atomic.Int64
+	slowProto     atomic.Pointer[conn]
+	slowMulti     atomic.Bool
 }
 
 func newLoop(e *Engine, id int) *Loop {
@@ -97,7 +106,7 @@ func newLoop(e *Engine, id int) *Loop {
 		id:     id,
 		eng:    e,
 		cfg:    &e.cfg,
-		tasks:  mpsc.New(e.cfg.taskQueueSize),
+		tasks:  mpsc.New(taskQueueSize),
 		exitCh: make(chan struct{}),
 		epoch:  time.Now(),
 	}
@@ -106,6 +115,7 @@ func newLoop(e *Engine, id int) *Loop {
 	l.wheel = wheel.New(wheelTick, 0)
 	l.rdbuf = make([]byte, e.cfg.readBufferSize)
 	l.conns = make([]*conn, 1024)
+	l.wdNs = e.cfg.watchdog.Nanoseconds()
 	return l
 }
 
@@ -120,36 +130,41 @@ func (l *Loop) Engine() *Engine { return l.eng }
 func (l *Loop) Now() time.Time { return l.now }
 
 // Stopped reports whether the loop has exited. CallFromThread after this
-// point drops the function (ErrLoopStopped semantics) and counts it in
-// LoopMetrics.BacklogDrops.
+// point drops the function and counts it in MetricsSnapshot.BacklogDrops.
 func (l *Loop) Stopped() bool { return l.stopped.Load() }
 
 // Metrics returns a snapshot of the loop's counters. Safe from any goroutine.
-func (l *Loop) Metrics() MetricsSnapshot { return l.metrics.snapshot() }
+func (l *Loop) Metrics() MetricsSnapshot {
+	s := l.metrics.snapshot()
+	s.LoopID = l.id
+	return s
+}
 
 // InLoop reports whether the caller is running on this loop's thread.
 func (l *Loop) InLoop() bool {
 	if !l.started.Load() {
 		return false
 	}
-	if haveThreadID && l.cfg.lockOSThread {
+	if haveThreadID {
 		return threadID() == l.tid.Load()
 	}
 	return goid() == l.gid.Load()
 }
 
 // CallFromThread schedules fn to run on the loop. It is safe from any
-// goroutine and never blocks: overflow beyond TaskQueueSize spills into a
-// mutex-guarded slice. Wakeups are coalesced so N concurrent calls cost at
-// most one eventfd write. A call made from the loop itself appends to a local
-// slice and skips the atomics. After the loop has exited fn is dropped.
+// goroutine, including the loop itself, and never blocks: when the lock-free
+// ring is full, tasks spill into a mutex-guarded slice. The function runs
+// after the current callback returns (in this iteration's drain or a later
+// one), never re-entrantly, and calls from one goroutine run in order. Wakeups
+// are coalesced so N
+// concurrent calls cost at most one wakeup write, and no wakeup is written
+// while the loop is inside a callback (it drains the queue before it blocks
+// again), so a call from a callback costs one queue push. On the loop,
+// CallLater(0, fn) is the cheaper way to defer work. After the loop has
+// exited fn is dropped (counted in MetricsSnapshot.BacklogDrops).
 func (l *Loop) CallFromThread(fn func()) {
 	if l.stopped.Load() {
-		l.metrics.BacklogDrops.Add(1)
-		return
-	}
-	if l.InLoop() {
-		l.local = append(l.local, fn)
+		l.metrics.backlogDrops.Add(1)
 		return
 	}
 	// While the overflow slice is non-empty every producer appends there so
@@ -160,21 +175,31 @@ func (l *Loop) CallFromThread(fn func()) {
 		l.overflowActive.Store(true)
 		l.overflowMu.Unlock()
 	}
+	if l.cbStart.Load() != 0 {
+		// The loop is running a callback (possibly this very caller), so it is
+		// awake and checks the queue before it blocks. The push above and
+		// this load are sequentially consistent with the loop's clearing of
+		// cbStart and its queue check, so one side always sees the other.
+		l.metrics.wakeupsCoalesced.Add(1)
+		return
+	}
 	if l.wakePending.CompareAndSwap(false, true) {
 		l.wakeBusy.Add(1)
 		if l.started.Load() && !l.stopped.Load() {
-			l.metrics.Wakeups.Add(1)
+			l.metrics.wakeups.Add(1)
 			_ = l.poller.Wake()
 		}
 		l.wakeBusy.Add(-1)
 	} else {
-		l.metrics.WakeupsCoalesced.Add(1)
+		l.metrics.wakeupsCoalesced.Add(1)
 	}
 }
 
-// CallLater runs fn on the loop after d. It returns a Timer that may be
-// stopped or reset from the loop. The Timer handle is single-use: once it has
-// fired or Stop has returned true it is recycled and must not be used again.
+// CallLater runs fn on the loop after d (d <= 0: on the next loop
+// iteration, never re-entrantly). It must be called on the loop. The
+// returned Timer may be stopped or reset on the loop; once it has fired or
+// been stopped it is inert, and a kept handle never affects a later timer.
+// Timers have millisecond resolution (the timing wheel's tick).
 func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 	l.assertInLoop()
 	t := l.newTimer()
@@ -187,7 +212,7 @@ func (l *Loop) CallLater(d time.Duration, fn func()) *Timer {
 		l.due = append(l.due, t)
 		return t
 	}
-	l.wheel.Add(&t.w, l.monoNow()+int64(d))
+	l.wheel.Add(&t.w, l.nowNs+int64(d))
 	return t
 }
 
@@ -221,16 +246,11 @@ func (l *Loop) fireDue() {
 			continue // stopped, or moved onto the wheel by Reset
 		}
 		t.due = false
-		l.metrics.TimersFired.Add(1)
+		l.metrics.timersFired.Add(1)
 		t.fire()
 	}
 	l.dueNext = l.dueNext[:0]
 }
-
-// monoNow returns the cached monotonic nanoseconds since the loop epoch.
-// Loop-affine callers use it so that timers are relative to the iteration's
-// clock, matching Now().
-func (l *Loop) monoNow() int64 { return l.nowNs }
 
 // refreshNow updates the cached clock.
 func (l *Loop) refreshNow() {
@@ -240,10 +260,11 @@ func (l *Loop) refreshNow() {
 
 // run is the loop goroutine body.
 func (l *Loop) run(ready chan<- error) {
-	if l.cfg.lockOSThread {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-	}
+	// The loop always owns its OS thread: InLoop compares kernel thread ids,
+	// and a loop that blocks in poll must not hand its thread to other
+	// goroutines.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if n := len(l.cfg.pinCPUs); n > 0 {
 		if err := pinToCPU(l.cfg.pinCPUs[l.id%n]); err != nil {
 			l.cfg.logger.Warn("twine: pinning loop", "loop", l.id, "cpu", l.cfg.pinCPUs[l.id%n], "err", err)
@@ -255,6 +276,9 @@ func (l *Loop) run(ready chan<- error) {
 		return
 	}
 	l.poller = p
+	if b := p.Backend(); l.id == 0 && b == "epoll (io_uring unavailable)" {
+		l.cfg.logger.Warn("twine: io_uring unavailable, using epoll")
+	}
 	l.tid.Store(threadID())
 	l.gid.Store(goid())
 
@@ -299,10 +323,19 @@ func (l *Loop) iterate() {
 
 		// 2. Fire expired timers.
 		l.refreshNow()
+		if l.dispatchStart != 0 && l.wdNs > 0 {
+			// Everything since the last poll returned: the callbacks of the
+			// previous iteration plus the tasks just drained. A span at or
+			// above the watchdog threshold is reported at its next sample,
+			// however far it has backed off while the engine was idle.
+			if d := l.nowNs - l.dispatchStart; d >= l.wdNs {
+				l.noteSlowDispatch(d)
+			}
+		}
 		l.fireDue()
 		fired := l.wheel.Advance(l.nowNs)
 		if fired > 0 {
-			l.metrics.TimersFired.Add(uint64(fired))
+			l.metrics.timersFired.Add(uint64(fired))
 		}
 
 		// 3. Poll: spin with timeout 0, then block until the next timer.
@@ -331,10 +364,11 @@ func (l *Loop) iterate() {
 			pollStart := int64(time.Since(l.epoch))
 			n, err = l.poller.Wait(l.events[:], timeout)
 			l.refreshNow()
-			l.metrics.PollBlockNanos.Add(uint64(l.nowNs - pollStart))
+			l.metrics.pollBlockNanos.Add(uint64(l.nowNs - pollStart))
 		} else {
 			l.refreshNow()
 		}
+		l.dispatchStart, l.dispatchCbs = l.nowNs, 0
 		if err != nil {
 			l.cfg.logger.Error("twine: poll failed", "loop", l.id, "err", err)
 		}
@@ -369,7 +403,7 @@ func (l *Loop) iterate() {
 		// 6. Recycle closed connections.
 		l.recycleClosed()
 
-		l.metrics.Iterations.Add(1)
+		l.metrics.iterations.Add(1)
 		l.metrics.iterHist.observe(l.nowNs-iterStart, l.now.Unix())
 		st := l.alloc.Stats()
 		l.metrics.slabInUse.Store(int64(st.InUse))
@@ -400,11 +434,9 @@ func (l *Loop) handleReady(c *conn) {
 func (l *Loop) hasImmediateWork() bool {
 	// A wakeup that arrived during the zero-timeout spin was already
 	// consumed by Wait, so the queue itself must be checked before blocking.
-	return l.moreTasks || len(l.local) > 0 || len(l.due) > 0 || len(l.ready) > 0 ||
-		len(l.dirty) > 0 || len(l.closing) > 0 || l.tasks.Len() > 0 || l.hasOverflow()
+	return l.moreTasks || len(l.due) > 0 || len(l.ready) > 0 ||
+		len(l.dirty) > 0 || len(l.closing) > 0 || l.tasks.Len() > 0 || l.overflowActive.Load()
 }
-
-func (l *Loop) hasOverflow() bool { return l.overflowActive.Load() }
 
 // pollTimeout returns how long the loop may block: until the next timer, or
 // forever.
@@ -433,24 +465,6 @@ func (l *Loop) drainTasks() {
 	l.moreTasks = false
 	l.wakePending.Store(false)
 	budget := maxTasksPerIteration
-	// Tasks queued by the loop itself during the previous iteration run
-	// first. Drain by index (re-entrant appends land past the snapshot) and
-	// keep the backing array so steady-state local calls do not allocate.
-	n := len(l.local)
-	i := 0
-	for ; i < n && budget > 0; i++ {
-		fn := l.local[i]
-		l.local[i] = nil
-		budget--
-		l.runTask(fn)
-	}
-	if i == len(l.local) {
-		l.local = l.local[:0]
-	} else if i > 0 {
-		rest := copy(l.local, l.local[i:])
-		clear(l.local[rest:])
-		l.local = l.local[:rest]
-	}
 	for budget > 0 {
 		fn, ok := l.tasks.Pop()
 		if !ok {
@@ -488,18 +502,29 @@ func (l *Loop) drainTasks() {
 
 // runTask runs one task with panic recovery and watchdog bookkeeping.
 func (l *Loop) runTask(fn func()) {
-	l.metrics.TasksRun.Add(1)
+	l.metrics.tasksRun.Add(1)
 	l.cbStart.Store(l.nowNs)
+	l.dispatchCbs++
+	l.lastCb = nil
 	defer l.cbStart.Store(0)
 	defer l.recoverTask()
 	fn()
 }
 
+// noteSlowDispatch records a dispatch span of d ns for the watchdog, keeping
+// the longest since the watchdog last cleared it.
+func (l *Loop) noteSlowDispatch(d int64) {
+	if d <= l.slowNs.Load() {
+		return
+	}
+	l.slowNs.Store(d)
+	l.slowMulti.Store(l.dispatchCbs != 1)
+	l.slowProto.Store(l.lastCb)
+}
+
 func (l *Loop) recoverTask() {
 	if r := recover(); r != nil {
-		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
-		l.cfg.logger.Error("twine: panic in CallFromThread task", "loop", l.id, "panic", pe.Value, "stack", string(pe.Stack))
+		l.logPanic("twine: panic in CallFromThread task", capturePanic(r))
 	}
 }
 
@@ -509,7 +534,7 @@ func (l *Loop) drainTasksAfterStop() {
 	for {
 		l.moreTasks = false
 		l.drainTasks()
-		if !l.moreTasks && len(l.local) == 0 && l.tasks.Len() == 0 {
+		if !l.moreTasks && l.tasks.Len() == 0 {
 			l.overflowMu.Lock()
 			empty := len(l.overflow) == 0
 			l.overflowMu.Unlock()
@@ -645,11 +670,9 @@ func (l *Loop) handleRead(c *conn, hangup bool) {
 	for ; i < maxReads; i++ {
 		n, err := unix.Read(fd, buf)
 		if n > 0 {
-			l.metrics.ReadBytes.Add(uint64(n))
-			l.metrics.Reads.Add(1)
-			if c.idleTimeout > 0 {
-				l.wheel.Add(&c.idle, l.nowNs+int64(c.idleTimeout))
-			}
+			l.metrics.readBytes.Add(uint64(n))
+			l.metrics.reads.Add(1)
+			c.touchIdle()
 			l.callDataReceived(c, buf[:n])
 			if c.flags&(flagClosed|flagReadPaused) != 0 {
 				return
@@ -686,6 +709,8 @@ func (l *Loop) handleRead(c *conn, hangup bool) {
 func (l *Loop) callDataReceived(c *conn, b []byte) {
 	l.cbStart.Store(l.nowNs)
 	l.cbProto.Store(c)
+	l.dispatchCbs++
+	l.lastCb = c
 	defer l.endCallback()
 	defer l.recoverProto(c)
 	c.proto.DataReceived(b)
@@ -703,8 +728,7 @@ func (l *Loop) endCallback() {
 func (l *Loop) recoverProto(c *conn) {
 	if r := recover(); r != nil {
 		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
-		l.cfg.logger.Error("twine: panic in protocol", "loop", l.id, "fd", c.fd, "panic", pe.Value, "stack", string(pe.Stack))
+		l.logPanic("twine: panic in protocol", pe, "fd", c.fd)
 		switch c.kind {
 		case kindUDP:
 			c.closeUDP() // calls StopProtocol; UDP conns are not pooled
@@ -715,6 +739,23 @@ func (l *Loop) recoverProto(c *conn) {
 			c.abortNoCallback()
 		}
 	}
+}
+
+// logPanic logs a recovered panic with its stack through the engine logger
+// and counts it in MetricsSnapshot.Panics. Safe from any goroutine.
+func (l *Loop) logPanic(msg string, pe *PanicError, attrs ...any) {
+	l.metrics.panics.Add(1)
+	l.cfg.logger.Error(msg, append([]any{"loop", l.id, "panic", pe.Value, "stack", string(pe.Stack)}, attrs...)...)
+}
+
+// ReportPanic logs pe through the engine's Logger and counts it in
+// MetricsSnapshot.Panics, as the loop does for the panics it recovers
+// itself. Code that recovers panics from protocol callbacks outside the
+// loop's own recovery (a wrapper protocol such as the tls package's
+// Transport, or a goroutine serving a connection) calls it so those panics
+// are not silent. Safe from any goroutine.
+func (l *Loop) ReportPanic(pe *PanicError) {
+	l.logPanic("twine: panic in protocol", pe)
 }
 
 // capturePanic builds a PanicError with the current stack.
@@ -785,8 +826,8 @@ func (l *Loop) finishClose(c *conn) {
 		_ = unix.Close(fd)
 		c.fd = -1
 	}
-	l.metrics.Closes.Add(1)
-	l.metrics.Connections.Add(^uint64(0))
+	l.metrics.closes.Add(1)
+	l.metrics.connections.Add(^uint64(0))
 	// Twisted order: the producer is stopped before connectionLost.
 	if c.producer != nil {
 		p := c.producer
@@ -806,6 +847,8 @@ func (l *Loop) finishClose(c *conn) {
 func (l *Loop) callConnectionLost(c *conn) {
 	l.cbStart.Store(l.nowNs)
 	l.cbProto.Store(c)
+	l.dispatchCbs++
+	l.lastCb = c
 	defer l.endCallback()
 	defer l.recoverLost(c)
 	c.proto.ConnectionLost(c.lostErr)
@@ -813,15 +856,15 @@ func (l *Loop) callConnectionLost(c *conn) {
 
 func (l *Loop) recoverLost(c *conn) {
 	if r := recover(); r != nil {
-		pe := capturePanic(r)
-		l.metrics.Panics.Add(1)
-		l.cfg.logger.Error("twine: panic in ConnectionLost", "loop", l.id, "fd", c.fd, "panic", pe.Value)
+		l.logPanic("twine: panic in ConnectionLost", capturePanic(r), "fd", c.fd)
 	}
 }
 
 // safeCall runs fn with panic recovery attributed to c.
 func (l *Loop) safeCall(c *conn, fn func()) {
 	l.cbStart.Store(l.nowNs)
+	l.dispatchCbs++
+	l.lastCb = c
 	defer l.endCallback()
 	defer l.recoverProto(c)
 	fn()

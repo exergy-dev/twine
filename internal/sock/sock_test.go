@@ -33,11 +33,11 @@ func waitFD(t *testing.T, fd int, events int16, timeout time.Duration) int16 {
 	}
 }
 
-func closeFD(t *testing.T, fd int) {
+func closeFD(t testing.TB, fd int) {
 	t.Cleanup(func() { unix.Close(fd) })
 }
 
-func listen(t *testing.T, network, addr string) (int, *net.TCPAddr) {
+func listen(t testing.TB, network, addr string) (int, *net.TCPAddr) {
 	t.Helper()
 	fd, laddr, err := Listen(network, addr, false, 128)
 	if err != nil {
@@ -47,7 +47,7 @@ func listen(t *testing.T, network, addr string) (int, *net.TCPAddr) {
 	return fd, laddr
 }
 
-func checkNonblockCloexec(t *testing.T, fd int) {
+func checkNonblockCloexec(t testing.TB, fd int) {
 	t.Helper()
 	fl, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
@@ -105,17 +105,11 @@ func TestListenAccept(t *testing.T) {
 	if err := SetNoDelay(fd, true); err != nil {
 		t.Errorf("SetNoDelay: %v", err)
 	}
-	if err := SetKeepAlive(fd, true); err != nil {
-		t.Errorf("SetKeepAlive: %v", err)
-	}
 	if err := SetBuffers(fd, 64<<10, 64<<10); err != nil {
 		t.Errorf("SetBuffers: %v", err)
 	}
 	if err := SetBuffers(fd, 0, 0); err != nil {
 		t.Errorf("SetBuffers(0,0): %v", err)
-	}
-	if err := SetNonblock(fd); err != nil {
-		t.Errorf("SetNonblock: %v", err)
 	}
 }
 
@@ -277,15 +271,15 @@ func TestSockaddrConversions(t *testing.T) {
 	if a := SockaddrToTCP(sa4); a.String() != "10.1.2.3:1234" {
 		t.Errorf("SockaddrToTCP(v4) = %v", a)
 	}
-	if a := SockaddrToUDP(sa4); a.String() != "10.1.2.3:1234" {
-		t.Errorf("SockaddrToUDP(v4) = %v", a)
+	if a := sockaddrToUDP(sa4); a.String() != "10.1.2.3:1234" {
+		t.Errorf("sockaddrToUDP(v4) = %v", a)
 	}
 	sa6 := &unix.SockaddrInet6{Port: 53, ZoneId: 7}
 	copy(sa6.Addr[:], net.ParseIP("fe80::1"))
-	if a := SockaddrToUDP(sa6); a.String() != "[fe80::1%7]:53" {
-		t.Errorf("SockaddrToUDP(v6) = %v", a)
+	if a := sockaddrToUDP(sa6); a.String() != "[fe80::1%7]:53" {
+		t.Errorf("sockaddrToUDP(v6) = %v", a)
 	}
-	if SockaddrToTCP(&unix.SockaddrUnix{Name: "x"}) != nil || SockaddrToUDP(nil) != nil {
+	if SockaddrToTCP(&unix.SockaddrUnix{Name: "x"}) != nil || sockaddrToUDP(nil) != nil {
 		t.Error("unsupported family did not return nil")
 	}
 
@@ -358,7 +352,7 @@ func TestNewBatch(t *testing.T) {
 	}
 }
 
-func listenUDP(t *testing.T) (int, *net.UDPAddr) {
+func listenUDP(t testing.TB) (int, *net.UDPAddr) {
 	t.Helper()
 	fd, laddr, err := ListenUDP("udp4", "127.0.0.1:0", false)
 	if err != nil {

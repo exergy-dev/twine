@@ -1,3 +1,5 @@
+//go:build linux
+
 // Command httpclient is a wrk-style HTTP/1.1 load generator: -conns
 // keep-alive connections, one request in flight per connection (no
 // pipelining), GET -path for -duration. It reports req/s and latency
@@ -32,7 +34,7 @@ func main() {
 	defer bench.CloseAll(cs)
 	req := bench.HTTPRequest(*addr, *path)
 	if _, err := bench.HTTPLoad(cs, req, 1, time.Time{}, false); err != nil {
-		log.Fatal(err)
+		log.Fatal(err) //nolint:gocritic // exiting closes the sockets anyway
 	}
 	srv0, _ := bench.ProcCPU(*serverPID)
 	cli0, _ := bench.ProcCPU(os.Getpid())

@@ -1,13 +1,21 @@
 // Package poll is a thin, allocation-free abstraction over the kernel
-// readiness APIs used by twine's event loops: epoll on Linux and kqueue on
-// darwin, dragonfly, freebsd, netbsd and openbsd.
+// readiness APIs used by twine's event loops: epoll on Linux (or io_uring
+// multishot poll with -tags twine_uring) and kqueue on darwin, dragonfly,
+// freebsd, netbsd and openbsd. Poller.Backend names the one in use.
 //
-// Both backends are edge-triggered (EPOLLET on Linux, EV_CLEAR on kqueue): a
+// Every backend is edge-triggered (EPOLLET on Linux, EV_CLEAR on kqueue): a
 // registered fd is reported once per readiness transition, so the caller must
 // read or write until EAGAIN before expecting another event for that fd.
 //
 // A Poller is owned by a single goroutine (the loop). Only Wake may be called
-// from other goroutines.
+// from other goroutines. A Poller must not be used after Close; only Close
+// itself may be repeated.
+//
+// Wait may return (0, nil) before its timeout without a Wake: EINTR is never
+// returned, a Wait interrupted by a signal may return zero events (epoll and
+// kqueue always do; io_uring re-waits when the timeout is negative), and on
+// io_uring a completion that carries no event can end a timed Wait early.
+// Callers already tolerate such spurious wakeups by recomputing the timeout.
 //
 // Backend differences the caller must tolerate:
 //
@@ -36,8 +44,6 @@
 //     full nanosecond timeout.
 package poll
 
-import "golang.org/x/sys/unix"
-
 // Event flags. Several may be set at once in Event.Flags.
 const (
 	// Readable reports that the fd has data to read (EPOLLIN|EPOLLPRI /
@@ -56,9 +62,11 @@ const (
 	Error
 )
 
-// maxEvents caps the number of kernel events translated per Wait call. The
-// kernel event buffer is embedded in the Poller so Wait never allocates.
-const maxEvents = 256
+// MaxEvents caps the number of events one Wait call returns: Wait fills at
+// most min(len(evs), MaxEvents) entries, so a caller's event array needs no
+// more than MaxEvents. The kernel event buffer of that size is embedded in
+// the Poller so Wait never allocates.
+const MaxEvents = 256
 
 // Event is one ready notification. Wait fills a caller-provided slice.
 type Event struct {
@@ -67,6 +75,3 @@ type Event struct {
 	// Flags is a combination of Readable, Writable, Hangup and Error.
 	Flags uint32
 }
-
-// errNoEvents is returned by Wait when the caller passes an empty slice.
-var errNoEvents error = unix.EINVAL

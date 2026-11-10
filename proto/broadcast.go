@@ -6,11 +6,12 @@ import (
 	"github.com/exergy-dev/twine"
 )
 
-// Broadcast is a loop-aware fan-out group (design Section 8 rule 4). Members
-// are grouped by their Loop; Send copies the message once and schedules one
-// CallFromThread per loop that has members, and that task writes the shared
-// read-only copy to every member of its loop. All methods are safe from any
-// goroutine.
+// Broadcast is a loop-aware fan-out group. Members are grouped by their
+// Loop; Send copies the message once and schedules one CallFromThread per
+// loop that has members, and that task writes the shared read-only copy to
+// every member of its loop, so no transport is touched off its loop. All
+// methods are safe from any goroutine. The zero value is an empty group
+// ready to use.
 //
 // Membership is read on each loop when its task runs, not when Send is
 // called, so a member removed before delivery does not receive the message.
@@ -40,7 +41,7 @@ type bgroup struct {
 	scratch []twine.Transport
 }
 
-// NewBroadcast returns an empty group.
+// NewBroadcast returns an empty group; it is equivalent to new(Broadcast).
 func NewBroadcast() *Broadcast {
 	return &Broadcast{groups: make(map[*twine.Loop]*bgroup)}
 }
@@ -50,6 +51,9 @@ func (b *Broadcast) Add(t twine.Transport) {
 	l := t.Loop()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.groups == nil {
+		b.groups = make(map[*twine.Loop]*bgroup)
+	}
 	g := b.groups[l]
 	if g == nil {
 		g = &bgroup{b: b, loop: l, index: make(map[twine.Transport]int)}

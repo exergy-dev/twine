@@ -35,27 +35,37 @@ func (l *listener) Close() error {
 	if !l.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	l.eng.removeListener(l)
+	e := l.eng
+	e.removeListener(l)
 	l.mu.Lock()
 	conns := l.conns
 	l.mu.Unlock()
-	for _, c := range conns {
-		c := c
-		lp := c.loop
-		if lp.started.Load() {
-			lp.CallFromThread(func() {
-				if c.kind == kindUDP {
-					c.closeUDP()
-				} else {
-					c.closeListenerFD()
-				}
-			})
-		} else {
-			// Loop never started; close the fd directly. registerListener
-			// sees fd == -1 and skips it.
-			_ = unix.Close(int(c.fd))
-			c.fd = -1
+
+	// Before Run (or after a Stop that came before Run) no loop is running
+	// and none can start while e.mu is held (Run takes it to start), so the
+	// sockets are closed here; the queued register tasks then find fd == -1.
+	// Otherwise the close is queued behind the register task on each loop:
+	// touching c.fd from this goroutine would race with the loop.
+	e.mu.Lock()
+	if st := e.state.Load(); st == stateNew || (st == stateStopped && !e.ran.Load()) {
+		for _, c := range conns {
+			if c.fd >= 0 {
+				_ = unix.Close(int(c.fd))
+				c.fd = -1
+			}
 		}
+		e.mu.Unlock()
+		return nil
+	}
+	e.mu.Unlock()
+	for _, c := range conns {
+		c.loop.CallFromThread(func() {
+			if c.kind == kindUDP {
+				c.closeUDP()
+			} else {
+				c.closeListenerFD()
+			}
+		})
 	}
 	return nil
 }
@@ -88,7 +98,6 @@ func (e *Engine) newTCPListener(addr string, f Factory, lc listenConfig) (*liste
 		lst.fds = append(lst.fds, fd)
 		lp := e.loops[i]
 		c := &conn{loop: lp, fd: int32(fd), kind: kindListener, lst: lst}
-		c.idle.Fn = c.onIdle
 		lst.conns = append(lst.conns, c)
 		lp.CallFromThread(func() { lp.registerListener(c) })
 	}
@@ -110,6 +119,7 @@ func (l *Loop) registerListener(c *conn) {
 		l.cfg.logger.Error("twine: registering listener", "loop", l.id, "err", err)
 		l.unregister(c)
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
 	// Drain any backlog that accumulated before registration (edge-triggered
@@ -129,38 +139,38 @@ func (c *conn) closeListenerFD() {
 	c.fd = -1
 }
 
-// handleAccept accepts until EAGAIN or MaxAcceptsPerEvent.
+// handleAccept accepts until EAGAIN or maxAcceptsPerEvent.
 func (l *Loop) handleAccept(c *conn) {
 	lst := c.lst
 	lfd := int(c.fd)
 	if lfd < 0 {
 		return
 	}
-	for i := 0; i < l.cfg.maxAcceptsPerEv; i++ {
+	for i := 0; i < maxAcceptsPerEvent; i++ {
 		fd, sa, err := sock.Accept(lfd)
 		if err != nil {
 			if err == unix.EAGAIN {
 				return
 			}
-			l.metrics.AcceptErrors.Add(1)
+			l.metrics.acceptErrors.Add(1)
 			if err == unix.EMFILE || err == unix.ENFILE || err == unix.ENOBUFS || err == unix.ENOMEM {
 				l.cfg.logger.Warn("twine: accept failed", "loop", l.id, "err", err)
 				return
 			}
 			continue
 		}
-		l.metrics.Accepts.Add(1)
+		l.metrics.accepts.Add(1)
 		l.setupAccepted(fd, lst)
 		peer := sock.SockaddrToTCP(sa)
 		host := lst.addr
 		if l.cfg.reusePort || len(l.eng.loops) == 1 {
-			l.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
+			l.attachTCP(fd, peer, host, lst.factory)
 			continue
 		}
 		// Single listener: hand the connection to the next loop.
-		target := l.eng.NextLoop()
+		target := l.eng.acceptLoop()
 		if target == l {
-			l.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
+			l.attachTCP(fd, peer, host, lst.factory)
 			continue
 		}
 		target.CallFromThread(func() {
@@ -168,7 +178,7 @@ func (l *Loop) handleAccept(c *conn) {
 				_ = unix.Close(fd)
 				return
 			}
-			target.attachTCP(fd, peer, host, lst.factory, lst.lc.noDelay)
+			target.attachTCP(fd, peer, host, lst.factory)
 		})
 	}
 	// Cap hit; more may be pending. Re-check next iteration.
@@ -183,7 +193,7 @@ func (l *Loop) setupAccepted(fd int, lst *listener) {
 	if lst.lc.rcvBuf > 0 || lst.lc.sndBuf > 0 {
 		_ = sock.SetBuffers(fd, lst.lc.rcvBuf, lst.lc.sndBuf)
 	}
-	if l.cfg.busyPoll > 0 {
-		_ = sock.SetBusyPoll(fd, l.cfg.busyPoll)
+	if lst.lc.busyPoll > 0 {
+		_ = sock.SetBusyPoll(fd, lst.lc.busyPoll)
 	}
 }

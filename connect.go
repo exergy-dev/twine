@@ -2,6 +2,8 @@ package twine
 
 import (
 	"net"
+	"net/netip"
+	"strconv"
 
 	"github.com/exergy-dev/twine/internal/poll"
 	"github.com/exergy-dev/twine/internal/sock"
@@ -22,9 +24,14 @@ func (d *dialState) onTimeout() {
 	d.c.rejectConnect(ErrConnectTimeout)
 }
 
-// ConnectTCP starts a non-blocking connect to addr. The Future resolves with
-// the Transport after ConnectionMade has been called, or rejects with the
-// connect error or ErrConnectTimeout. It is safe to call from any goroutine.
+// ConnectTCP starts a non-blocking connect to addr, a host:port. The Future
+// resolves with the Transport after ConnectionMade has been called, or
+// rejects with the lookup or connect error, ErrConnectTimeout, ErrNilProtocol
+// or ErrEngineStopped. It is safe to call from any goroutine and never
+// blocks: an IP literal (or an empty host, which dials the loopback address)
+// is connected directly, while a host name is resolved on the engine's
+// worker pool first, so a slow DNS lookup never stalls the loop. DialTimeout
+// bounds the connect, not the lookup.
 func (l *Loop) ConnectTCP(addr string, f Factory, opts ...DialOption) *Future[Transport] {
 	fut, res := NewFuture[Transport](l)
 	dc := defaultDialConfig()
@@ -35,20 +42,81 @@ func (l *Loop) ConnectTCP(addr string, f Factory, opts ...DialOption) *Future[Tr
 		res.Reject(ErrEngineStopped)
 		return fut
 	}
-	if l.InLoop() {
-		l.startConnect(addr, f, dc, res)
-	} else {
-		l.CallFromThread(func() { l.startConnect(addr, f, dc, res) })
+	raddr, rok := literalTCPAddr(addr)
+	var laddr *net.TCPAddr
+	lok := true
+	if dc.local != "" {
+		laddr, lok = literalTCPAddr(dc.local)
+	}
+	if rok && lok {
+		if l.InLoop() {
+			l.startConnect(raddr, laddr, f, dc, res)
+		} else {
+			l.CallFromThread(func() { l.startConnect(raddr, laddr, f, dc, res) })
+		}
+		return fut
+	}
+	// A host name: look it up off the loop, then connect on it.
+	ok := l.eng.pool.submit(func() {
+		ra, la := raddr, laddr
+		var err error
+		if !rok {
+			ra, err = resolveTCPAddr("tcp", addr)
+		}
+		if err == nil && !lok {
+			la, err = resolveTCPAddr("tcp", dc.local)
+		}
+		if err != nil {
+			res.Reject(err)
+			return
+		}
+		if l.stopped.Load() || l.eng.stopped() {
+			res.Reject(ErrEngineStopped)
+			return
+		}
+		l.CallFromThread(func() { l.startConnect(ra, la, f, dc, res) })
+	}, true)
+	if !ok {
+		res.Reject(ErrEngineStopped)
 	}
 	return fut
 }
 
-func (l *Loop) startConnect(addr string, f Factory, dc dialConfig, res Resolver[Transport]) {
+// resolveTCPAddr is the name lookup for addresses that are not IP literals.
+// It blocks, so it only ever runs on the worker pool; tests replace it.
+var resolveTCPAddr = net.ResolveTCPAddr
+
+// literalTCPAddr parses addr without a name lookup. ok is false when the
+// host is a name or the port a service name (or addr is malformed, which the
+// resolver then reports).
+func literalTCPAddr(addr string) (a *net.TCPAddr, ok bool) {
+	if ap, err := netip.ParseAddrPort(addr); err == nil {
+		return net.TCPAddrFromAddrPort(ap), true
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, false
+	}
+	p, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return nil, false
+	}
+	if host == "" {
+		return &net.TCPAddr{Port: int(p)}, true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return nil, false
+	}
+	return net.TCPAddrFromAddrPort(netip.AddrPortFrom(ip, uint16(p))), true
+}
+
+func (l *Loop) startConnect(raddr, laddr *net.TCPAddr, f Factory, dc dialConfig, res Resolver[Transport]) {
 	if l.stopping {
 		res.Reject(ErrEngineStopped)
 		return
 	}
-	fd, raddr, inProgress, err := sock.Connect("tcp", addr, dc.local)
+	fd, inProgress, err := sock.ConnectAddr("tcp", raddr, laddr)
 	if err != nil {
 		res.Reject(err)
 		return
@@ -99,27 +167,23 @@ func (l *Loop) completeConnect(c *conn) {
 	fd := int(c.fd)
 	if d.noDelay {
 		_ = sock.SetNoDelay(fd, true)
-		c.flags |= flagNoDelay
 	}
 	c.host = sock.LocalTCP(fd)
 	c.kind = kindTCP
-	l.metrics.Connections.Add(1)
+	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
 	p := d.factory.BuildProtocol(c.peer)
 	if p == nil {
-		p = nopProtocol{}
+		c.abortNoCallback()
+		d.res.Reject(ErrNilProtocol)
+		return
 	}
 	c.setProto(p)
-	// The fd may already be registered with Writable interest; set the
-	// steady-state interest set.
-	var err error
-	if c.flags&flagWantWrite != 0 {
-		err = l.poller.Mod(fd, poll.Readable)
-	} else {
-		err = l.poller.Mod(fd, poll.Readable)
-		if err != nil {
-			err = l.poller.Add(fd, poll.Readable)
-		}
+	// An in-progress connect registered the fd for Writable: switch it to
+	// the steady-state interest. An immediate connect never registered it.
+	err := l.poller.Mod(fd, poll.Readable)
+	if err != nil {
+		err = l.poller.Add(fd, poll.Readable)
 	}
 	if err != nil {
 		c.lostErr = err

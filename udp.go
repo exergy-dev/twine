@@ -35,7 +35,6 @@ func (e *Engine) newUDPListener(addr string, p DatagramProtocol, lc listenConfig
 	lst := &listener{eng: e, addr: laddr, dgram: p, lc: lc, udp: true}
 	lp := e.NextLoop()
 	c := &conn{loop: lp, fd: int32(fd), kind: kindUDP}
-	c.idle.Fn = c.onIdle
 	c.udp = &udpState{lst: lst, proto: p}
 	c.host = laddr
 	lst.fds = []int{fd}
@@ -46,17 +45,17 @@ func (e *Engine) newUDPListener(addr string, p DatagramProtocol, lc listenConfig
 
 func (l *Loop) registerUDP(c *conn) {
 	u := c.udp
+	if c.fd < 0 {
+		return // closed before the loop started
+	}
 	if l.stopping || u.lst.closed.Load() {
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
-	batch := l.cfg.udpBatch
-	if batch <= 0 {
-		batch = 1
-	}
-	u.in = sock.NewBatch(batch, 64<<10)
-	u.out = sock.NewBatch(batch, udpSendBuf)
-	u.addrs = make([]*net.UDPAddr, batch)
+	u.in = sock.NewBatch(udpBatch, 64<<10)
+	u.out = sock.NewBatch(udpBatch, udpSendBuf)
+	u.addrs = make([]*net.UDPAddr, udpBatch)
 	for i := range u.addrs {
 		u.addrs[i] = &net.UDPAddr{IP: make(net.IP, 0, 16)}
 	}
@@ -65,6 +64,7 @@ func (l *Loop) registerUDP(c *conn) {
 		l.cfg.logger.Error("twine: registering UDP socket", "loop", l.id, "err", err)
 		l.unregister(c)
 		_ = unix.Close(int(c.fd))
+		c.fd = -1
 		return
 	}
 	l.safeCall(c, func() { u.proto.StartProtocol(c) })
@@ -93,7 +93,7 @@ func (l *Loop) handleUDPRead(c *conn) {
 		if n == 0 {
 			return
 		}
-		l.metrics.Datagrams.Add(uint64(n))
+		l.metrics.datagrams.Add(uint64(n))
 		for i := 0; i < n; i++ {
 			m := &msgs[i]
 			a := u.addrs[i]
@@ -110,7 +110,7 @@ func (l *Loop) handleUDPRead(c *conn) {
 	c.queueReady()
 }
 
-func (l *Loop) callDatagram(c *conn, b []byte, from net.Addr) {
+func (l *Loop) callDatagram(c *conn, b []byte, from *net.UDPAddr) {
 	l.cbStart.Store(l.nowNs)
 	l.cbProto.Store(c)
 	defer l.endCallback()
@@ -118,7 +118,18 @@ func (l *Loop) callDatagram(c *conn, b []byte, from net.Addr) {
 	c.udp.proto.DatagramReceived(b, from)
 	if debugEnabled {
 		poison(b)
+		scrubAddr(from)
 	}
+}
+
+// scrubAddr empties a reused source address after DatagramReceived in debug
+// builds, so a protocol that kept the pointer sees "<nil>" at once instead
+// of silently getting the next sender's address.
+func scrubAddr(a *net.UDPAddr) {
+	clear(a.IP)
+	a.IP = a.IP[:0]
+	a.Port = 0
+	a.Zone = ""
 }
 
 // WriteTo queues a datagram for the end-of-iteration sendmmsg flush.
@@ -137,9 +148,11 @@ func (c *conn) WriteTo(b []byte, to net.Addr) {
 		var v4 unix.SockaddrInet4
 		var v6 unix.SockaddrInet6
 		sa := sock.UDPAddrToSockaddr(ua, &v4, &v6)
-		if sa != nil {
-			_ = unix.Sendto(int(c.fd), b, 0, sa)
-			c.loop.metrics.DatagramsSent.Add(1)
+		// UDP is best effort: a failed send (EMSGSIZE above the socket's
+		// limit, EAGAIN with a full buffer) drops this datagram only and
+		// leaves the socket usable. Count only what the kernel took.
+		if sa != nil && unix.Sendto(int(c.fd), b, 0, sa) == nil {
+			c.loop.metrics.datagramsSent.Add(1)
 		}
 		return
 	}
@@ -170,7 +183,7 @@ func (l *Loop) flushUDP(c *conn) {
 	}
 	sent, err := u.out.SendMmsg(int(c.fd), u.outN)
 	if sent > 0 {
-		l.metrics.DatagramsSent.Add(uint64(sent))
+		l.metrics.datagramsSent.Add(uint64(sent))
 	}
 	if sent < u.outN {
 		if err != nil && err != unix.EAGAIN && err != unix.EINTR {

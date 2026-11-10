@@ -14,7 +14,8 @@
 // (relative to the base), firing is exact: a timer fires during the first
 // Advance(now) with now >= at.
 //
-// A Wheel is not safe for concurrent use.
+// A Wheel is not safe for concurrent use. Built with -tags twine_debug,
+// Advance panics when called from inside a timer's Fn.
 package wheel
 
 import (
@@ -66,14 +67,11 @@ type Timer struct {
 // own Fn unless Fn re-added t.
 func (t *Timer) Scheduled() bool { return t.loc != locNone }
 
-// Expires returns the absolute expiry in ticks since the wheel's base time.
-// It is meaningful only while t is Scheduled. For a timer added with an at
-// that was already in the past it is at most the wheel's current tick.
-func (t *Timer) Expires() int64 { return t.expires }
-
 // Wheel is a hierarchical timing wheel of 4 levels × 256 slots. Create one
 // with New. A Wheel must not be copied after first use.
 type Wheel struct {
+	dbg debugState // zero-size in release builds; first, so a trailing zero-size field is not padded
+
 	// Slot list sentinels: circular doubly-linked lists, FIFO by insertion.
 	wheel [levels][slots]Timer
 	// Occupancy bitmaps, one bit per slot, kept exact on every link/unlink.
@@ -121,11 +119,8 @@ func pushBack(s, t *Timer) {
 // but not yet fired.
 func (w *Wheel) Len() int { return w.count }
 
-// Now returns the start of the wheel's current tick as monotonic ns.
-func (w *Wheel) Now() int64 { return w.base + w.cur*w.tick }
-
-// Tick returns the wheel's tick length.
-func (w *Wheel) Tick() time.Duration { return time.Duration(w.tick) }
+// curTime returns the start of the wheel's current tick as monotonic ns.
+func (w *Wheel) curTime() int64 { return w.base + w.cur*w.tick }
 
 // Add schedules t to fire when the wheel is advanced to or past at (absolute
 // monotonic nanoseconds). An at that is not after the time last passed to
@@ -217,8 +212,13 @@ func (w *Wheel) Remove(t *Timer) bool {
 // allocates.
 //
 // A Fn that unconditionally re-adds its own timer with at <= now makes
-// Advance loop forever. Advance must not be called from inside Fn.
-func (w *Wheel) Advance(now int64) int {
+// Advance loop forever. Advance must not be called from inside Fn; the
+// twine_debug build panics if it is (see advance_debug.go). The release
+// wrapper is the one-line advance_release.go, so the Wheel's layout and
+// Advance's code stay identical to a build without the check.
+//
+// advance is the implementation behind Advance.
+func (w *Wheel) advance(now int64) int {
 	if now <= w.now {
 		fired := 0
 		for w.due.next != &w.due {
@@ -370,15 +370,16 @@ func nextSet(bm *[slots / 64]uint64, from int) (int, bool) {
 // scheduled. The returned time is a tick boundary: either the earliest
 // timer's expiry tick (at most one tick after its at) or an earlier cascade
 // boundary at which the wheel needs to be advanced to make progress. If a
-// timer is already due it returns Now(). Callers converting the result into
-// a poll timeout should round up, or they will wake before the tick and
-// spin. O(1): it scans at most 4 × 4 bitmap words.
+// timer is already due it returns the start of the wheel's current tick.
+// Callers converting the result into a poll timeout should round up, or they
+// will wake before the tick and spin. O(1): it scans at most 4 × 4 bitmap
+// words.
 func (w *Wheel) Next() (int64, bool) {
 	if w.count == 0 {
 		return 0, false
 	}
 	if w.due.next != &w.due || w.firing.next != &w.firing {
-		return w.Now(), true
+		return w.curTime(), true
 	}
 	n, ok := w.nextEvent()
 	if !ok {

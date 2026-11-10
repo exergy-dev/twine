@@ -18,7 +18,6 @@ type RequestCtx struct {
 	req  request
 	body []byte
 	c    *conn
-	user any
 
 	// Response.
 	status   int
@@ -40,11 +39,13 @@ func (ctx *RequestCtx) Method() []byte { return ctx.req.slice(0, ctx.req.methodE
 func (ctx *RequestCtx) IsMethod(m string) bool { return string(ctx.Method()) == m }
 
 // RequestURI returns the raw request target as sent, e.g. "/a/b?x=1".
-func (ctx *RequestCtx) RequestURI() []byte { return ctx.req.slice(ctx.req.uriS, ctx.req.uriE) }
+func (ctx *RequestCtx) RequestURI() []byte { return ctx.req.slice(ctx.req.methodE+1, ctx.req.uriE) }
 
-// Path returns the path of the request target without the query, still
-// percent-encoded. For an absolute-form target ("http://host/p") it is the
-// path part ("/" when empty); for "*" it is "*".
+// Path returns the path of the request target without the query, exactly
+// as sent: still percent-encoded and with any dot segments ("/a/../b")
+// left in place. For an absolute-form target ("http://host/p") it is the
+// path part ("/" when empty); for "*" it is "*". See the package doc on
+// routing.
 func (ctx *RequestCtx) Path() []byte {
 	if ctx.req.pathSlash {
 		return slash
@@ -62,7 +63,7 @@ func (ctx *RequestCtx) RawQuery() []byte {
 }
 
 // Version returns the protocol version as sent: "HTTP/1.0" or "HTTP/1.1".
-func (ctx *RequestCtx) Version() []byte { return ctx.req.slice(ctx.req.verS, ctx.req.verS+8) }
+func (ctx *RequestCtx) Version() []byte { return ctx.req.slice(ctx.req.uriE+1, ctx.req.uriE+9) }
 
 // IsHTTP11 reports whether the request is HTTP/1.1.
 func (ctx *RequestCtx) IsHTTP11() bool { return ctx.req.minor == 1 }
@@ -80,8 +81,14 @@ func (ctx *RequestCtx) Host() []byte {
 // name under ASCII case folding, or nil. Values are trimmed of surrounding
 // whitespace. The lookup is a linear scan of at most 64 entries; no map is
 // built.
-func (ctx *RequestCtx) Header(name string) []byte {
-	r := &ctx.req
+func (ctx *RequestCtx) Header(name string) []byte { return lookupHeader(&ctx.req, name) }
+
+// HeaderBytes is Header with a []byte name.
+func (ctx *RequestCtx) HeaderBytes(name []byte) []byte { return lookupHeader(&ctx.req, name) }
+
+// lookupHeader implements Header. Entries whose length or first byte
+// differ are skipped before the full compare.
+func lookupHeader[N text](r *request, name N) []byte {
 	if len(name) == 0 {
 		return nil
 	}
@@ -92,18 +99,6 @@ func (ctx *RequestCtx) Header(name string) []byte {
 			continue
 		}
 		if equalFold(r.data[h.ns:h.ne], name) {
-			return r.slice(h.vs, h.ve)
-		}
-	}
-	return nil
-}
-
-// HeaderBytes is Header with a []byte name.
-func (ctx *RequestCtx) HeaderBytes(name []byte) []byte {
-	r := &ctx.req
-	for i := 0; i < r.nh; i++ {
-		h := &r.hdrs[i]
-		if equalFoldBytes(r.data[h.ns:h.ne], name) {
 			return r.slice(h.vs, h.ve)
 		}
 	}
@@ -140,22 +135,19 @@ func (ctx *RequestCtx) RemoteAddr() net.Addr { return ctx.c.t.GetPeer() }
 // LocalAddr returns the local address of the connection.
 func (ctx *RequestCtx) LocalAddr() net.Addr { return ctx.c.t.GetHost() }
 
-// Loop returns the loop that owns the connection, for CallLater or
-// DeferToThread. Responses are still written when the Handler returns;
-// there is no asynchronous response API.
+// Loop returns the loop that owns the connection, for fire-and-forget work
+// with CallLater or DeferToThread. The response is still the state of the
+// RequestCtx when the Handler returns; there is no asynchronous response
+// API.
 func (ctx *RequestCtx) Loop() *twine.Loop { return ctx.c.loop }
-
-// SetUserValue stores a per-request value; it is cleared before the next
-// request. Storing a non-pointer value allocates.
-func (ctx *RequestCtx) SetUserValue(v any) { ctx.user = v }
-
-// UserValue returns the value stored with SetUserValue.
-func (ctx *RequestCtx) UserValue() any { return ctx.user }
 
 // --- response --------------------------------------------------------------
 
 // SetStatus sets the response status code (default 200). Codes outside
-// 100..599 are sent as 500.
+// 200..599 are sent as 500: the response a Handler builds is always the
+// final one, and a 1xx interim response (100 Continue, 103 Early Hints)
+// cannot be sent from a Handler. The server answers Expect: 100-continue
+// itself.
 func (ctx *RequestCtx) SetStatus(code int) { ctx.status = code }
 
 // Status returns the response status code set so far.
@@ -166,46 +158,30 @@ func (ctx *RequestCtx) Status() int { return ctx.status }
 func (ctx *RequestCtx) SetContentType(ct string) { ctx.ct = appendSafe(ctx.ct[:0], ct) }
 
 // SetContentTypeBytes is SetContentType with a []byte value.
-func (ctx *RequestCtx) SetContentTypeBytes(ct []byte) { ctx.ct = appendSafeBytes(ctx.ct[:0], ct) }
+func (ctx *RequestCtx) SetContentTypeBytes(ct []byte) { ctx.ct = appendSafe(ctx.ct[:0], ct) }
 
 // SetHeader sets a response header, replacing earlier values of the same
 // name (ASCII case-insensitive). Content-Type is routed to SetContentType;
 // Content-Length and Transfer-Encoding are ignored (the length is computed);
 // "Connection: close" closes the connection after the response; Server and
-// Date replace the automatic values. CR and LF in name or value are replaced
-// with spaces so a header cannot split the response.
-func (ctx *RequestCtx) SetHeader(name, value string) {
-	if ctx.special(name, value, true) {
-		return
-	}
-	ctx.delHeader(name)
-	ctx.appendHeader(name, value)
-}
+// Date replace the automatic values.
+//
+// A header whose name is empty or contains a byte that is not an RFC 9110
+// token character (space, ':', CR, LF, controls, non-ASCII, ...) is
+// dropped, as net/http does. CR and LF in a value are replaced with spaces
+// so a header cannot split the response.
+func (ctx *RequestCtx) SetHeader(name, value string) { setHeader(ctx, name, value, true) }
 
 // SetHeaderBytes is SetHeader with []byte arguments; it does not allocate.
-func (ctx *RequestCtx) SetHeaderBytes(name, value []byte) {
-	if ctx.specialBytes(name, value, true) {
-		return
-	}
-	ctx.delHeaderBytes(name)
-	ctx.hdrs = appendSafeBytes(ctx.hdrs, name)
-	ctx.hdrs = append(ctx.hdrs, ':', ' ')
-	ctx.hdrs = appendSafeBytes(ctx.hdrs, value)
-	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
-}
+func (ctx *RequestCtx) SetHeaderBytes(name, value []byte) { setHeader(ctx, name, value, true) }
 
 // AddHeader adds a response header line without replacing existing ones
-// (for Set-Cookie and other repeatable headers). Special names behave as in
-// SetHeader.
-func (ctx *RequestCtx) AddHeader(name, value string) {
-	if ctx.special(name, value, false) {
-		return
-	}
-	ctx.appendHeader(name, value)
-}
+// (for Set-Cookie and other repeatable headers). Special and invalid names
+// behave as in SetHeader.
+func (ctx *RequestCtx) AddHeader(name, value string) { setHeader(ctx, name, value, false) }
 
 // DelHeader removes response headers previously set with name.
-func (ctx *RequestCtx) DelHeader(name string) { ctx.delHeader(name) }
+func (ctx *RequestCtx) DelHeader(name string) { delHeader(ctx, name) }
 
 // SetConnectionClose closes the connection after this response.
 func (ctx *RequestCtx) SetConnectionClose() { ctx.close = true }
@@ -249,60 +225,37 @@ func (ctx *RequestCtx) resetResponse() {
 	ctx.close = false
 	ctx.noServer = false
 	ctx.noDate = false
-	ctx.user = nil
+}
+
+// setHeader implements SetHeader (replace set) and AddHeader.
+func setHeader[N, V text](ctx *RequestCtx, name N, value V, replace bool) {
+	if !validName(name) || special(ctx, name, value, replace) {
+		return
+	}
+	if replace {
+		delHeader(ctx, name)
+	}
+	ctx.hdrs = append(ctx.hdrs, name...)
+	ctx.hdrs = append(ctx.hdrs, ':', ' ')
+	ctx.hdrs = appendSafe(ctx.hdrs, value)
+	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
 }
 
 // special handles header names the server manages itself. It reports
 // whether the header was consumed.
-func (ctx *RequestCtx) special(name, value string, replace bool) bool {
-	switch len(name) {
-	case 4:
-		if equalFoldStr(name, "date") {
-			if replace {
-				ctx.delHeader(name)
-			}
-			ctx.noDate = true
-		}
-	case 6:
-		if equalFoldStr(name, "server") {
-			if replace {
-				ctx.delHeader(name)
-			}
-			ctx.noServer = true
-		}
-	case 10:
-		if equalFoldStr(name, "connection") {
-			if equalFoldStr(value, "close") {
-				ctx.close = true
-			}
-			return true
-		}
-	case 12:
-		if equalFoldStr(name, "content-type") {
-			ctx.SetContentType(value)
-			return true
-		}
-	case 14:
-		return equalFoldStr(name, "content-length")
-	case 17:
-		return equalFoldStr(name, "transfer-encoding")
-	}
-	return false
-}
-
-func (ctx *RequestCtx) specialBytes(name, value []byte, replace bool) bool {
+func special[N, V text](ctx *RequestCtx, name N, value V, replace bool) bool {
 	switch len(name) {
 	case 4:
 		if equalFold(name, "date") {
 			if replace {
-				ctx.delHeaderBytes(name)
+				delHeader(ctx, name)
 			}
 			ctx.noDate = true
 		}
 	case 6:
 		if equalFold(name, "server") {
 			if replace {
-				ctx.delHeaderBytes(name)
+				delHeader(ctx, name)
 			}
 			ctx.noServer = true
 		}
@@ -315,7 +268,7 @@ func (ctx *RequestCtx) specialBytes(name, value []byte, replace bool) bool {
 		}
 	case 12:
 		if equalFold(name, "content-type") {
-			ctx.SetContentTypeBytes(value)
+			ctx.ct = appendSafe(ctx.ct[:0], value)
 			return true
 		}
 	case 14:
@@ -326,15 +279,8 @@ func (ctx *RequestCtx) specialBytes(name, value []byte, replace bool) bool {
 	return false
 }
 
-func (ctx *RequestCtx) appendHeader(name, value string) {
-	ctx.hdrs = appendSafe(ctx.hdrs, name)
-	ctx.hdrs = append(ctx.hdrs, ':', ' ')
-	ctx.hdrs = appendSafe(ctx.hdrs, value)
-	ctx.hdrs = append(ctx.hdrs, '\r', '\n')
-}
-
 // delHeader removes every line of ctx.hdrs whose name folds to name.
-func (ctx *RequestCtx) delHeader(name string) {
+func delHeader[N text](ctx *RequestCtx, name N) {
 	h := ctx.hdrs
 	for i := 0; i < len(h); {
 		end := i
@@ -355,33 +301,14 @@ func (ctx *RequestCtx) delHeader(name string) {
 	ctx.hdrs = h
 }
 
-func (ctx *RequestCtx) delHeaderBytes(name []byte) {
-	h := ctx.hdrs
-	for i := 0; i < len(h); {
-		end := i
-		for end < len(h) && h[end] != '\n' {
-			end++
-		}
-		end++
-		colon := i
-		for h[colon] != ':' {
-			colon++
-		}
-		if equalFoldBytes(h[i:colon], name) {
-			h = append(h[:i], h[end:]...)
-			continue
-		}
-		i = end
-	}
-	ctx.hdrs = h
-}
-
-func equalFoldStr(a, b string) bool {
-	if len(a) != len(b) {
+// validName reports whether name is a valid header field name: a non-empty
+// RFC 9110 token.
+func validName[N text](name N) bool {
+	if len(name) == 0 {
 		return false
 	}
-	for i := 0; i < len(a); i++ {
-		if lowerTable[a[i]] != lowerTable[b[i]] {
+	for i := 0; i < len(name); i++ {
+		if !tokenTable[name[i]] {
 			return false
 		}
 	}
@@ -389,20 +316,10 @@ func equalFoldStr(a, b string) bool {
 }
 
 // appendSafe appends s with CR and LF replaced by spaces so that a header
-// name or value cannot inject extra lines into the response.
-func appendSafe(dst []byte, s string) []byte {
+// value cannot inject extra lines into the response.
+func appendSafe[S text](dst []byte, s S) []byte {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c == '\r' || c == '\n' {
-			c = ' '
-		}
-		dst = append(dst, c)
-	}
-	return dst
-}
-
-func appendSafeBytes(dst, s []byte) []byte {
-	for _, c := range s {
 		if c == '\r' || c == '\n' {
 			c = ' '
 		}

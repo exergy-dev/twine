@@ -24,6 +24,19 @@ const (
 	// DefaultMaxPipelinedRequests bounds the requests served from one read
 	// before the connection yields to the loop.
 	DefaultMaxPipelinedRequests = 16
+	// DefaultMaxResponseBytes bounds a response body. It is 1 MiB below the
+	// engine's default twine.WriteBufferLimit (16 MiB) to leave room for
+	// headers and for an earlier pipelined response that is still queued.
+	DefaultMaxResponseBytes = 15 << 20
+)
+
+// Default timeouts.
+const (
+	// DefaultIdleTimeout closes a connection with no I/O for this long.
+	DefaultIdleTimeout = 90 * time.Second
+	// DefaultReadTimeout bounds how long a request may take to arrive once
+	// its first bytes are buffered.
+	DefaultReadTimeout = 60 * time.Second
 )
 
 // maxRetained is the largest buffer a connection keeps between requests.
@@ -40,10 +53,13 @@ const largeBody = 32 << 10
 // exported fields, then call Factory or Listen; fields must not change
 // afterwards. One Server may serve any number of listeners and engines.
 type Server struct {
-	// Handler is called on the connection's loop for every request. It
-	// must not block (use twine.DeferToThread for blocking work, though the
-	// response is still sent when Handler returns). A nil Handler answers
-	// 404.
+	// Handler is called on the connection's loop for every request. The
+	// response is the state of the RequestCtx when Handler returns: it is
+	// sent then, and there is no asynchronous response. Handler must not
+	// block, so handlers that wait on I/O belong on net/http. Work started
+	// with twine.DeferToThread or Loop.CallLater cannot contribute to the
+	// response; use them only for fire-and-forget tasks. A nil Handler
+	// answers 404.
 	Handler func(ctx *RequestCtx)
 
 	// Name, when set, is sent as the Server response header.
@@ -55,7 +71,8 @@ type Server struct {
 	MaxHeaderBytes int
 
 	// MaxBodyBytes bounds the request body (default DefaultMaxBodyBytes).
-	// Exceeding it yields 413.
+	// Exceeding it yields 413, as does a chunked request whose raw size
+	// passes MaxHeaderBytes + 2*MaxBodyBytes + 64 KiB.
 	MaxBodyBytes int
 
 	// MaxPipelinedRequests bounds how many requests are served from one
@@ -63,23 +80,53 @@ type Server struct {
 	// reading is paused and serving continues on the next loop iteration.
 	MaxPipelinedRequests int
 
-	// IdleTimeout, when positive, closes connections with no I/O for that
-	// long.
+	// MaxResponseBytes bounds the response body a Handler may produce
+	// (default DefaultMaxResponseBytes). The whole response is queued on
+	// the connection at once, and the engine aborts a connection whose
+	// pending output passes its WriteBufferLimit (16 MiB by default), which
+	// would cut the body off after Content-Length was sent. A larger body
+	// is therefore replaced by a 500 response, the connection is closed
+	// after it, and the event is logged. When you lower
+	// twine.WriteBufferLimit, set this below it, leaving room for headers
+	// and pipelined responses: the cap applies per response, not to the
+	// total pending on the connection. HEAD responses, which carry no body,
+	// are exempt.
+	MaxResponseBytes int
+
+	// IdleTimeout closes a connection that has had no I/O for this long
+	// (default DefaultIdleTimeout when zero; negative disables it). It is
+	// the engine's per-connection idle timer, so it bounds idle keep-alive
+	// connections but restarts on every byte a slow peer sends.
 	IdleTimeout time.Duration
 
-	// Logger receives Handler panics. Defaults to slog.Default().
+	// ReadTimeout bounds how long one request may take to arrive once its
+	// first bytes are buffered (default DefaultReadTimeout when zero;
+	// negative disables it). A request still incomplete when it expires is
+	// answered with 408 and the connection is closed. Unlike IdleTimeout it
+	// does not restart on activity, so a peer trickling a head or body byte
+	// by byte cannot hold the connection and its reassembly buffer. The
+	// timer is armed only while an incomplete request is buffered: requests
+	// that arrive in one read never touch it.
+	ReadTimeout time.Duration
+
+	// Logger receives Handler panics and responses over MaxResponseBytes.
+	// Defaults to slog.Default().
 	Logger *slog.Logger
 
-	once       sync.Once
-	maxHdr     int
-	maxBody    int
-	maxPipe    int
-	maxRaw     int
-	serverLine []byte
-	logger     *slog.Logger
+	once        sync.Once
+	maxHdr      int
+	maxBody     int
+	maxPipe     int
+	maxRaw      int
+	maxResp     int
+	idleTimeout time.Duration
+	readTimeout time.Duration
+	serverLine  []byte
+	logger      *slog.Logger
 
-	mu    sync.Mutex
-	dates map[*twine.Loop]*dateState
+	mu      sync.Mutex
+	dates   map[*twine.Loop]*dateState
+	engines map[*twine.Engine]struct{} // engines with a cleanup hook
 }
 
 func (s *Server) init() {
@@ -96,9 +143,17 @@ func (s *Server) init() {
 		if s.maxPipe <= 0 {
 			s.maxPipe = DefaultMaxPipelinedRequests
 		}
-		// Raw bytes one request may occupy while incomplete: the head, the
-		// body and chunked framing overhead up to the body size again.
+		// Raw bytes an incomplete chunked request may occupy: the head,
+		// the payload, and framing up to the payload size again. A
+		// Content-Length request needs no raw cap: its length is checked
+		// against maxBody as soon as the head is parsed.
 		s.maxRaw = s.maxHdr + 2*s.maxBody + 64<<10
+		s.maxResp = s.MaxResponseBytes
+		if s.maxResp <= 0 {
+			s.maxResp = DefaultMaxResponseBytes
+		}
+		s.idleTimeout = orDefault(s.IdleTimeout, DefaultIdleTimeout)
+		s.readTimeout = orDefault(s.ReadTimeout, DefaultReadTimeout)
 		if s.Name != "" {
 			s.serverLine = appendSafe(append([]byte(nil), "Server: "...), s.Name)
 			s.serverLine = append(s.serverLine, '\r', '\n')
@@ -110,9 +165,24 @@ func (s *Server) init() {
 	})
 }
 
+// orDefault maps a timeout setting to its effective value: 0 means def and
+// a negative value means disabled (0).
+func orDefault(d, def time.Duration) time.Duration {
+	switch {
+	case d == 0:
+		return def
+	case d < 0:
+		return 0
+	}
+	return d
+}
+
 // Factory returns a twine.Factory that serves HTTP on every connection it
 // builds. Each connection allocates its protocol state (including its
-// RequestCtx) once; requests on it allocate nothing.
+// RequestCtx) once; requests on it allocate nothing beyond buffer growth.
+// A request that arrives over several reads arms the ReadTimeout timer at
+// most once per ReadTimeout, which costs a share of the loop's pooled
+// timer allocation (one per 256 timers).
 func (s *Server) Factory() twine.Factory {
 	s.init()
 	return twine.FactoryFunc(s.buildProtocol)
@@ -121,13 +191,7 @@ func (s *Server) Factory() twine.Factory {
 // Listen binds addr on e and serves HTTP on it. It is shorthand for
 // e.ListenTCP(addr, s.Factory(), opts...).
 func (s *Server) Listen(e *twine.Engine, addr string, opts ...twine.ListenOption) (twine.Listener, error) {
-	lst, err := e.ListenTCP(addr, s.Factory(), opts...)
-	if err != nil {
-		return nil, err
-	}
-	loops := e.Loops()
-	e.OnShutdown(func() { s.forgetLoops(loops) })
-	return lst, nil
+	return e.ListenTCP(addr, s.Factory(), opts...)
 }
 
 func (s *Server) buildProtocol(net.Addr) twine.Protocol {
@@ -135,11 +199,14 @@ func (s *Server) buildProtocol(net.Addr) twine.Protocol {
 	c.ctx.c = c
 	c.ctx.req.contentLength = -1
 	c.resumeFn = c.resume
+	c.readTimeoutFn = c.onReadTimeout
 	return c
 }
 
 // conn is the per-connection protocol. It embeds the RequestCtx so that a
-// connection costs one allocation.
+// connection costs one allocation for its state, plus the two method
+// values (resumeFn, readTimeoutFn) bound once so that scheduling them later
+// does not allocate.
 type conn struct {
 	s    *Server
 	t    twine.Transport
@@ -160,6 +227,15 @@ type conn struct {
 	resumePending bool // a CallLater(0) continuation is scheduled
 	prodPaused    bool // the transport asked us to stop producing
 	resumeFn      func()
+
+	// ReadTimeout state. readDeadline (loop clock, UnixNano) is set when an
+	// incomplete request starts being buffered and cleared when a request
+	// completes. readTimer is armed at most once per ReadTimeout and is not
+	// stopped when a request completes: it checks readDeadline when it
+	// fires and re-arms for the remainder or does nothing.
+	readDeadline  int64
+	readTimer     *twine.Timer
+	readTimeoutFn func()
 }
 
 var _ twine.Protocol = (*conn)(nil)
@@ -170,10 +246,42 @@ func (c *conn) ConnectionMade(t twine.Transport) {
 	c.t = t
 	c.loop = t.Loop()
 	c.date = c.s.dateFor(c.loop)
-	if c.s.IdleTimeout > 0 {
-		t.SetIdleTimeout(c.s.IdleTimeout)
+	if c.s.idleTimeout > 0 {
+		t.SetIdleTimeout(c.s.idleTimeout)
 	}
 	t.RegisterProducer(c, true)
+}
+
+// startReadTimer starts the ReadTimeout clock for the incomplete request
+// now in c.buf, unless it is already running. It runs only on the
+// reassembly path.
+func (c *conn) startReadTimer() {
+	if c.s.readTimeout <= 0 || c.readDeadline != 0 {
+		return
+	}
+	c.readDeadline = c.loop.Now().UnixNano() + int64(c.s.readTimeout)
+	if c.readTimer == nil {
+		c.readTimer = c.loop.CallLater(c.s.readTimeout, c.readTimeoutFn)
+	}
+}
+
+// onReadTimeout is the ReadTimeout timer callback.
+func (c *conn) onReadTimeout() {
+	c.readTimer = nil
+	if c.closed || c.readDeadline == 0 {
+		return // the request completed; the next one restarts the clock
+	}
+	now := c.loop.Now().UnixNano()
+	if c.resumePending || c.prodPaused {
+		// The server, not the peer, is behind: buffered requests wait for
+		// a continuation or for the client to drain responses.
+		c.readDeadline = now + int64(c.s.readTimeout)
+	}
+	if remain := c.readDeadline - now; remain > 0 {
+		c.readTimer = c.loop.CallLater(time.Duration(remain), c.readTimeoutFn)
+		return
+	}
+	c.sendError(nethttp.StatusRequestTimeout)
 }
 
 // ConnectionLost implements twine.Protocol.
@@ -181,6 +289,10 @@ func (c *conn) ConnectionLost(error) {
 	c.closed = true
 	if c.date != nil {
 		c.date.release()
+	}
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+		c.readTimer = nil
 	}
 	c.buf, c.chunkBody, c.wbuf = nil, nil, nil
 	c.ctx.out, c.ctx.hdrs = nil, nil
@@ -211,10 +323,6 @@ func (c *conn) StopProducing() {}
 // schedule continues serving buffered requests on the next iteration.
 func (c *conn) schedule() {
 	if c.resumePending || c.closed {
-		return
-	}
-	if c.loop == nil {
-		c.resume()
 		return
 	}
 	c.resumePending = true
@@ -253,6 +361,7 @@ func (c *conn) DataReceived(b []byte) {
 		if !c.closed && n < len(b) {
 			c.buf = append(c.buf[:0], b[n:]...)
 			c.reserve()
+			c.startReadTimer()
 		}
 	}
 	c.flushOut()
@@ -265,12 +374,19 @@ func (c *conn) processBuf() {
 		c.buf = c.buf[:0]
 		return
 	}
+	if n > 0 {
+		c.readDeadline = 0 // a request completed
+	}
 	rest := copy(c.buf, c.buf[n:])
 	c.buf = c.buf[:rest]
-	if rest == 0 && cap(c.buf) > maxRetained {
-		c.buf = nil
+	if rest == 0 {
+		if cap(c.buf) > maxRetained {
+			c.buf = nil
+		}
+		return
 	}
 	c.reserve()
+	c.startReadTimer()
 }
 
 // reserve grows c.buf once to hold a Content-Length request whose head is
@@ -301,10 +417,9 @@ func (c *conn) process(data []byte) int {
 	off := 0
 	served := 0
 	for !c.closed && off < len(data) && !c.prodPaused {
-		if served >= c.s.maxPipe && c.loop != nil {
-			c.resumePending = true
+		if served >= c.s.maxPipe {
 			c.t.PauseReading()
-			c.loop.CallLater(0, c.resumeFn)
+			c.schedule()
 			break
 		}
 		n, code := c.parseOne(data[off:])
@@ -373,18 +488,16 @@ func (c *conn) parseOne(data []byte) (int, int) {
 	return total, parseOK
 }
 
-// needBody handles an incomplete body: it enforces the raw size limit and
-// answers Expect: 100-continue once.
+// needBody handles an incomplete body: it enforces the raw size limit of
+// a chunked request and answers Expect: 100-continue once.
 func (c *conn) needBody(have int) int {
 	r := &c.ctx.req
-	limit := c.s.maxRaw
-	if r.chunked {
-		// Chunked framing is not bounded by 2× the payload: one-byte chunks
-		// cost six raw bytes each. The decoded size is enforced separately,
-		// so the raw cap only needs to bound the work per request.
-		limit = c.s.maxHdr + 8*c.s.maxBody + 64<<10
-	}
-	if have > limit {
+	// The decoded chunked body is bounded by MaxBodyBytes, but the raw
+	// framing is not (one-byte chunks cost six raw bytes each), and all of
+	// it is buffered until the request completes. Framing heavier than
+	// the payload itself is refused with 413 so a connection never pins
+	// more than about twice MaxBodyBytes.
+	if r.chunked && have > c.s.maxRaw {
 		return 413
 	}
 	if r.expect100 && !c.cont && r.minor == 1 {
@@ -416,11 +529,13 @@ func (c *conn) serve(req []byte) {
 	} else {
 		c.callHandler()
 	}
+	if len(ctx.out) > c.s.maxResp && !r.isHead {
+		c.tooLarge()
+	}
 	c.writeResponse()
 
 	r.data = nil
 	ctx.body = nil
-	ctx.user = nil
 	c.headDone = false
 	c.cont = false
 	if cap(ctx.out) > maxRetained {
@@ -453,6 +568,18 @@ func (c *conn) recoverHandler() {
 	ctx.close = true
 }
 
+// tooLarge replaces a response whose body passes MaxResponseBytes with 500
+// followed by a close: sending it would overflow the engine's write
+// buffer and abort the connection mid-body.
+func (c *conn) tooLarge() {
+	ctx := &c.ctx
+	c.s.logger.Error("twine/http: response body exceeds MaxResponseBytes; sent 500",
+		"bytes", len(ctx.out), "max", c.s.maxResp, "path", string(ctx.Path()))
+	ctx.resetResponse()
+	ctx.Error("Internal Server Error\n", nethttp.StatusInternalServerError)
+	ctx.close = true
+}
+
 const defaultContentType = "Content-Type: text/plain; charset=utf-8\r\n"
 
 // writeResponse appends the response for the current request to c.wbuf.
@@ -460,7 +587,9 @@ func (c *conn) writeResponse() {
 	ctx := &c.ctx
 	w := c.wbuf
 	st := ctx.status
-	if st < 100 || st > 599 {
+	if st < 200 || st > 599 {
+		// 1xx is an interim response: sending one as the only response
+		// would leave the client waiting for the final one.
 		st = 500
 	}
 	w = append(w, statusLines[st]...)
@@ -468,10 +597,11 @@ func (c *conn) writeResponse() {
 		w = append(w, c.s.serverLine...)
 	}
 	if !ctx.noDate {
-		w = append(w, c.date.get()...)
+		w = append(w, c.date.line...)
 	}
 	body := ctx.out
-	if st >= 200 && st != 204 && st != 304 {
+	head := ctx.req.isHead
+	if st != 204 && st != 304 {
 		if len(ctx.ct) > 0 {
 			w = append(w, "Content-Type: "...)
 			w = append(w, ctx.ct...)
@@ -479,9 +609,14 @@ func (c *conn) writeResponse() {
 		} else if len(body) > 0 {
 			w = append(w, defaultContentType...)
 		}
-		w = append(w, "Content-Length: "...)
-		w = strconv.AppendInt(w, int64(len(body)), 10)
-		w = append(w, '\r', '\n')
+		// A HEAD Handler that wrote no body has not said how long the
+		// GET body would be; "Content-Length: 0" would be a false claim,
+		// so it is omitted (as net/http does).
+		if len(body) > 0 || !head {
+			w = append(w, "Content-Length: "...)
+			w = strconv.AppendInt(w, int64(len(body)), 10)
+			w = append(w, '\r', '\n')
+		}
 	} else {
 		body = nil
 	}
@@ -492,7 +627,7 @@ func (c *conn) writeResponse() {
 		w = append(w, "Connection: keep-alive\r\n"...)
 	}
 	w = append(w, '\r', '\n')
-	if string(ctx.Method()) == "HEAD" {
+	if head {
 		body = nil
 	}
 	if len(body) > largeBody {
@@ -506,9 +641,13 @@ func (c *conn) writeResponse() {
 	c.wbuf = w
 }
 
-// sendError answers a request that could not be parsed and closes.
+// sendError answers a request that could not be parsed with a canned
+// response and closes.
 func (c *conn) sendError(code int) {
-	c.wbuf = append(c.wbuf, errorResponse(code)...)
+	c.wbuf = append(c.wbuf, statusLines[code]...)
+	c.wbuf = append(c.wbuf, c.s.serverLine...)
+	c.wbuf = append(c.wbuf, c.date.line...)
+	c.wbuf = append(c.wbuf, errorTail(code)...)
 	c.closeConn()
 }
 
@@ -551,25 +690,34 @@ var statusLines = func() (t [600][]byte) {
 	return t
 }()
 
-var errorResponses = func() map[int][]byte {
-	m := make(map[int][]byte)
-	for _, code := range []int{400, 413, 431, 500, 501, 505} {
+// cannedError is the part of an error response that follows the status,
+// Server and Date lines.
+type cannedError struct {
+	code int
+	tail []byte
+}
+
+// cannedErrors covers every status the parser and the timeouts produce.
+var cannedErrors = func() []cannedError {
+	var t []cannedError
+	for _, code := range []int{400, 408, 413, 431, 501, 505} {
 		body := nethttp.StatusText(code) + "\n"
-		b := append([]byte(nil), statusLines[code]...)
-		b = append(b, defaultContentType...)
+		b := append([]byte(nil), defaultContentType...)
 		b = append(b, "Content-Length: "...)
 		b = strconv.AppendInt(b, int64(len(body)), 10)
 		b = append(b, "\r\nConnection: close\r\n\r\n"...)
-		t := append(b, body...)
-		m[code] = t
+		t = append(t, cannedError{code, append(b, body...)})
 	}
-	return m
+	return t
 }()
 
-// errorResponse returns the canned close-after response for code.
-func errorResponse(code int) []byte {
-	if b, ok := errorResponses[code]; ok {
-		return b
+// errorTail returns the canned tail for code. Every code sendError is
+// given has one; anything else is a bug in this package.
+func errorTail(code int) []byte {
+	for i := range cannedErrors {
+		if cannedErrors[i].code == code {
+			return cannedErrors[i].tail
+		}
 	}
-	return errorResponses[400]
+	panic("twine/http: no canned response for status " + strconv.Itoa(code))
 }

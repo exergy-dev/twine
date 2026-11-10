@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -65,23 +66,63 @@ func TestAdaptMux(t *testing.T) {
 	}
 }
 
-// TestAdaptAllocs documents Adapt's per-request cost.
+// TestAdaptEarlyHints runs the net/http Early Hints idiom: the 103 is
+// dropped and the final response is sent, without desynchronising a
+// pipelined request.
+func TestAdaptEarlyHints(t *testing.T) {
+	h := Adapt(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		w.Header().Add("Link", "</style.css>; rel=preload; as=style")
+		w.WriteHeader(nethttp.StatusEarlyHints)
+		w.WriteHeader(nethttp.StatusContinue)
+		io.WriteString(w, "page "+r.URL.Path)
+	}))
+	out, closed := serveOnce(t, testLoop(t), &Server{Handler: h},
+		"GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n")
+	br := bufio.NewReader(strings.NewReader(out))
+	for _, path := range []string{"/a", "/b"} {
+		resp, err := nethttp.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatalf("%s: %v\n%q", path, err, out)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 || string(body) != "page "+path || resp.Header.Get("Link") == "" {
+			t.Fatalf("%s: %d %q %v", path, resp.StatusCode, body, resp.Header)
+		}
+	}
+	if closed || strings.Contains(out, "103") {
+		t.Fatalf("closed=%v out=%q", closed, out)
+	}
+}
+
+// TestAdaptAllocs checks Adapt's documented per-request cost: roughly 10
+// allocations plus 3 per request header (2 of slack).
 func TestAdaptAllocs(t *testing.T) {
+	const headers = 3 // Host, User-Agent, Accept
 	h := Adapt(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		io.WriteString(w, "hello")
 	}))
 	s := &Server{Handler: h}
-	ft := &fakeTransport{}
-	c := newFakeConn(s, ft)
+	l := testLoop(t)
 	req := []byte("GET /hello?x=1 HTTP/1.1\r\nHost: example.com\r\nUser-Agent: bench\r\nAccept: */*\r\n\r\n")
-	c.DataReceived(req)
-	allocs := testing.AllocsPerRun(200, func() {
-		ft.reset()
+	var allocs float64
+	var out string
+	onLoop(t, l, func() {
+		ft := &fakeTransport{loop: l}
+		c := newFakeConn(s, ft)
 		c.DataReceived(req)
+		allocs = testing.AllocsPerRun(200, func() {
+			ft.reset()
+			c.DataReceived(req)
+		})
+		out = ft.String()
+		c.ConnectionLost(nil)
 	})
-	t.Logf("Adapt: %v allocs per request (3 request headers)", allocs)
-	if !strings.HasSuffix(ft.String(), "hello") {
-		t.Fatalf("out %q", ft.String())
+	t.Logf("Adapt: %v allocs per request (%d request headers)", allocs, headers)
+	if !strings.HasSuffix(out, "hello") {
+		t.Fatalf("out %q", out)
+	}
+	if limit := float64(10 + 3*headers + 2); allocs > limit {
+		t.Errorf("Adapt: %v allocs per request, documented about 10+3*%d (limit %v)", allocs, headers, limit)
 	}
 }

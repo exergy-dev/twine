@@ -11,6 +11,7 @@ linters:
     - gocritic
     - ineffassign
     - unused
+    - copyloopvar
   settings:
     errcheck:
       exclude-functions:

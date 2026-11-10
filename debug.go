@@ -16,11 +16,16 @@ var debugEnabled = debugBuildTag || os.Getenv("TWINE_DEBUG") == "1"
 var debugFutures = debugEnabled || os.Getenv("TWINE_DEBUG_FUTURES") == "1"
 
 // assertInLoop panics with the caller's stack when called off the loop in a
-// debug build. It is a no-op otherwise and is inlined away.
+// debug build. It is small enough to inline, so release builds pay one load
+// and branch per Transport method instead of a call.
 func (l *Loop) assertInLoop() {
-	if !debugEnabled {
-		return
+	if debugEnabled {
+		l.checkInLoop()
 	}
+}
+
+// checkInLoop is the out-of-line half of assertInLoop.
+func (l *Loop) checkInLoop() {
 	if l == nil || l.InLoop() {
 		return
 	}

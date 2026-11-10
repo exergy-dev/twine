@@ -2,9 +2,11 @@ package wheel
 
 import (
 	"math/rand"
+	"slices"
 	"testing"
 	"testing/quick"
 	"time"
+	"unsafe"
 )
 
 const ms = int64(time.Millisecond)
@@ -32,7 +34,6 @@ func newHarness(t *testing.T, n int, base int64, strict bool) *harness {
 		now: base, strict: strict,
 	}
 	for i := range h.timers {
-		i := i
 		h.timers[i].Fn = func() { h.onFire(i) }
 	}
 	return h
@@ -241,7 +242,6 @@ func TestCascadeBoundariesStepping(t *testing.T) {
 	firedAt := make([]int64, len(ds))
 	var cur int64
 	for i, d := range ds {
-		i := i
 		timers[i].Fn = func() { firedAt[i] = cur }
 		w.Add(&timers[i], d*ms)
 	}
@@ -298,7 +298,6 @@ func TestFIFOWithinSlotAndExpiryOrder(t *testing.T) {
 	var order []int
 	timers := make([]Timer, 6)
 	for i := range timers {
-		i := i
 		timers[i].Fn = func() { order = append(order, i) }
 	}
 	// Ticks: 0->5, 1->3, 2->5, 3->300 (level 1), 4->3, 5->5
@@ -635,6 +634,84 @@ func TestZeroAllocs(t *testing.T) {
 	if cnt == 0 {
 		t.Fatal("no timers fired")
 	}
+
+	// The FnT path, as the root package uses it: a package-level function
+	// recovers the embedding struct, so firing allocates nothing.
+	fts := make([]fntTimer, 64)
+	fntFired = 0
+	for k := range fts {
+		fts[k].t.FnT = fntFire
+	}
+	if a := testing.AllocsPerRun(1000, func() {
+		now := w.Now()
+		for k := range fts {
+			w.Add(&fts[k].t, now+int64(k%7+1)*ms)
+		}
+		w.Advance(now + 10*ms)
+	}); a != 0 {
+		t.Fatalf("Advance with FnT allocates: %v", a)
+	}
+	if fntFired == 0 {
+		t.Fatal("no FnT timers fired")
+	}
+}
+
+// fntTimer embeds a Timer as its first field, the layout FnT callers rely on
+// to convert the *Timer back to their own struct.
+type fntTimer struct {
+	t     Timer
+	id    int
+	fired int
+}
+
+// fntFired counts fntFire calls.
+var fntFired int
+
+// fntFire is a package-level FnT callback: storing it costs no allocation.
+func fntFire(t *Timer) {
+	o := (*fntTimer)(unsafe.Pointer(t))
+	o.fired++
+	fntFired++
+}
+
+func TestFnT(t *testing.T) {
+	w := New(time.Millisecond, 0)
+	var a, b, c, d fntTimer
+	a.id, b.id, c.id, d.id = 1, 2, 3, 4
+	var order []int
+	record := func(t *Timer) {
+		order = append(order, (*fntTimer)(unsafe.Pointer(t)).id)
+	}
+	// FnT receives the timer, which converts back to the outer struct.
+	a.t.FnT = record
+	// Fn takes precedence over FnT when both are set.
+	b.t.Fn = func() { order = append(order, -2) }
+	b.t.FnT = record
+	// nil Fn and nil FnT fire as a no-op.
+	// d re-adds itself from FnT, which must work like Fn.
+	d.t.FnT = func(t *Timer) {
+		record(t)
+		if o := (*fntTimer)(unsafe.Pointer(t)); o.fired == 0 {
+			o.fired++
+			w.Add(t, 3*ms)
+		}
+	}
+	w.Add(&a.t, 1*ms)
+	w.Add(&b.t, 1*ms)
+	w.Add(&c.t, 1*ms)
+	w.Add(&d.t, 2*ms)
+	if n := w.Advance(2 * ms); n != 4 {
+		t.Fatalf("fired %d, want 4", n)
+	}
+	if want := []int{1, -2, 4}; !slices.Equal(order, want) {
+		t.Fatalf("order %v, want %v", order, want)
+	}
+	if !d.t.Scheduled() || a.t.Scheduled() || c.t.Scheduled() {
+		t.Fatal("scheduled state wrong after FnT")
+	}
+	if n := w.Advance(3 * ms); n != 1 || !slices.Equal(order, []int{1, -2, 4, 4}) {
+		t.Fatalf("re-added FnT timer: fired %d, order %v", n, order)
+	}
 }
 
 // BenchmarkAddRemove1M inserts and cancels a fresh timer with 1M live timers
@@ -652,8 +729,7 @@ func BenchmarkAddRemove1M(b *testing.B) {
 	}
 	var tm Timer
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		w.Add(&tm, ds[i&4095])
 		w.Remove(&tm)
 	}
@@ -675,8 +751,7 @@ func BenchmarkReset1M(b *testing.B) {
 	}
 	x := uint32(2463534242) // xorshift32: random timer index without a table
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		x ^= x << 13
 		x ^= x >> 17
 		x ^= x << 5

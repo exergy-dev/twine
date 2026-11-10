@@ -12,9 +12,8 @@ import (
 // and that map is used at connection setup, not per request.
 type dateState struct {
 	s      *Server
-	loop   *twine.Loop // nil for a transport without a loop (tests)
-	line   []byte
-	sec    int64
+	loop   *twine.Loop
+	line   []byte // "Date: <IMF-fixdate>\r\n"
 	conns  int
 	armed  bool
 	tickFn func()
@@ -23,12 +22,14 @@ type dateState struct {
 // dateFor returns the date cache for l, creating it and arming its
 // once-per-second refresh timer on first use. Called from ConnectionMade on
 // l.
+//
+// The first cache created for an engine registers an OnShutdown hook that
+// drops all of that engine's caches, whose timers stop with its loops.
+// Registering here rather than in Listen covers servers attached with
+// Factory as well. A hook registered after shutdown has begun never runs;
+// that needs a connection made during shutdown on a loop with no cache,
+// and costs one stale map entry.
 func (s *Server) dateFor(l *twine.Loop) *dateState {
-	if l == nil {
-		d := &dateState{s: s, sec: -1}
-		d.refresh(time.Now())
-		return d
-	}
 	s.mu.Lock()
 	d := s.dates[l]
 	if d == nil {
@@ -36,8 +37,14 @@ func (s *Server) dateFor(l *twine.Loop) *dateState {
 		d.tickFn = d.tick
 		if s.dates == nil {
 			s.dates = make(map[*twine.Loop]*dateState)
+			s.engines = make(map[*twine.Engine]struct{})
 		}
 		s.dates[l] = d
+		e := l.Engine()
+		if _, hooked := s.engines[e]; !hooked {
+			s.engines[e] = struct{}{}
+			e.OnShutdown(func() { s.forgetEngine(e) })
+		}
 	}
 	s.mu.Unlock()
 	d.conns++
@@ -48,22 +55,19 @@ func (s *Server) dateFor(l *twine.Loop) *dateState {
 	return d
 }
 
-// forgetLoops drops the caches of an engine that is shutting down; their
+// forgetEngine drops the caches of an engine that is shutting down; their
 // timers will never fire again.
-func (s *Server) forgetLoops(loops []*twine.Loop) {
+func (s *Server) forgetEngine(e *twine.Engine) {
 	s.mu.Lock()
-	for _, l := range loops {
+	for _, l := range e.Loops() {
 		delete(s.dates, l)
 	}
+	delete(s.engines, e)
 	s.mu.Unlock()
 }
 
 // release is called from ConnectionLost.
-func (d *dateState) release() {
-	if d.loop != nil {
-		d.conns--
-	}
-}
+func (d *dateState) release() { d.conns-- }
 
 // arm schedules the next refresh just after the next second boundary.
 func (d *dateState) arm() {
@@ -91,20 +95,7 @@ func (d *dateState) tick() {
 
 // refresh formats now into the cached line, reusing its storage.
 func (d *dateState) refresh(now time.Time) {
-	u := now.UTC()
-	d.sec = u.Unix()
 	d.line = append(d.line[:0], "Date: "...)
-	d.line = u.AppendFormat(d.line, nethttp.TimeFormat)
+	d.line = now.UTC().AppendFormat(d.line, nethttp.TimeFormat)
 	d.line = append(d.line, '\r', '\n')
-}
-
-// get returns the current line. Without a loop it regenerates lazily when
-// the second changes.
-func (d *dateState) get() []byte {
-	if d.loop == nil {
-		if now := time.Now(); now.Unix() != d.sec {
-			d.refresh(now)
-		}
-	}
-	return d.line
 }

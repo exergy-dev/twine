@@ -1,6 +1,8 @@
 package mpsc
 
 import (
+	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -63,7 +65,6 @@ func TestWraparoundFIFO(t *testing.T) {
 		var got int
 		fns := make([]func(), 4096)
 		for i := range fns {
-			i := i
 			fns[i] = func() { got = i }
 		}
 		var ref []int
@@ -122,26 +123,34 @@ func TestPopClearsSlot(t *testing.T) {
 
 // TestStress runs 64 producers concurrently with a draining consumer and
 // checks every item arrives exactly once and in per-producer FIFO order.
+// Sizes: 1M items in total by default, 640K with -short, and 64 producers
+// x 1M items each with TWINE_STRESS=1 (the nightly job).
 func TestStress(t *testing.T) {
 	const producers = 64
 	perProducer := 1_000_000 / producers
-	if testing.Short() {
+	switch {
+	case os.Getenv("TWINE_STRESS") == "1":
+		perProducer = 1_000_000
+	case testing.Short():
 		perProducer = 10_000
 	}
 
-	// Each item records (producer, index) into these variables, which only
-	// the consumer goroutine touches (the funcs run on the consumer).
-	var gotP, gotI int
-	fns := make([][]func(), producers)
+	q := New(1024) // much smaller than the total so the full path is exercised
+
+	// Item i of producer p is the closure fns[p][i%window], which records
+	// (p, i%window) into these variables; only the consumer goroutine runs
+	// the funcs. window exceeds the queue capacity, so a lost, duplicated
+	// or reordered item (which can only be displaced by less than the
+	// capacity) never aliases the expected slot.
+	const window = 4096
+	var gotP, gotSlot int
+	fns := make([][window]func(), producers)
 	for p := range fns {
-		fns[p] = make([]func(), perProducer)
-		for i := range fns[p] {
-			p, i := p, i
-			fns[p][i] = func() { gotP, gotI = p, i }
+		for s := range fns[p] {
+			fns[p][s] = func() { gotP, gotSlot = p, s }
 		}
 	}
 
-	q := New(1024) // much smaller than the total so the full path is exercised
 	var start, wg sync.WaitGroup
 	var fullHits atomic.Int64
 	start.Add(1)
@@ -151,7 +160,7 @@ func TestStress(t *testing.T) {
 			defer wg.Done()
 			start.Wait()
 			for i := 0; i < perProducer; i++ {
-				for !q.Push(fns[p][i]) {
+				for !q.Push(fns[p][i%window]) {
 					fullHits.Add(1)
 					runtime.Gosched()
 				}
@@ -159,29 +168,40 @@ func TestStress(t *testing.T) {
 		}(p)
 	}
 
+	// The consumer records the first inconsistency and keeps draining, so
+	// the producers always finish (even after a duplicate); it stops once
+	// every Push has returned and the queue is empty, even if items are
+	// missing.
+	var producersDone atomic.Bool
 	next := make([]int, producers)
 	total := producers * perProducer
 	done := make(chan struct{})
 	var failure string
 	go func() {
 		defer close(done)
-		for n := 0; n < total; {
+		for {
 			fn, ok := q.Pop()
 			if !ok {
-				runtime.Gosched()
-				continue
+				if producersDone.Load() {
+					if fn, ok = q.Pop(); !ok {
+						return // every Push returned and the queue is empty
+					}
+				} else {
+					runtime.Gosched()
+					continue
+				}
 			}
 			fn()
-			if gotI != next[gotP] {
-				failure = "out-of-order or duplicate item"
-				return
+			if gotSlot != next[gotP]%window && failure == "" {
+				failure = fmt.Sprintf("producer %d: got item slot %d after %d items (want slot %d): out-of-order, lost or duplicate item",
+					gotP, gotSlot, next[gotP], next[gotP]%window)
 			}
 			next[gotP]++
-			n++
 		}
 	}()
 	start.Done()
 	wg.Wait()
+	producersDone.Store(true)
 	<-done
 	if failure != "" {
 		t.Fatal(failure)
@@ -256,7 +276,7 @@ func BenchmarkPushPopSingle(b *testing.B) {
 	q := New(1024)
 	noop := func() {}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		q.Push(noop)
 		q.Pop()
 	}

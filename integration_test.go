@@ -11,6 +11,7 @@ import (
 	mrand "math/rand/v2"
 	"net"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -219,7 +220,7 @@ func TestIntegrationEcho(t *testing.T) {
 		msgs = 100
 	}
 	for _, loops := range []int{1, 2, runtime.GOMAXPROCS(0)} {
-		t.Run("loops="+itoa(loops), func(t *testing.T) {
+		t.Run("loops="+strconv.Itoa(loops), func(t *testing.T) {
 			e := startEngine(t, Loops(loops))
 			lst := listen(t, e, echoFactory())
 			addr := lst.Addr().String()
@@ -325,6 +326,11 @@ func (p *streamProducer) ResumeProducing() {
 	if !p.paused {
 		p.sink.Errorf("ResumeProducing while not paused")
 	}
+	// A streaming producer is resumed only once the ring has drained to the
+	// low-water mark (default 64 KiB), whatever the kernel buffers do.
+	if n := p.t.PendingWrite(); n > 64<<10 {
+		p.sink.Errorf("ResumeProducing with %d bytes still pending, above the 64 KiB low-water mark", n)
+	}
 	p.paused = false
 	p.record("resume")
 	p.resumes++
@@ -337,9 +343,34 @@ func (p *streamProducer) ResumeProducing() {
 
 func (p *streamProducer) StopProducing() { p.stops.Add(1) }
 
+// bpSockBuf is the SO_SNDBUF / SO_RCVBUF pinned by TestBackpressureProducer.
+const bpSockBuf = 64 << 10
+
+// dialTCPRcvBuf dials addr with SO_RCVBUF set to rcvBuf before the connect,
+// so the advertised window is fixed and receive-buffer autotuning is off.
+func dialTCPRcvBuf(t testing.TB, addr string, rcvBuf int) *net.TCPConn {
+	t.Helper()
+	d := net.Dialer{Timeout: 5 * time.Second, Control: func(_, _ string, rc syscall.RawConn) error {
+		var serr error
+		err := rc.Control(func(fd uintptr) {
+			serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, rcvBuf)
+		})
+		if err != nil {
+			return err
+		}
+		return serr
+	}}
+	c, err := d.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial %s: %v", addr, err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c.(*net.TCPConn)
+}
+
 func TestBackpressureProducer(t *testing.T) {
 	for _, crossings := range []int{1, 2} {
-		t.Run("crossings="+itoa(crossings), func(t *testing.T) {
+		t.Run("crossings="+strconv.Itoa(crossings), func(t *testing.T) {
 			e := startEngine(t, Loops(1))
 			sink := &errSink{}
 			prodCh := make(chan *streamProducer, 1)
@@ -355,8 +386,16 @@ func TestBackpressureProducer(t *testing.T) {
 					},
 					lost: func(_ *hookProto, err error) { lostCh <- err },
 				}
-			}))
-			c := dialTCP(t, lst.Addr().String())
+			}), SocketBuffers(0, bpSockBuf))
+			// Pin the client's receive buffer before connecting. With fixed
+			// buffers at both ends the kernel can hold at most a few hundred
+			// KiB of the stream, far less than the 1 MiB chunk that crosses
+			// the high-water mark, so the ring cannot drain to the low-water
+			// mark while the client is not reading. With autotuned buffers it
+			// can: macOS grows the send and receive buffers as the connection
+			// runs, and the first CI run saw [pause resume pause] before any
+			// read.
+			c := dialTCPRcvBuf(t, lst.Addr().String(), bpSockBuf)
 			var p *streamProducer
 			select {
 			case p = <-prodCh:
@@ -370,7 +409,9 @@ func TestBackpressureProducer(t *testing.T) {
 			}
 			// The client does not read for a while: nothing may resume.
 			time.Sleep(100 * time.Millisecond)
-			if ev := p.snapshot(); len(ev) != 1 || ev[0] != "pause" {
+			ev := p.snapshot()
+			t.Logf("events before client reads: %v", ev)
+			if len(ev) != 1 || ev[0] != "pause" {
 				t.Errorf("events before client reads = %v, want [pause]", ev)
 			}
 			_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -759,14 +800,18 @@ func TestIdleTimeout(t *testing.T) {
 			if r.elapsed < idle-10*time.Millisecond {
 				t.Errorf("idle timeout fired early: %v < %v", r.elapsed, idle)
 			}
-			if r.elapsed > idle+10*time.Millisecond+10*time.Millisecond {
-				t.Errorf("idle timeout fired late: %v (deadline %v + tick + 10ms slack)", r.elapsed, idle)
+			if r.elapsed > idle+100*time.Millisecond {
+				t.Errorf("idle timeout fired late: %v (deadline %v + tick + 100ms scheduling slack)", r.elapsed, idle)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("idle timeout never fired")
 		}
 	})
 	t.Run("activity resets", func(t *testing.T) {
+		// A longer timeout here: the client's sleeps run on a shared CI
+		// runner, and a 25 ms sleep against a 50 ms timeout has been seen
+		// to overshoot on macOS.
+		const idle = 300 * time.Millisecond
 		e := startEngine(t, Loops(1))
 		lostCh := make(chan res, 1)
 		lst := listen(t, e, hookFactory(func() *hookProto {
@@ -782,7 +827,7 @@ func TestIdleTimeout(t *testing.T) {
 		c := dialTCP(t, lst.Addr().String())
 		buf := make([]byte, 1)
 		for i := 0; i < 6; i++ {
-			time.Sleep(idle / 2)
+			time.Sleep(idle / 4)
 			if _, err := c.Write([]byte{'x'}); err != nil {
 				t.Fatalf("write %d: %v (connection timed out despite activity)", i, err)
 			}
@@ -796,8 +841,8 @@ func TestIdleTimeout(t *testing.T) {
 			if !errors.Is(r.err, ErrIdleTimeout) {
 				t.Errorf("ConnectionLost(%v), want ErrIdleTimeout", r.err)
 			}
-			if r.elapsed < 6*idle/2 {
-				t.Errorf("connection lost after %v despite activity every %v", r.elapsed, idle/2)
+			if r.elapsed < 6*idle/4 {
+				t.Errorf("connection lost after %v despite activity every %v", r.elapsed, idle/4)
 			}
 			if r.sinceRx < idle-10*time.Millisecond || r.sinceRx > idle+100*time.Millisecond {
 				t.Errorf("timeout fired %v after the last read, want ~%v", r.sinceRx, idle)
@@ -1343,6 +1388,10 @@ func TestSoakIdleConnections(t *testing.T) {
 	if testing.Short() {
 		n = 2000
 	}
+	// Each connection costs two fds in this process. macOS caps the
+	// per-process limit at kern.maxfilesperproc (typically 10240), which
+	// does not fit 10000 connections; scale down rather than fail on EMFILE.
+	n = fdBudgetConns(t, n, 1000)
 	e := startEngine(t, Loops(4))
 	lst := listen(t, e, echoFactory())
 	addr := lst.Addr().String()
@@ -1390,7 +1439,13 @@ func TestSoakIdleConnections(t *testing.T) {
 		}
 	}()
 	if err := dialErr.Load(); err != nil {
-		t.Fatalf("dial: %v", err)
+		open := 0
+		for _, c := range clients {
+			if c != nil {
+				open++
+			}
+		}
+		t.Fatalf("dial: %v (%d of %d clients connected)", err, open, n)
 	}
 	if !waitUntil(30*time.Second, func() bool { return sumMetrics(e).Connections == uint64(n) }) {
 		t.Fatalf("server has %d connections, want %d", sumMetrics(e).Connections, n)

@@ -4,45 +4,94 @@ on:
     branches: [master]
   pull_request:
   schedule:
-    - cron: "0 3 * * *"   # nightly: long fuzz + full MPSC stress
+    - cron: "0 3 * * *"   # nightly: long fuzz, full MPSC stress, govulncheck
+  workflow_dispatch:      # run the nightly jobs by hand
+permissions:
+  contents: read
+concurrency:
+  # The event name keeps a nightly run and a push to master from cancelling
+  # each other.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go: ["1.24", "1.25"]
+        go: ["1.24", "oldstable", "stable"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-      - run: go vet ./...
-      - run: go vet -tags twine_debug ./...
-      - run: go test -count=1 ./...
-      - run: go test -race -short -count=1 ./...
-      - run: go test -tags twine_debug -short -count=1 ./...
+      - run: make vet
+      - run: make test
+      - run: make test-race test-debug TESTFLAGS=-short
       - if: runner.os == 'Linux'
-        run: go vet -tags twine_uring . ./internal/...
+        run: make test-uring
+
+  # kTLS needs the kernel's tls module. Both steps fail loudly instead of
+  # skipping: modprobe fails if the module cannot be loaded, and
+  # TWINE_REQUIRE_KTLS=1 turns the tests' "kTLS unavailable" skip into a
+  # failure.
+  ktls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: sudo modprobe tls
+      - name: KTLS tests exist (so the next step cannot pass vacuously)
+        run: go test -list KTLS ./tls | grep '^Test'
+      - run: TWINE_REQUIRE_KTLS=1 go test -count=1 -v -run KTLS ./tls
+
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
         with:
-          go-version: "1.25"
-      - uses: golangci/golangci-lint-action@v8
+          fetch-depth: 0   # scripts/apidump.sh names the latest tag
+      - uses: actions/setup-go@v7
         with:
-          version: latest
-      - run: GOOS=darwin GOARCH=arm64 go build ./... && GOOS=freebsd GOARCH=amd64 go build ./...
+          go-version: stable
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          install-only: true
+      - run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
+      # lint also runs vet, crossbuild and tunsink, and lints the bench and
+      # tunsink modules; LINT_STRICT fails if a linter is missing.
+      - run: make lint tunsink crossbuild LINT_STRICT=1
+      - name: docs/API.md is current (run make api)
+        run: sh scripts/apidump.sh && git diff --exit-code docs/API.md
+
   nightly:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
-      - run: go test -race -count=1 ./internal/mpsc
+          go-version: stable
+      - run: TWINE_STRESS=1 go test -race -count=1 ./internal/mpsc
       - run: make fuzz FUZZTIME=10m
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashers
+          path: "**/testdata/fuzz/**"
+          if-no-files-found: ignore
+
+  vuln:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - run: make vuln

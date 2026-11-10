@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/exergy-dev/twine"
@@ -25,7 +26,8 @@ var errWouldBlock net.Error = wouldBlockError{}
 
 // bio is the memory-BIO net.Conn that a *crypto/tls.Conn runs over.
 //
-// Handshake mode (the default): the tls.Conn is driven by a worker goroutine.
+// Handshake mode (the default): the tls.Conn is driven by the handshake
+// goroutine.
 // Read blocks on cond until the loop feeds ciphertext (feed) or the
 // connection is lost (shutdown). Write appends to out and asks the loop, via
 // CallFromThread, to ship out to the real transport (flushOut).
@@ -38,8 +40,8 @@ var errWouldBlock net.Error = wouldBlockError{}
 //
 // Fields marked (mu) are guarded by mu in handshake mode. In loop mode they
 // are touched only by the loop, after a happens-before edge established by
-// the handshake Future (the worker has returned from Handshake before the
-// Future resolves, and resolution goes through CallFromThread).
+// the handshake Future (the handshake goroutine has returned from Handshake
+// before the Future resolves, and resolution goes through CallFromThread).
 type bio struct {
 	loop  *twine.Loop     // immutable
 	under twine.Transport // loop-only
@@ -51,11 +53,15 @@ type bio struct {
 	in          []byte // (mu) owned inbound ciphertext; unread bytes are in[r:]
 	r           int    // (mu) read offset into in
 	out         []byte // (mu) outbound ciphertext written during the handshake
-	spare       []byte // (mu) recycled out buffer
 	flushQueued bool   // (mu) a flushOut task is pending on the loop
 	err         error  // (mu) terminal error once the connection is gone
-	loopMode    bool   // (mu) written once by the loop on mode switch
 	noWrite     bool   // (mu) kTLS TX installed: crypto/tls writes are refused
+	refused     bool   // (mu) a write was refused because of noWrite
+
+	// loopMode is set once, by the loop, when the handshake has completed.
+	// It is atomic so that Read, called on the loop for every record, can
+	// test it without taking mu.
+	loopMode atomic.Bool
 
 	borrowed []byte // loop mode only: the current DataReceived slice
 	flushFn  func() // b.flushOut, allocated once
@@ -76,11 +82,12 @@ func (b *bio) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	b.mu.Lock()
-	if b.loopMode {
-		b.mu.Unlock()
+	if b.loopMode.Load() {
 		return b.readLoop(p)
 	}
+	// Handshake mode: only the handshake goroutine reads, and it has
+	// returned from Handshake before the loop sets loopMode.
+	b.mu.Lock()
 	for b.r == len(b.in) && b.err == nil {
 		b.cond.Wait()
 	}
@@ -134,7 +141,7 @@ func (b *bio) appendIn(p []byte) {
 	b.in = append(b.in, p...)
 }
 
-// feed queues a copy of ciphertext for the handshake worker and wakes it.
+// feed queues a copy of ciphertext for the handshake goroutine and wakes it.
 // Loop-only, handshake mode.
 func (b *bio) feed(p []byte) {
 	b.mu.Lock()
@@ -181,10 +188,13 @@ func (b *bio) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	if b.noWrite {
+		// crypto/tls may swallow this error (its KeyUpdate reply path does),
+		// so record the refusal for the Transport to act on.
+		b.refused = true
 		b.mu.Unlock()
 		return 0, errOffloadWrite
 	}
-	if b.loopMode {
+	if b.loopMode.Load() {
 		b.mu.Unlock()
 		b.under.Write(p)
 		return len(p), nil
@@ -206,37 +216,31 @@ func (b *bio) flushOut() {
 	b.mu.Lock()
 	b.flushQueued = false
 	data := b.out
-	if len(data) == 0 {
-		b.mu.Unlock()
-		return
+	b.out = nil
+	b.mu.Unlock()
+	if len(data) > 0 {
+		b.under.Write(data) // copies if it must buffer
 	}
-	b.out, b.spare = b.spare[:0], nil
-	b.mu.Unlock()
-
-	b.under.Write(data) // copies if it must buffer
-
-	b.mu.Lock()
-	b.spare = data[:0]
-	b.mu.Unlock()
 }
 
 // switchToLoopMode is called on the loop once the handshake has completed.
 func (b *bio) switchToLoopMode() {
 	b.mu.Lock()
-	b.loopMode = true
-	b.out, b.spare = nil, nil
+	b.loopMode.Store(true)
+	b.out = nil
 	b.mu.Unlock()
 }
 
-// shutdown marks the bio dead with err, wakes a blocked worker, and drops
-// all buffered ciphertext. Safe from any goroutine; the first error wins.
+// shutdown marks the bio dead with err and wakes a blocked handshake
+// goroutine. Queued ciphertext is kept (see below). Safe from any goroutine;
+// the first error wins.
 func (b *bio) shutdown(err error) {
 	b.mu.Lock()
 	if b.err == nil {
 		b.err = err
 	}
-	// Queued ciphertext is kept: a handshake worker reads it before it sees
-	// err, so an alert that arrived just before the close is still reported.
+	// Queued ciphertext is kept: the handshake goroutine reads it before it
+	// sees err, so an alert that arrived just before the close is reported.
 	b.cond.Broadcast()
 	b.mu.Unlock()
 }
@@ -264,29 +268,10 @@ func (b *bio) SetReadDeadline(time.Time) error { return nil }
 // SetWriteDeadline implements net.Conn as a no-op.
 func (b *bio) SetWriteDeadline(time.Time) error { return nil }
 
-// eofOr maps a nil connection-lost error to io.EOF for the handshake worker.
+// eofOr maps a nil connection-lost error to io.EOF for the handshake.
 func eofOr(err error) error {
 	if err == nil {
 		return io.EOF
 	}
 	return err
-}
-
-// hasInbound reports whether received ciphertext is queued or borrowed.
-// Loop-only, loop mode.
-func (b *bio) hasInbound() bool { return b.r < len(b.in) || len(b.borrowed) > 0 }
-
-// hasOutbound reports whether handshake ciphertext is waiting to be shipped.
-// Loop-only.
-func (b *bio) hasOutbound() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.out) > 0
-}
-
-// blockWrites makes every later Write fail with errOffloadWrite. Loop-only.
-func (b *bio) blockWrites() {
-	b.mu.Lock()
-	b.noWrite = true
-	b.mu.Unlock()
 }

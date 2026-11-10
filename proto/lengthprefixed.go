@@ -2,16 +2,14 @@ package proto
 
 import (
 	"encoding/binary"
+	"fmt"
+	"math"
 
 	"github.com/exergy-dev/twine"
 )
 
 // DefaultMaxFrame is the LengthPrefixed limit used when MaxFrame is zero.
 const DefaultMaxFrame = 1 << 20
-
-// retainLimit is the partial-frame buffer capacity a framer keeps between
-// frames; larger buffers are released after use.
-const retainLimit = 64 << 10
 
 // LengthPrefixed replaces Twisted's Int8/Int16/Int32StringReceiver: each
 // frame is a 1, 2 or 4 byte unsigned length followed by that many bytes.
@@ -22,12 +20,13 @@ const retainLimit = 64 << 10
 // LittleEndian rather than a BigEndian field. Configure the fields before
 // the first byte is received.
 //
-// A body longer than MaxFrame aborts with twine.ErrFrameTooLarge; with
+// A body longer than MaxFrame aborts with ErrFrameTooLarge; with
 // LengthIncludesPrefix a length smaller than the prefix aborts with
 // ErrMalformedFrame. ConnectionLost reports the error (see the package doc).
 type LengthPrefixed struct {
 	// PrefixLen is the prefix size in bytes: 1, 2 or 4. Default (0) is 4.
-	// Other values are treated as 4.
+	// Any other value makes ConnectionMade panic; the core reports that to
+	// ConnectionLost as a *twine.PanicError and closes the connection.
 	PrefixLen int
 	// LittleEndian selects little-endian prefixes. Default big-endian
 	// (network order), matching Twisted.
@@ -48,37 +47,31 @@ type LengthPrefixed struct {
 	// framing error recorded before an abort, or the core's error otherwise.
 	OnConnectionLost func(err error)
 
-	t      twine.Transport
-	err    error
+	stream // buf holds a partial body
 	inBody bool
-	nhdr   int     // header bytes buffered in hdr
-	hdr    [4]byte // partial header on receive
-	n      int     // current body length
-	buf    []byte  // partial body
-	out    [4]byte // prefix scratch for SendFrame
-	iov    [2][]byte
+	nhdr   int       // header bytes buffered in hdr
+	hdr    [4]byte   // partial header on receive
+	n      int       // current body length
+	out    [4]byte   // prefix scratch for SendFrame
+	iov    [2][]byte // Writev argument; a literal through the interface would allocate
 }
 
 var _ twine.Protocol = (*LengthPrefixed)(nil)
 
 // ConnectionMade implements twine.Protocol.
 func (lp *LengthPrefixed) ConnectionMade(t twine.Transport) {
-	lp.t = t
-	if lp.OnConnectionMade != nil {
-		lp.OnConnectionMade(t)
+	switch lp.PrefixLen {
+	case 0, 1, 2, 4:
+	default:
+		panic(fmt.Sprintf("proto: LengthPrefixed.PrefixLen is %d; want 1, 2 or 4 (0 means 4)", lp.PrefixLen))
 	}
+	lp.made(t, lp.OnConnectionMade)
 }
 
 // ConnectionLost implements twine.Protocol. It substitutes the recorded
 // framing error, if any, and calls OnConnectionLost.
 func (lp *LengthPrefixed) ConnectionLost(err error) {
-	if lp.err != nil {
-		err = lp.err
-	}
-	lp.buf = nil
-	if lp.OnConnectionLost != nil {
-		lp.OnConnectionLost(err)
-	}
+	lp.lost(err, lp.OnConnectionLost)
 }
 
 // Transport returns the transport stored by ConnectionMade.
@@ -110,24 +103,19 @@ func (lp *LengthPrefixed) MaxSendable() int {
 	if lp.LengthIncludesPrefix {
 		limit -= uint64(p)
 	}
-	if limit > uint64(maxInt) {
-		return maxInt
+	if limit > math.MaxInt {
+		return math.MaxInt
 	}
 	return int(limit)
 }
 
-const maxInt = int(^uint(0) >> 1)
-
-// SendFrame writes the prefix and b with a single Writev. When t is nil the
-// stored transport is used. It returns twine.ErrFrameTooLarge, writing
-// nothing, when b does not fit the prefix (see MaxSendable). It does not
-// allocate.
-func (lp *LengthPrefixed) SendFrame(t twine.Transport, b []byte) error {
+// SendFrame writes the prefix and b to the transport stored by
+// ConnectionMade, with a single Writev. It returns ErrFrameTooLarge,
+// writing nothing, when b does not fit the prefix (see MaxSendable). It
+// does not allocate.
+func (lp *LengthPrefixed) SendFrame(b []byte) error {
 	if len(b) > lp.MaxSendable() {
-		return twine.ErrFrameTooLarge
-	}
-	if t == nil {
-		t = lp.t
+		return ErrFrameTooLarge
 	}
 	p := lp.prefixLen()
 	n := uint32(len(b))
@@ -136,7 +124,7 @@ func (lp *LengthPrefixed) SendFrame(t twine.Transport, b []byte) error {
 	}
 	lp.putPrefix(lp.out[:p], n)
 	lp.iov[0], lp.iov[1] = lp.out[:p], b
-	t.Writev(lp.iov[:]...)
+	lp.t.Writev(lp.iov[:]...)
 	lp.iov = [2][]byte{}
 	return nil
 }
@@ -177,14 +165,6 @@ func (lp *LengthPrefixed) getPrefix(src []byte) uint64 {
 	}
 }
 
-func (lp *LengthPrefixed) fail(err error) {
-	lp.err = err
-	lp.buf = lp.buf[:0]
-	if lp.t != nil {
-		lp.t.Abort()
-	}
-}
-
 // bodyLen validates a decoded prefix and returns the body length.
 func (lp *LengthPrefixed) bodyLen(v uint64, p int) (int, bool) {
 	if lp.LengthIncludesPrefix {
@@ -195,7 +175,7 @@ func (lp *LengthPrefixed) bodyLen(v uint64, p int) (int, bool) {
 		v -= uint64(p)
 	}
 	if v > uint64(lp.maxFrame()) {
-		lp.fail(twine.ErrFrameTooLarge)
+		lp.fail(ErrFrameTooLarge)
 		return 0, false
 	}
 	return int(v), true
@@ -216,11 +196,7 @@ func (lp *LengthPrefixed) DataReceived(b []byte) {
 			if lp.FrameReceived != nil {
 				lp.FrameReceived(lp.buf)
 			}
-			if cap(lp.buf) > retainLimit {
-				lp.buf = nil
-			} else {
-				lp.buf = lp.buf[:0]
-			}
+			lp.buf.reset()
 			continue
 		}
 		var v uint64
@@ -252,9 +228,6 @@ func (lp *LengthPrefixed) DataReceived(b []byte) {
 		}
 		lp.n = n
 		lp.inBody = true
-		if cap(lp.buf) < n {
-			lp.buf = make([]byte, 0, n)
-		}
-		lp.buf = lp.buf[:0]
+		lp.buf.reserve(n)
 	}
 }
