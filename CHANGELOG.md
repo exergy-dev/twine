@@ -119,8 +119,10 @@ v1.0.0, minor releases may break the API; every break is listed here.
 
 - `Loop.CallFromThread` no longer checks whether it is called on the loop
   (a thread-id read per call); every call goes through the task queue, and
-  no wakeup is written while the loop is inside a callback. From a callback,
-  `CallLater(0, fn)` is the cheaper way to defer work.
+  no wakeup is written while the loop is inside a callback. CallFromThread
+  is always correct, from any goroutine including the loop. `CallLater(0)`
+  is only for code on the loop that wants a `Timer` handle or the
+  next-iteration guarantee.
 - kTLS offload covers TLS 1.3 AES-GCM only; ChaCha20-Poly1305 connections
   stay on the memory BIO.
 - `Engine.ListenUDP` returns an error naming the option when given a

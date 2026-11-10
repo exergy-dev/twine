@@ -156,16 +156,16 @@ func (l *Loop) InLoop() bool {
 	return goid() == l.gid.Load()
 }
 
-// CallFromThread schedules fn to run on the loop. It is safe from any
-// goroutine, including the loop itself, and never blocks: when the lock-free
-// ring is full, tasks spill into a mutex-guarded slice. The function runs
-// after the current callback returns (in this iteration's drain or a later
-// one), never re-entrantly, and calls from one goroutine run in order. Wakeups
-// are coalesced so N
-// concurrent calls cost at most one wakeup write, and no wakeup is written
-// while the loop is inside a callback (it drains the queue before it blocks
-// again), so a call from a callback costs one queue push. On the loop,
-// CallLater(0, fn) is the cheaper way to defer work. After the loop has
+// CallFromThread schedules fn to run on the loop. It is always correct, from
+// any goroutine including the loop itself, and never blocks: when the
+// lock-free ring is full, tasks spill into a mutex-guarded slice. The
+// function runs after the current callback returns (in this iteration's
+// drain or a later one), never re-entrantly, and calls from one goroutine
+// run in order. Wakeups are coalesced so N concurrent calls cost at most one
+// wakeup write, and no wakeup is written while the loop is inside a callback
+// (it drains the queue before it blocks again), so a call from a callback
+// costs one queue push. CallLater(0, fn) is only for code on the loop that
+// wants a Timer handle or the next-iteration guarantee. After the loop has
 // exited fn is dropped (counted in MetricsSnapshot.BacklogDrops).
 func (l *Loop) CallFromThread(fn func()) {
 	if l.stopped.Load() {
