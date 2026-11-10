@@ -114,6 +114,10 @@ v1.0.0, minor releases may break the API; every break is listed here.
 
 ### Changed
 
+- `Loop.CallFromThread` no longer checks whether it is called on the loop
+  (a thread-id read per call); every call goes through the task queue, and
+  no wakeup is written while the loop is inside a callback. From a callback,
+  `CallLater(0, fn)` is the cheaper way to defer work.
 - kTLS offload covers TLS 1.3 AES-GCM only; ChaCha20-Poly1305 connections
   stay on the memory BIO.
 - `docs/API.md` now lists interface methods, struct fields, constants and

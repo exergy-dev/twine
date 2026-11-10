@@ -41,8 +41,7 @@ type Loop struct {
 	overflowMu     sync.Mutex
 	overflow       []func()
 	overflowActive atomic.Bool
-	local          []func() // tasks queued by the loop itself
-	moreTasks      bool     // drain hit the per-iteration cap
+	moreTasks      bool // drain hit the per-iteration cap
 
 	// Identity.
 	tid      atomic.Int64 // kernel thread id of the locked loop thread
@@ -153,19 +152,17 @@ func (l *Loop) InLoop() bool {
 }
 
 // CallFromThread schedules fn to run on the loop. It is safe from any
-// goroutine and never blocks: when the lock-free ring is full, tasks spill
-// into a mutex-guarded slice. Wakeups are coalesced so N concurrent calls
-// cost at most one wakeup write. A call made from the loop itself appends to
-// a local slice and skips the atomics; the function runs on a later
-// iteration, never re-entrantly. After the loop has exited fn is dropped
-// (counted in MetricsSnapshot.BacklogDrops).
+// goroutine, including the loop itself, and never blocks: when the lock-free
+// ring is full, tasks spill into a mutex-guarded slice. The function runs on
+// a later iteration, never re-entrantly. Wakeups are coalesced so N
+// concurrent calls cost at most one wakeup write, and no wakeup is written
+// while the loop is inside a callback (it drains the queue before it blocks
+// again), so a call from a callback costs one queue push. On the loop,
+// CallLater(0, fn) is the cheaper way to defer work. After the loop has
+// exited fn is dropped (counted in MetricsSnapshot.BacklogDrops).
 func (l *Loop) CallFromThread(fn func()) {
 	if l.stopped.Load() {
 		l.metrics.backlogDrops.Add(1)
-		return
-	}
-	if l.InLoop() {
-		l.local = append(l.local, fn)
 		return
 	}
 	// While the overflow slice is non-empty every producer appends there so
@@ -175,6 +172,14 @@ func (l *Loop) CallFromThread(fn func()) {
 		l.overflow = append(l.overflow, fn)
 		l.overflowActive.Store(true)
 		l.overflowMu.Unlock()
+	}
+	if l.cbStart.Load() != 0 {
+		// The loop is running a callback (possibly this very caller), so it is
+		// awake and checks the queue before it blocks. The push above and
+		// this load are sequentially consistent with the loop's clearing of
+		// cbStart and its queue check, so one side always sees the other.
+		l.metrics.wakeupsCoalesced.Add(1)
+		return
 	}
 	if l.wakePending.CompareAndSwap(false, true) {
 		l.wakeBusy.Add(1)
@@ -427,7 +432,7 @@ func (l *Loop) handleReady(c *conn) {
 func (l *Loop) hasImmediateWork() bool {
 	// A wakeup that arrived during the zero-timeout spin was already
 	// consumed by Wait, so the queue itself must be checked before blocking.
-	return l.moreTasks || len(l.local) > 0 || len(l.due) > 0 || len(l.ready) > 0 ||
+	return l.moreTasks || len(l.due) > 0 || len(l.ready) > 0 ||
 		len(l.dirty) > 0 || len(l.closing) > 0 || l.tasks.Len() > 0 || l.overflowActive.Load()
 }
 
@@ -458,24 +463,6 @@ func (l *Loop) drainTasks() {
 	l.moreTasks = false
 	l.wakePending.Store(false)
 	budget := maxTasksPerIteration
-	// Tasks queued by the loop itself during the previous iteration run
-	// first. Drain by index (re-entrant appends land past the snapshot) and
-	// keep the backing array so steady-state local calls do not allocate.
-	n := len(l.local)
-	i := 0
-	for ; i < n && budget > 0; i++ {
-		fn := l.local[i]
-		l.local[i] = nil
-		budget--
-		l.runTask(fn)
-	}
-	if i == len(l.local) {
-		l.local = l.local[:0]
-	} else if i > 0 {
-		rest := copy(l.local, l.local[i:])
-		clear(l.local[rest:])
-		l.local = l.local[:rest]
-	}
 	for budget > 0 {
 		fn, ok := l.tasks.Pop()
 		if !ok {
@@ -545,7 +532,7 @@ func (l *Loop) drainTasksAfterStop() {
 	for {
 		l.moreTasks = false
 		l.drainTasks()
-		if !l.moreTasks && len(l.local) == 0 && l.tasks.Len() == 0 {
+		if !l.moreTasks && l.tasks.Len() == 0 {
 			l.overflowMu.Lock()
 			empty := len(l.overflow) == 0
 			l.overflowMu.Unlock()
