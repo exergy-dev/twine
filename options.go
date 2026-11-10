@@ -6,9 +6,18 @@ import (
 	"time"
 )
 
-// Option configures an Engine. Options that take a size or a count treat 0
-// (and any negative value) as "use the default"; options that take a
-// duration say what 0 means.
+// Option configures an Engine.
+//
+// Zero-value rule: an option that takes a size or a count treats 0 (and any
+// negative value) as "use the default". For an option that takes a duration,
+// 0 is a real setting, not the default: Watchdog(0) disables the watchdog,
+// ShutdownTimeout(0) aborts unflushed connections at once, CloseLinger(0)
+// closes as soon as writes are flushed, and SpinIterations(0) blocks without
+// spinning (a count, but with the same rule; its default needs a negative
+// value). Among the DialOptions, DialTimeout(0) means no timeout. The other
+// packages state their own rules: http.Server durations treat 0 as the
+// default and a negative value as "off", and tls.HandshakeTimeout treats
+// d <= 0 as the default because a handshake cannot be unbounded.
 type Option func(*config)
 
 // ListenOption configures a listener created by ListenTCP or ListenUDP.
