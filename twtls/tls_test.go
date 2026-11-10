@@ -78,7 +78,7 @@ func serverConfig(t testing.TB) *tls.Config {
 
 func startEngine(t testing.TB, opts ...twine.Option) *twine.Engine {
 	t.Helper()
-	opts = append([]twine.Option{twine.Loops(2), twine.Watchdog(0)}, opts...)
+	opts = append([]twine.Option{twine.Loops(2), twine.Watchdog(-1)}, opts...)
 	e := twine.New(opts...)
 	errCh := make(chan error, 1)
 	go func() { errCh <- e.Run(context.Background()) }()

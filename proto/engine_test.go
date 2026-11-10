@@ -12,7 +12,7 @@ import (
 // It returns once every loop is running.
 func startEngine(t testing.TB, n int) *twine.Engine {
 	t.Helper()
-	e := twine.New(twine.Loops(n), twine.Watchdog(0), twine.ShutdownTimeout(2*time.Second))
+	e := twine.New(twine.Loops(n), twine.Watchdog(-1), twine.ShutdownTimeout(2*time.Second))
 	errCh := make(chan error, 1)
 	go func() { errCh <- e.Run(context.Background()) }()
 	for _, l := range e.Loops() {

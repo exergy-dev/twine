@@ -1462,7 +1462,7 @@ func TestSoakIdleConnections(t *testing.T) {
 // re-armed read next iteration must keep reading to EOF instead of stopping at
 // the final short read, which would leave the conn open until shutdown.
 func TestHangupSurvivesReadCap(t *testing.T) {
-	e := startEngine(t, Loops(1), ReadBufferSize(4096), MaxReadsPerEvent(2), Watchdog(0))
+	e := startEngine(t, Loops(1), ReadBufferSize(4096), MaxReadsPerEvent(2), Watchdog(-1))
 	var rx atomic.Int64
 	var stalled atomic.Bool
 	lostCh := make(chan error, 1)

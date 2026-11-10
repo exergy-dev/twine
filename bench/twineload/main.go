@@ -260,7 +260,7 @@ func main() {
 		*pipeline = 1
 	}
 
-	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(0), twine.ShutdownTimeout(200 * time.Millisecond)}
+	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(-1), twine.ShutdownTimeout(200 * time.Millisecond)}
 	if *spin >= 0 {
 		opts = append(opts, twine.SpinIterations(*spin))
 	}

@@ -44,7 +44,7 @@ func (l *lostCounter) ConnectionLost(err error) {
 // and connection counter.
 func startServer(t *testing.T, s *Server) (string, *countingFactory) {
 	t.Helper()
-	e := startEngine(t, twine.Loops(2), twine.Watchdog(0))
+	e := startEngine(t, twine.Loops(2), twine.Watchdog(-1))
 	cf := &countingFactory{f: s.Factory()}
 	lst, err := e.ListenTCP("127.0.0.1:0", cf.build)
 	if err != nil {
@@ -409,7 +409,7 @@ func TestServerDateRefresh(t *testing.T) {
 }
 
 func TestServerListen(t *testing.T) {
-	e := startEngine(t, twine.Loops(1), twine.Watchdog(0))
+	e := startEngine(t, twine.Loops(1), twine.Watchdog(-1))
 	s := &Server{Handler: testHandler}
 	lst, err := s.Listen(e, "127.0.0.1:0")
 	if err != nil {
@@ -492,7 +492,7 @@ func TestServerCloseWhilePaused(t *testing.T) {
 func TestDateCacheCleanup(t *testing.T) {
 	s := &Server{Handler: testHandler}
 	for i := 0; i < 3; i++ {
-		e := twine.New(twine.Loops(2), twine.Watchdog(0))
+		e := twine.New(twine.Loops(2), twine.Watchdog(-1))
 		lst, err := e.ListenTCP("127.0.0.1:0", s.Factory())
 		if err != nil {
 			t.Fatal(err)
@@ -533,7 +533,7 @@ func TestDateCacheCleanup(t *testing.T) {
 // server's MaxResponseBytes below it: a body over the limit must become a
 // complete 500 instead of a connection aborted mid-body.
 func TestServerMaxResponseBytes(t *testing.T) {
-	e := startEngine(t, twine.Loops(1), twine.Watchdog(0), twine.WriteBufferLimit(1<<20))
+	e := startEngine(t, twine.Loops(1), twine.Watchdog(-1), twine.WriteBufferLimit(1<<20))
 	s := &Server{MaxResponseBytes: 512 << 10, Logger: discardLogger(), Handler: func(ctx *RequestCtx) {
 		n, _ := strconv.Atoi(string(ctx.RawQuery()))
 		ctx.Write(bytes.Repeat([]byte{'z'}, n))

@@ -61,7 +61,7 @@ func newFakeConn(s *Server, ft *fakeTransport) *conn {
 // returns its loop.
 func testLoop(t testing.TB) *twine.Loop {
 	t.Helper()
-	return startEngine(t, twine.Loops(1), twine.Watchdog(0)).Loops()[0]
+	return startEngine(t, twine.Loops(1), twine.Watchdog(-1)).Loops()[0]
 }
 
 // harness drives one server connection over a fakeTransport on a real

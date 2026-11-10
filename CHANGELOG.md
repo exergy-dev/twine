@@ -53,9 +53,14 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - `Any` with no inputs rejects with `ErrNoFutures` (it rejected with
   `ErrLoopStopped`). A second `Engine.Run`, including one after a completed
   run, returns `ErrRunTwice` (a run after a completed run returned nil).
-- Negative `Watchdog`, `ShutdownTimeout`, `CloseLinger` and
-  `SpinIterations` values are clamped or mean the default, and
-  `DatagramsSent` counts only datagrams the kernel accepted.
+- One rule for duration options: 0 means the default and a negative value
+  disables the bound. `Watchdog(0)` is now the default 1 ms threshold
+  (`Watchdog(-1)` disables the watchdog), `ShutdownTimeout(0)` the default
+  5 s (negative: abort unflushed connections at once), `CloseLinger(0)` the
+  default 10 s (negative: close as soon as writes are flushed) and
+  `DialTimeout(0)` the default 30 s (negative: no timeout). Negative
+  `SpinIterations` values mean the default, and `DatagramsSent` counts only
+  datagrams the kernel accepted.
 
 ### Deprecated
 

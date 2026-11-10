@@ -38,6 +38,7 @@ func (l *Loop) ConnectTCP(addr string, f Factory, opts ...DialOption) *Future[Tr
 	for _, o := range opts {
 		o(&dc)
 	}
+	dc.finalize()
 	if l.stopped.Load() || l.eng.stopped() {
 		res.Reject(ErrEngineStopped)
 		return fut

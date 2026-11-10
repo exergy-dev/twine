@@ -8,16 +8,16 @@ import (
 
 // Option configures an Engine.
 //
-// Zero-value rule: an option that takes a size or a count treats 0 (and any
-// negative value) as "use the default". For an option that takes a duration,
-// 0 is a real setting, not the default: Watchdog(0) disables the watchdog,
-// ShutdownTimeout(0) aborts unflushed connections at once, CloseLinger(0)
-// closes as soon as writes are flushed, and SpinIterations(0) blocks without
-// spinning (a count, but with the same rule; its default needs a negative
-// value). Among the DialOptions, DialTimeout(0) means no timeout. The other
-// packages state their own rules: twhttp.Server durations treat 0 as the
-// default and a negative value as "off", and twtls.HandshakeTimeout treats
-// d <= 0 as the default because a handshake cannot be unbounded.
+// Zero-value rule: 0 means "use the default" for every option, whether it
+// takes a size, a count or a duration. A negative size or count also means
+// the default; a negative duration disables what the option bounds:
+// Watchdog(-1) turns the watchdog off, ShutdownTimeout(-1) aborts unflushed
+// connections at once, CloseLinger(-1) closes as soon as writes are flushed,
+// and DialTimeout(-1) removes the connect deadline. SpinIterations is the
+// one exception: 0 is a real setting (block without spinning) and its
+// default needs a negative value. twhttp.Server durations follow the same
+// rule; twtls.HandshakeTimeout treats d <= 0 as the default because a
+// handshake cannot be unbounded.
 type Option func(*config)
 
 // ListenOption configures a listener created by ListenTCP or ListenUDP.
@@ -70,14 +70,20 @@ const (
 	defaultBacklog        = 4096
 )
 
+// Defaults for the duration options. 0 selects them; a negative value
+// disables the bound (see Option).
+const (
+	defaultWatchdog        = time.Millisecond
+	defaultShutdownTimeout = 5 * time.Second
+	defaultCloseLinger     = 10 * time.Second
+	defaultDialTimeout     = 30 * time.Second
+)
+
 func defaultConfig() config {
 	return config{
-		reusePort:       runtime.GOOS == "linux",
-		spinIterations:  -1,
-		watchdog:        time.Millisecond,
-		logger:          slog.Default(),
-		shutdownTimeout: 5 * time.Second,
-		closeLinger:     10 * time.Second,
+		reusePort:      runtime.GOOS == "linux",
+		spinIterations: -1,
+		logger:         slog.Default(),
 	}
 }
 
@@ -86,6 +92,18 @@ func orDefault(v *int, def int) {
 	if *v <= 0 {
 		*v = def
 	}
+}
+
+// durationOrDefault maps a duration option to its effective value: 0 means
+// def and a negative value means disabled (0).
+func durationOrDefault(d, def time.Duration) time.Duration {
+	switch {
+	case d == 0:
+		return def
+	case d < 0:
+		return 0
+	}
+	return d
 }
 
 // finalize applies the defaults for zero values and the auto-config rules
@@ -110,15 +128,9 @@ func (c *config) finalize() {
 	if c.writeLowWater > c.writeHighWater {
 		c.writeLowWater = c.writeHighWater / 4
 	}
-	if c.watchdog < 0 {
-		c.watchdog = 0
-	}
-	if c.shutdownTimeout < 0 {
-		c.shutdownTimeout = 0
-	}
-	if c.closeLinger < 0 {
-		c.closeLinger = 0
-	}
+	c.watchdog = durationOrDefault(c.watchdog, defaultWatchdog)
+	c.shutdownTimeout = durationOrDefault(c.shutdownTimeout, defaultShutdownTimeout)
+	c.closeLinger = durationOrDefault(c.closeLinger, defaultCloseLinger)
 	if c.logger == nil {
 		c.logger = slog.New(slog.DiscardHandler)
 	}
@@ -162,7 +174,8 @@ func WriteBufferLimit(n int) Option { return func(c *config) { c.writeLimit = n 
 
 // Watchdog sets the slow-callback threshold: a callback still running after
 // threshold is logged with the loop goroutine's stack and counted in
-// MetricsSnapshot.SlowCallbacks. Default 1 ms; 0 disables the watchdog.
+// MetricsSnapshot.SlowCallbacks. 0 means the default, 1 ms; a negative
+// threshold disables the watchdog.
 // While loops are busy it samples every threshold/2 (at least 1 ms); while
 // every loop is idle it backs off to one sample every 50 ms, so the first
 // slow callback after an idle period is reported only if it runs longer than
@@ -178,8 +191,8 @@ func Logger(l *slog.Logger) Option { return func(c *config) { c.logger = l } }
 func MaxReadsPerEvent(n int) Option { return func(c *config) { c.maxReadsPerEv = n } }
 
 // ShutdownTimeout bounds how long Stop waits for pending writes to flush
-// before aborting the remaining connections with ErrShutdown. Default 5s; 0
-// aborts them without waiting.
+// before aborting the remaining connections with ErrShutdown. 0 means the
+// default, 5 s; a negative value aborts them without waiting.
 func ShutdownTimeout(d time.Duration) Option { return func(c *config) { c.shutdownTimeout = d } }
 
 // PinLoops pins loop i to cpus[i % len(cpus)] with sched_setaffinity (Linux;
@@ -190,10 +203,10 @@ func PinLoops(cpus ...int) Option {
 	return func(c *config) { c.pinCPUs = append([]int(nil), cpus...) }
 }
 
-// CloseLinger bounds how long Close waits, after sending SHUT_WR,
-// for the peer to close its side before the connection is closed anyway.
-// Default 10s; 0 closes as soon as pending writes are flushed (Twisted's
-// behaviour).
+// CloseLinger bounds how long Close waits, after sending SHUT_WR, for the
+// peer to close its side before the connection is closed anyway. 0 means
+// the default, 10 s; a negative value closes as soon as pending writes are
+// flushed (Twisted's behaviour).
 func CloseLinger(d time.Duration) Option { return func(c *config) { c.closeLinger = d } }
 
 type listenConfig struct {
@@ -258,11 +271,17 @@ type dialConfig struct {
 }
 
 func defaultDialConfig() dialConfig {
-	return dialConfig{timeout: 30 * time.Second, noDelay: true}
+	return dialConfig{noDelay: true}
+}
+
+// finalize applies the duration rule to the timeout.
+func (c *dialConfig) finalize() {
+	c.timeout = durationOrDefault(c.timeout, defaultDialTimeout)
 }
 
 // DialTimeout bounds the TCP connect of a ConnectTCP attempt (not the name
-// lookup that may precede it). Default 30s; 0 means no timeout.
+// lookup that may precede it). 0 means the default, 30 s; a negative value
+// means no timeout.
 func DialTimeout(d time.Duration) DialOption { return func(c *dialConfig) { c.timeout = d } }
 
 // DialNoDelay sets TCP_NODELAY on the connected socket. Default true.

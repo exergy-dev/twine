@@ -244,7 +244,7 @@ func TestUDPStopProtocol(t *testing.T) {
 		}
 	})
 	t.Run("Engine.Stop", func(t *testing.T) {
-		e := New(Loops(1), Watchdog(0))
+		e := New(Loops(1), Watchdog(-1))
 		u := newUDPEcho()
 		if _, err := e.ListenUDP("127.0.0.1:0", u); err != nil {
 			t.Fatal(err)

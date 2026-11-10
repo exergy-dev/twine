@@ -12,7 +12,7 @@ import (
 // free again.
 func TestListenerCloseConcurrentWithRun(t *testing.T) {
 	for i := 0; i < 20; i++ {
-		e := New(Loops(2), ReusePort(i%2 == 0), Watchdog(0))
+		e := New(Loops(2), ReusePort(i%2 == 0), Watchdog(-1))
 		lst, err := e.ListenTCP("127.0.0.1:0", echoFactory())
 		if err != nil {
 			t.Fatal(err)
@@ -53,7 +53,7 @@ func TestListenerCloseConcurrentWithRun(t *testing.T) {
 
 // Close before Run, then Stop without ever running: the socket is released.
 func TestListenerCloseBeforeRun(t *testing.T) {
-	e := New(Loops(2), Watchdog(0))
+	e := New(Loops(2), Watchdog(-1))
 	lst, err := e.ListenTCP("127.0.0.1:0", echoFactory())
 	if err != nil {
 		t.Fatal(err)

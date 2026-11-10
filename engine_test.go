@@ -11,7 +11,7 @@ import (
 // startEngine runs an engine with the given options and stops it at test end.
 func startEngine(t testing.TB, opts ...Option) *Engine {
 	t.Helper()
-	opts = append([]Option{Watchdog(0)}, opts...)
+	opts = append([]Option{Watchdog(-1)}, opts...)
 	e := New(opts...)
 	errCh := make(chan error, 1)
 	go func() { errCh <- e.Run(context.Background()) }()
@@ -50,7 +50,7 @@ func echoFactory() Factory {
 }
 
 func TestRunTwice(t *testing.T) {
-	e := New(Loops(1), Watchdog(0))
+	e := New(Loops(1), Watchdog(-1))
 	errCh := make(chan error, 1)
 	go func() { errCh <- e.Run(context.Background()) }()
 	for !e.loops[0].started.Load() {
@@ -68,7 +68,7 @@ func TestRunTwice(t *testing.T) {
 	}
 
 	// Stop before Run: Run returns nil at once.
-	e2 := New(Loops(1), Watchdog(0))
+	e2 := New(Loops(1), Watchdog(-1))
 	e2.Stop()
 	if err := e2.Run(context.Background()); err != nil {
 		t.Errorf("Run after Stop = %v, want nil", err)

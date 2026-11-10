@@ -53,7 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(0), twine.ShutdownTimeout(5 * time.Second)}
+	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(-1), twine.ShutdownTimeout(5 * time.Second)}
 	if *pin != "" {
 		cpus, err := bench.ParseCPUs(*pin)
 		if err != nil {

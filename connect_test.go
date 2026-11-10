@@ -266,7 +266,7 @@ func TestConnectTimeout(t *testing.T) {
 }
 
 func TestConnectAfterStop(t *testing.T) {
-	e := New(Loops(1), Watchdog(0))
+	e := New(Loops(1), Watchdog(-1))
 	errCh := make(chan error, 1)
 	go func() { errCh <- e.Run(context.Background()) }()
 	if !waitUntil(5*time.Second, func() bool { return e.Loops()[0].started.Load() }) {

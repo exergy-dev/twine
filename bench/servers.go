@@ -75,7 +75,7 @@ func StartTwine(addr string, loops int, opts ...twine.Option) (*TwineServer, err
 func startTwine(addr string, loops int, f twine.Factory, opts ...twine.Option) (*TwineServer, error) {
 	o := append([]twine.Option{
 		twine.Loops(loops),
-		twine.Watchdog(0),
+		twine.Watchdog(-1),
 		twine.ShutdownTimeout(200 * time.Millisecond),
 	}, opts...)
 	eng := twine.New(o...)
