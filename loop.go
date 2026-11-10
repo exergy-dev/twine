@@ -858,6 +858,7 @@ func (l *Loop) recoverLost(c *conn) {
 // safeCall runs fn with panic recovery attributed to c.
 func (l *Loop) safeCall(c *conn, fn func()) {
 	l.cbStart.Store(l.nowNs)
+	l.cbProto.Store(c)
 	l.dispatchCbs++
 	l.lastCb = c
 	defer l.endCallback()
