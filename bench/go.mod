@@ -1,11 +1,11 @@
 module github.com/exergy-dev/twine/bench
 
-go 1.24
+go 1.26.0
 
 require (
 	github.com/exergy-dev/twine v0.0.0
 	github.com/panjf2000/gnet/v2 v2.10.0
-	golang.org/x/sys v0.30.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
