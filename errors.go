@@ -3,6 +3,7 @@ package twine
 import (
 	"errors"
 	"fmt"
+	"runtime"
 )
 
 // Sentinel errors. All are comparable with errors.Is.
@@ -78,6 +79,22 @@ type PanicError struct {
 	Value any
 	// Stack is the goroutine stack at the point of recovery.
 	Stack []byte
+}
+
+// NewPanicError wraps a recovered panic value v in a PanicError carrying the
+// calling goroutine's stack, so call it inside the deferred function that
+// recovered. When v already is a *PanicError it is returned unchanged, so a
+// panic that crosses several recovery layers keeps its original stack. It is
+// for code that runs protocol callbacks on its own goroutine (a Transport
+// wrapper, a Blocking-style adapter) and wants to report their panics the way
+// the core does, through Loop.ReportPanic and the protocol's ConnectionLost.
+func NewPanicError(v any) *PanicError {
+	if pe, ok := v.(*PanicError); ok {
+		return pe
+	}
+	buf := make([]byte, 16<<10)
+	n := runtime.Stack(buf, false)
+	return &PanicError{Value: v, Stack: buf[:n]}
 }
 
 // Error implements error.

@@ -68,7 +68,7 @@ func (b *blockingProto) run() {
 		if r == nil {
 			return
 		}
-		pe := capturePanic(r)
+		pe := NewPanicError(r)
 		b.loop.ReportPanic(pe)
 		b.loop.CallFromThread(b.t.Abort)
 		// Drain so the loop's final ConnectionLost send never blocks, and

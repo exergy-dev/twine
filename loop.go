@@ -529,7 +529,7 @@ func (l *Loop) noteSlowDispatch(d int64) {
 
 func (l *Loop) recoverTask() {
 	if r := recover(); r != nil {
-		l.logPanic("twine: panic in CallFromThread task", capturePanic(r))
+		l.logPanic("twine: panic in CallFromThread task", NewPanicError(r))
 	}
 }
 
@@ -732,7 +732,7 @@ func (l *Loop) endCallback() {
 // that connection only.
 func (l *Loop) recoverProto(c *conn) {
 	if r := recover(); r != nil {
-		pe := capturePanic(r)
+		pe := NewPanicError(r)
 		l.logPanic("twine: panic in protocol", pe, "fd", c.fd)
 		switch c.kind {
 		case kindUDP:
@@ -761,16 +761,6 @@ func (l *Loop) logPanic(msg string, pe *PanicError, attrs ...any) {
 // are not silent. Safe from any goroutine.
 func (l *Loop) ReportPanic(pe *PanicError) {
 	l.logPanic("twine: panic in protocol", pe)
-}
-
-// capturePanic builds a PanicError with the current stack.
-func capturePanic(r any) *PanicError {
-	if pe, ok := r.(*PanicError); ok {
-		return pe
-	}
-	buf := make([]byte, 16<<10)
-	n := runtime.Stack(buf, false)
-	return &PanicError{Value: r, Stack: buf[:n]}
 }
 
 // flushDirty issues one writev per dirty conn and updates write interest and
@@ -861,7 +851,7 @@ func (l *Loop) callConnectionLost(c *conn) {
 
 func (l *Loop) recoverLost(c *conn) {
 	if r := recover(); r != nil {
-		l.logPanic("twine: panic in ConnectionLost", capturePanic(r), "fd", c.fd)
+		l.logPanic("twine: panic in ConnectionLost", NewPanicError(r), "fd", c.fd)
 	}
 }
 

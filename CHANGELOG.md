@@ -66,6 +66,9 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - `ErrNoFutures`, `ErrRunTwice` and `ErrNilProtocol` sentinels.
 - `Engine.Logger`, `Loop.ReportPanic`, and `poll` backend logging when a
   `twine_uring` build falls back to epoll.
+- `NewPanicError`, which wraps a recovered panic value with the current
+  stack the way the core does (the `tls` package uses it instead of
+  hand-built `PanicError` values).
 - proto: `ErrLineTooLong` and `ErrFrameTooLarge` are also available under
   `proto`; `FuzzAMP` and `FuzzLineReceiverRaw` fuzz targets; benchmarks.
 - tls: `HandshakeError`, `Transport.KernelOffload`, allocation gates and
