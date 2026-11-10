@@ -15,25 +15,16 @@ type Protocol interface {
 	// b is valid ONLY for the duration of the call. Copy what you keep.
 	DataReceived(b []byte)
 	// ConnectionLost is called exactly once. err is nil on a clean close
-	// (including Abort and LoseConnection), otherwise it says why.
+	// (including Abort and Close), otherwise it says why.
 	ConnectionLost(err error)
 }
 
-// Factory builds a Protocol per accepted or connected transport.
-type Factory interface {
-	// BuildProtocol returns the Protocol for a new connection from (or to)
-	// peer. It runs on the loop that will own the connection. Returning nil
-	// refuses the connection, as in Twisted: an accepted socket is closed at
-	// once with no callbacks, and a ConnectTCP or Dial Future rejects with
-	// ErrNilProtocol.
-	BuildProtocol(peer net.Addr) Protocol
-}
-
-// FactoryFunc adapts a function to Factory.
-type FactoryFunc func(peer net.Addr) Protocol
-
-// BuildProtocol implements Factory.
-func (f FactoryFunc) BuildProtocol(peer net.Addr) Protocol { return f(peer) }
+// Factory builds the Protocol for a new connection from (or to) peer, one
+// per accepted or connected transport. It runs on the loop that will own the
+// connection. Returning nil refuses the connection, as in Twisted: an
+// accepted socket is closed at once with no callbacks, and a ConnectTCP or
+// Dial Future rejects with ErrNilProtocol.
+type Factory func(peer net.Addr) Protocol
 
 // Transport is the loop-affine handle to a connection. Every method must be
 // called on the owning Loop, except Loop, which is safe from any goroutine;
@@ -44,6 +35,10 @@ func (f FactoryFunc) BuildProtocol(peer net.Addr) Protocol { return f(peer) }
 // recycles connection state, and a stale handle becomes inert (writes are
 // counted in MetricsSnapshot.WriteAfterClose) instead of touching the next
 // connection.
+//
+// A Transport carries no user data. Per-connection state belongs in the
+// Protocol struct, which exists once per connection and whose methods are
+// the only code that runs for it.
 //
 // The Transport the core hands to ConnectionMade also has an FD() int
 // method, reachable by a type assertion to interface{ FD() int }. It returns
@@ -56,27 +51,24 @@ type Transport interface {
 	// Writev writes the slices in order, with a single writev(2) when
 	// nothing is buffered. Like Write, it never retains the slices.
 	Writev(bs ...[]byte)
-	// LoseConnection flushes pending writes, half-closes (SHUT_WR), and
-	// closes once the peer closes its side or CloseLinger elapses;
-	// ConnectionLost(nil) follows. Later writes are dropped.
-	LoseConnection()
+	// Close closes the connection gracefully: unlike net.Conn.Close it
+	// first flushes pending writes, then half-closes (SHUT_WR) and closes
+	// once the peer closes its side or CloseLinger elapses;
+	// ConnectionLost(nil) follows. Later writes are dropped. Abort closes
+	// at once instead.
+	Close()
 	// Abort closes immediately and discards pending writes;
 	// ConnectionLost(nil) follows at the end of the loop iteration.
 	Abort()
-	// GetPeer returns the remote address (a *net.TCPAddr for TCP).
-	GetPeer() net.Addr
-	// GetHost returns the local address (a *net.TCPAddr for TCP).
-	GetHost() net.Addr
+	// RemoteAddr returns the remote address (a *net.TCPAddr for TCP).
+	RemoteAddr() net.Addr
+	// LocalAddr returns the local address (a *net.TCPAddr for TCP).
+	LocalAddr() net.Addr
 	// Loop returns the owning Loop. Safe from any goroutine.
 	Loop() *Loop
 	// SetIdleTimeout arms an idle timer on the timing wheel; 0 disables.
 	// Any read or write resets it. Expiry aborts with ErrIdleTimeout.
 	SetIdleTimeout(d time.Duration)
-	// SetContext stores a per-connection user value. Storing a non-pointer
-	// value allocates; store pointers on hot paths.
-	SetContext(v any)
-	// Context returns the value stored by SetContext, or nil.
-	Context() any
 	// PauseReading drops read interest; DataReceived stops being called
 	// until ResumeReading (Twisted's pauseProducing on the transport).
 	PauseReading()
@@ -105,7 +97,7 @@ type Producer interface {
 
 // Consumer is the write side of a connection that a Producer feeds
 // (Twisted's IConsumer). Transport embeds it, so every Transport is a
-// Consumer; wrappers such as the tls package's Transport implement it too.
+// Consumer; wrappers such as the twtls package's Transport implement it too.
 type Consumer interface {
 	// RegisterProducer attaches p. With streaming true (a push producer) p
 	// writes on its own and is paused and resumed around the WriteHighWater
@@ -147,8 +139,8 @@ type DatagramTransport interface {
 	// (sendmmsg on Linux), larger ones at once. UDP is best effort: a
 	// datagram the kernel refuses is dropped.
 	WriteTo(b []byte, to net.Addr)
-	// GetHost returns the bound address.
-	GetHost() net.Addr
+	// LocalAddr returns the bound address.
+	LocalAddr() net.Addr
 	// Loop returns the owning Loop. Safe from any goroutine.
 	Loop() *Loop
 	// Close flushes queued datagrams, closes the socket and calls

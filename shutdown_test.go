@@ -20,7 +20,7 @@ type runningEngine struct {
 
 func runEngineCtx(t *testing.T, ctx context.Context, opts ...Option) *runningEngine {
 	t.Helper()
-	opts = append([]Option{Watchdog(0)}, opts...)
+	opts = append([]Option{Watchdog(-1)}, opts...)
 	re := &runningEngine{e: New(opts...), errCh: make(chan error, 1)}
 	go func() {
 		re.runG.Store(goid())
@@ -243,7 +243,7 @@ func TestOnShutdownHooks(t *testing.T) {
 }
 
 func TestStopBeforeRun(t *testing.T) {
-	e := New(Loops(1), Watchdog(0))
+	e := New(Loops(1), Watchdog(-1))
 	e.Stop()
 	errCh := make(chan error, 1)
 	go func() { errCh <- e.Run(context.Background()) }()

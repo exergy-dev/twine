@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/exergy-dev/twine"
 )
@@ -81,17 +82,20 @@ func (e *RemoteError) Is(target error) bool {
 
 // AMP implements Twisted's Asynchronous Messaging Protocol: request/response
 // multiplexing with 32-bit ask ids. Embed it, set Handle, and use Call. A
-// handler answers synchronously with a resolved Future, or later, for
-// example from the worker pool:
+// handler answers by calling reply, at once or later and from any
+// goroutine, for example from the worker pool:
 //
-//	p.Handle = func(cmd string, args proto.Args) *twine.Future[proto.Args] {
+//	p.Handle = func(cmd string, args proto.Args, reply func(proto.Args, error)) {
 //		switch cmd {
 //		case "Echo": // answered at once
-//			return twine.Resolved[proto.Args](nil, args)
+//			reply(args, nil)
 //		case "Lookup": // blocking work runs on the worker pool
-//			return twine.DeferToThread(loop, func() (proto.Args, error) { return lookup(args) })
+//			twine.DeferToThread(loop, func() (proto.Args, error) { return lookup(args) }).
+//				Then(func(res proto.Args) { reply(res, nil) }).
+//				Catch(func(err error) { reply(nil, err) })
+//		default:
+//			reply(nil, proto.ErrUnhandledCommand) // the peer gets an UNHANDLED error
 //		}
-//		return nil // the peer gets an UNHANDLED error
 //	}
 //
 // The wire format is Twisted's BinaryBoxProtocol, so a Twine AMP peer
@@ -109,20 +113,25 @@ func (e *RemoteError) Is(target error) bool {
 // peer, encode values as its argument types do: an Integer is its decimal
 // text (strconv.Itoa), a Boolean is "True" or "False", Unicode is UTF-8.
 //
-// Handler outcomes map to replies as follows: a resolved Future sends its
-// Args as the answer; a rejected Future sends an _error box with the
-// *RemoteError's code and description, or UNKNOWN and err.Error() for any
-// other error (return a *RemoteError to avoid exposing internal error
-// text); a nil Handle, a nil Future or a panic in Handle send UNHANDLED (for
-// nil) or UNKNOWN (for a panic). Requests without _ask get no reply.
+// Handler outcomes map to replies as follows: reply(res, nil) sends res as
+// the answer; reply(nil, err) sends an _error box with the *RemoteError's
+// code and description, UNHANDLED when err matches ErrUnhandledCommand, or
+// UNKNOWN and err.Error() for any other error (use a *RemoteError to avoid
+// exposing internal error text); a nil Handle sends UNHANDLED and a panic in
+// Handle sends UNKNOWN. Requests without _ask get no reply, and reply is
+// then a no-op.
 //
 // A box whose encoded size exceeds MaxBoxSize, or with a key longer than
 // 255 bytes, aborts the connection with ErrFrameTooLarge.
 type AMP struct {
-	// Handle serves an incoming command. It runs on the loop. args excludes
-	// the reserved keys. The returned Future may be settled later and on any
-	// goroutine; the reply is written on the transport's loop.
-	Handle func(cmd string, args Args) *twine.Future[Args]
+	// Handle serves an incoming command. It runs on the loop; args excludes
+	// the reserved keys. The handler answers by calling reply once, inside
+	// Handle or later, from any goroutine: the reply is written on the
+	// transport's loop. A second call is ignored, a reply after the
+	// connection is lost writes nothing, and a handler that never calls
+	// reply leaves the caller waiting (until its connection is lost). See
+	// the type documentation for how res and err map to the reply box.
+	Handle func(cmd string, args Args, reply func(res Args, err error))
 	// OnConnectionMade, if set, is called from ConnectionMade after the
 	// transport has been stored.
 	OnConnectionMade func(t twine.Transport)
@@ -458,51 +467,91 @@ func (a *AMP) dispatch(box Args) {
 	tag, hasAsk := box[ampAsk]
 	delete(box, ampCommand)
 	delete(box, ampAsk)
-	fut, perr := a.callHandler(cmd, box)
-	switch {
-	case perr != nil:
+	if a.Handle == nil {
 		if hasAsk {
-			a.sendError(tag, &RemoteError{Code: UnknownErrorCode, Description: perr.Error()})
-		}
-		return
-	case fut == nil:
-		if hasAsk {
-			a.sendError(tag, &RemoteError{Code: UnhandledErrorCode, Description: "Unhandled Command: " + strconv.Quote(cmd)})
+			a.sendError(tag, unhandled(cmd))
 		}
 		return
 	}
-	if !hasAsk {
-		fut.Catch(func(error) {}) // no reply wanted; mark the rejection handled
-		return
+	reply := noReply
+	if hasAsk {
+		r := &ampReply{a: a, cmd: cmd, tag: tag}
+		reply = r.reply
 	}
-	fut.Then(func(res Args) {
-		a.onLoop(func() {
-			if _, err := validateArgs("", res); err != nil {
-				a.sendError(tag, &RemoteError{Code: UnknownErrorCode, Description: err.Error()})
-				return
-			}
-			a.send(ampAnswer, tag, "", "", res)
-		})
-	}).Catch(func(err error) {
-		var re *RemoteError
-		if !errors.As(err, &re) {
-			re = &RemoteError{Code: UnknownErrorCode, Description: err.Error()}
-		}
-		a.onLoop(func() { a.sendError(tag, re) })
-	})
+	if perr := a.callHandler(cmd, box, reply); perr != nil {
+		reply(nil, perr) // ignored if the handler replied before it panicked
+	}
 }
 
 // callHandler runs Handle, converting a panic into an error.
-func (a *AMP) callHandler(cmd string, args Args) (fut *twine.Future[Args], err error) {
-	if a.Handle == nil {
-		return nil, nil
-	}
+func (a *AMP) callHandler(cmd string, args Args, reply func(Args, error)) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			fut, err = nil, fmt.Errorf("panic in AMP handler: %v", r)
+			err = fmt.Errorf("panic in AMP handler: %v", r)
 		}
 	}()
-	return a.Handle(cmd, args), nil
+	a.Handle(cmd, args, reply)
+	return nil
+}
+
+// noReply is the reply function of a request that wants no answer.
+func noReply(Args, error) {}
+
+// ampReply is the reply function of one request that carries _ask. It is
+// a struct so that reply, a method value, is one allocation per request and
+// the answer given off the loop travels to it without a closure.
+type ampReply struct {
+	a    *AMP
+	cmd  string
+	tag  string
+	done atomic.Bool
+	res  Args  // set by reply off the loop, read by deliver on it
+	err  error // likewise
+}
+
+// reply answers the request once; later calls are ignored. Safe from any
+// goroutine: on the loop it writes the reply at once, elsewhere it hops
+// there with CallFromThread.
+func (r *ampReply) reply(res Args, err error) {
+	if !r.done.CompareAndSwap(false, true) {
+		return
+	}
+	l := r.a.lp.t.Loop()
+	if l == nil || l.InLoop() {
+		r.a.answer(r.tag, r.cmd, res, err)
+		return
+	}
+	r.res, r.err = res, err
+	l.CallFromThread(r.deliver)
+}
+
+// deliver runs on the loop for a reply made elsewhere.
+func (r *ampReply) deliver() { r.a.answer(r.tag, r.cmd, r.res, r.err) }
+
+// answer writes the reply box for a handler outcome. Loop-affine.
+func (a *AMP) answer(tag, cmd string, res Args, err error) {
+	if err != nil {
+		var re *RemoteError
+		switch {
+		case errors.As(err, &re):
+		case errors.Is(err, ErrUnhandledCommand):
+			re = unhandled(cmd)
+		default:
+			re = &RemoteError{Code: UnknownErrorCode, Description: err.Error()}
+		}
+		a.sendError(tag, re)
+		return
+	}
+	if _, verr := validateArgs("", res); verr != nil {
+		a.sendError(tag, &RemoteError{Code: UnknownErrorCode, Description: verr.Error()})
+		return
+	}
+	a.send(ampAnswer, tag, "", "", res)
+}
+
+// unhandled is the error box for a command nobody serves.
+func unhandled(cmd string) *RemoteError {
+	return &RemoteError{Code: UnhandledErrorCode, Description: "Unhandled Command: " + strconv.Quote(cmd)}
 }
 
 func (a *AMP) sendError(tag string, re *RemoteError) {

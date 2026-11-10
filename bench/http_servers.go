@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/exergy-dev/twine"
-	twhttp "github.com/exergy-dev/twine/http"
+	"github.com/exergy-dev/twine/twhttp"
 )
 
 // HelloBody is the plaintext response body (the TechEmpower "plaintext"
@@ -19,7 +19,7 @@ const HelloBody = "Hello, World!"
 
 var helloBytes = []byte(HelloBody)
 
-// StartHTTPTwine starts a twine/http hello-world server with loops event
+// StartHTTPTwine starts a twhttp hello-world server with loops event
 // loops (0 means GOMAXPROCS). The returned server's Conns counts open
 // connections.
 func StartHTTPTwine(addr string, loops int, opts ...twine.Option) (*TwineServer, error) {

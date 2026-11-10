@@ -35,14 +35,14 @@ type client struct {
 }
 
 func newClient(room *proto.Broadcast) twine.Factory {
-	return twine.FactoryFunc(func(peer net.Addr) twine.Protocol {
+	return func(peer net.Addr) twine.Protocol {
 		c := &client{room: room, nick: peer.String()}
 		c.MaxLineLength = 1024
 		c.OnConnectionMade = c.connectionMade
 		c.LineReceived = c.lineReceived
 		c.OnConnectionLost = c.connectionLost
 		return c
-	})
+	}
 }
 
 func (c *client) connectionMade(t twine.Transport) {
@@ -62,7 +62,7 @@ func (c *client) lineReceived(line []byte) {
 		c.nick = nick
 	case bytes.Equal(line, []byte("/quit")):
 		c.SendLine([]byte("* bye"))
-		c.Transport().LoseConnection()
+		c.Transport().Close()
 	case len(bytes.TrimSpace(line)) == 0:
 	default:
 		// Send copies the message once; every loop shares that copy.
@@ -104,7 +104,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	room := proto.NewBroadcast()
+	room := &proto.Broadcast{} // the zero value is an empty group
 	eng := twine.New(twine.Loops(*loops))
 	lst, err := eng.ListenTCP(*addr, newClient(room))
 	if err != nil {

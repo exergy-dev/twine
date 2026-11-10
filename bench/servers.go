@@ -68,14 +68,14 @@ func (e *twineEcho) StopProducing()                   {}
 // loops (0 means GOMAXPROCS). Extra engine options are appended after the
 // harness defaults (watchdog off, short shutdown timeout).
 func StartTwine(addr string, loops int, opts ...twine.Option) (*TwineServer, error) {
-	return startTwine(addr, loops, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &twineEcho{} }), opts...)
+	return startTwine(addr, loops, func(net.Addr) twine.Protocol { return &twineEcho{} }, opts...)
 }
 
 // startTwine runs a twine engine serving f on addr.
 func startTwine(addr string, loops int, f twine.Factory, opts ...twine.Option) (*TwineServer, error) {
 	o := append([]twine.Option{
 		twine.Loops(loops),
-		twine.Watchdog(0),
+		twine.Watchdog(-1),
 		twine.ShutdownTimeout(200 * time.Millisecond),
 	}, opts...)
 	eng := twine.New(o...)

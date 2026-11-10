@@ -1,0 +1,553 @@
+package twtls_test
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/exergy-dev/twine"
+	"github.com/exergy-dev/twine/twtls"
+)
+
+// kinfo is what a server-side protocol reports about its connection.
+type kinfo struct {
+	offloaded, rx bool
+	suite         uint16
+	version       uint16
+}
+
+// kProto echoes and reports the offload mode once.
+type kProto struct {
+	echo
+	info chan kinfo
+	lost chan error
+}
+
+func (p *kProto) ConnectionMade(t twine.Transport) {
+	p.t = t
+	tt := t.(*twtls.Transport)
+	st := tt.ConnectionState()
+	tx, rx := tt.KernelOffload()
+	p.info <- kinfo{tx, rx, st.CipherSuite, st.Version}
+}
+func (p *kProto) ConnectionLost(err error) {
+	if p.lost != nil {
+		p.lost <- err
+	}
+}
+
+func kFactory(info chan kinfo, lost chan error) twine.Factory {
+	return func(net.Addr) twine.Protocol { return &kProto{info: info, lost: lost} }
+}
+
+// requireKTLS skips a test that needs kernel TLS on a host without it, or
+// fails it when TWINE_REQUIRE_KTLS=1 (set by the CI step that loads the tls
+// module, so that a broken probe cannot silently skip every kTLS test).
+func requireKTLS(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "linux" && twtls.KTLSAvailable() {
+		return
+	}
+	if os.Getenv("TWINE_REQUIRE_KTLS") == "1" {
+		t.Fatal("TWINE_REQUIRE_KTLS=1 but kTLS is unavailable (load the tls module: sudo modprobe tls)")
+	}
+	t.Skip("kTLS unavailable on this host (TWINE_REQUIRE_KTLS=1 makes this a failure)")
+}
+
+// settle gives the server loop time to finish the handshake before the client
+// sends data. Offload only engages when nothing from the peer has been
+// consumed yet; a client that pipelines data right behind its Finished can
+// get TX-only offload, which is also correct but would make assertions racy.
+func settle() { time.Sleep(150 * time.Millisecond) }
+
+func TestKTLSGoClient(t *testing.T) {
+	requireKTLS(t)
+	e := startEngine(t)
+	info := make(chan kinfo, 1)
+	lost := make(chan error, 1)
+	addr := listen(t, e, serverConfig(t), kFactory(info, lost), twtls.KernelOffload(true))
+	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+	settle()
+	ki := <-info
+	t.Logf("suite=%s offloaded=%v rx=%v", tls.CipherSuiteName(ki.suite), ki.offloaded, ki.rx)
+	if !ki.offloaded || !ki.rx {
+		t.Fatalf("kTLS did not engage: %+v", ki)
+	}
+	buf := make([]byte, 64)
+	for i := 0; i < 1000; i++ {
+		msg := []byte("message " + strings.Repeat("x", i%40))
+		if _, err := c.Write(msg); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		if _, err := io.ReadFull(c, buf[:len(msg)]); err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if !bytes.Equal(buf[:len(msg)], msg) {
+			t.Fatalf("echo %d mismatch", i)
+		}
+	}
+	data := make([]byte, 1<<20)
+	_, _ = rand.Read(data)
+	errCh := make(chan error, 1)
+	go func() { _, err := c.Write(data); errCh <- err }()
+	got := make([]byte, len(data))
+	if _, err := io.ReadFull(c, got); err != nil {
+		t.Fatalf("stream read: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("stream write: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("1 MiB stream corrupted")
+	}
+	// The peer's close_notify is a non-data record: with RX offloaded the
+	// kernel fails the read with EIO, which surfaces as ConnectionLost
+	// (documented).
+	c.Close()
+	select {
+	case err := <-lost:
+		t.Logf("ConnectionLost after client close: %v", err)
+		if !errors.Is(err, syscall.EIO) {
+			t.Fatalf("ConnectionLost(%v), want an error wrapping EIO under RX offload", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no ConnectionLost")
+	}
+}
+
+func TestKTLSOpenSSLSuites(t *testing.T) {
+	requireKTLS(t)
+	bin, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Skip("openssl not on PATH")
+	}
+	e := startEngine(t)
+	info := make(chan kinfo, 4)
+	addr := listen(t, e, serverConfig(t), kFactory(info, nil), twtls.KernelOffload(true))
+	for _, suite := range []struct {
+		name string
+		id   uint16
+	}{
+		{"TLS_AES_128_GCM_SHA256", tls.TLS_AES_128_GCM_SHA256},
+		{"TLS_AES_256_GCM_SHA384", tls.TLS_AES_256_GCM_SHA384},
+		{"TLS_CHACHA20_POLY1305_SHA256", tls.TLS_CHACHA20_POLY1305_SHA256},
+	} {
+		t.Run(suite.name, func(t *testing.T) {
+			// ChaCha20-Poly1305 is never offloaded (AES-GCM only).
+			usable := twtls.CipherUsable(suite.id)
+			if !usable {
+				t.Logf("no kTLS for %s: expecting the memory-BIO fallback", suite.name)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, bin, "s_client", "-connect", addr, "-quiet",
+				"-tls1_3", "-ciphersuites", suite.name)
+			stdin, _ := cmd.StdinPipe()
+			stdout, _ := cmd.StdoutPipe()
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				_ = stdin.Close()
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}()
+			time.Sleep(500 * time.Millisecond) // let the handshake finish first
+			var want bytes.Buffer
+			rnd := make([]byte, 30)
+			for i := 0; i < 3000; i++ {
+				_, _ = rand.Read(rnd)
+				want.WriteString(hex.EncodeToString(rnd) + "\n")
+			}
+			go func() { _, _ = stdin.Write(want.Bytes()) }()
+			rd := bufio.NewReader(stdout)
+			got := make([]byte, want.Len())
+			done := make(chan error, 1)
+			go func() { _, err := io.ReadFull(rd, got); done <- err }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("read: %v; stderr:\n%s", err, stderr.String())
+				}
+			case <-ctx.Done():
+				t.Fatalf("timeout; stderr:\n%s", stderr.String())
+			}
+			if !bytes.Equal(got, want.Bytes()) {
+				t.Fatal("echo mismatch")
+			}
+			ki := <-info
+			t.Logf("negotiated %s offloaded=%v rx=%v", tls.CipherSuiteName(ki.suite), ki.offloaded, ki.rx)
+			if ki.suite != suite.id {
+				t.Fatalf("negotiated %x, want %x", ki.suite, suite.id)
+			}
+			if ki.offloaded != usable || ki.rx != usable {
+				t.Fatalf("offload=%+v, kernel support=%v", ki, usable)
+			}
+		})
+	}
+}
+
+func TestKTLSCloseSendsCloseNotify(t *testing.T) {
+	requireKTLS(t)
+	e := startEngine(t)
+	lost := make(chan error, 1)
+	offl := make(chan bool, 1)
+	big := bytes.Repeat([]byte("x"), 2<<20) // far beyond the socket buffer: ring-buffered
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
+		return &offByeProto{byeProto: byeProto{lost: lost, big: big}, ch: offl}
+	}, twtls.KernelOffload(true))
+	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true})
+	got, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatalf("ReadAll: %v (want clean close_notify EOF)", err)
+	}
+	if want := append([]byte("bye"), big...); !bytes.Equal(got, want) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(want))
+	}
+	if !<-offl {
+		t.Fatal("not offloaded")
+	}
+	c.Close()
+	select {
+	case <-lost:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no ConnectionLost")
+	}
+}
+
+// writevProto sends its slices with one Writev, then closes.
+type writevProto struct {
+	parts [][]byte
+	tx    chan bool
+}
+
+func (p *writevProto) ConnectionMade(t twine.Transport) {
+	tx, _ := t.(*twtls.Transport).KernelOffload()
+	p.tx <- tx
+	t.Writev(p.parts...)
+	t.Close()
+}
+func (p *writevProto) DataReceived([]byte)  {}
+func (p *writevProto) ConnectionLost(error) {}
+
+// TestKTLSWritev: under TX offload Writev hands every slice to the socket in
+// one writev; the peer must see them in order, then close_notify.
+func TestKTLSWritev(t *testing.T) {
+	requireKTLS(t)
+	e := startEngine(t)
+	parts := [][]byte{[]byte("head "), {}, bytes.Repeat([]byte("m"), 100<<10), []byte(" tail")}
+	txCh := make(chan bool, 1)
+	addr := listen(t, e, serverConfig(t), func(net.Addr) twine.Protocol {
+		return &writevProto{parts: parts, tx: txCh}
+	}, twtls.KernelOffload(true))
+	c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+	defer c.Close()
+	got, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatalf("ReadAll: %v (want clean close_notify EOF)", err)
+	}
+	if !<-txCh {
+		t.Fatal("not offloaded")
+	}
+	if want := bytes.Join(parts, nil); !bytes.Equal(got, want) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(want))
+	}
+}
+
+type offByeProto struct {
+	byeProto
+	ch chan bool
+}
+
+func (p *offByeProto) ConnectionMade(t twine.Transport) {
+	tx, _ := t.(*twtls.Transport).KernelOffload()
+	p.ch <- tx
+	p.byeProto.ConnectionMade(t)
+}
+
+// TestKTLSFallbacks: KTLSAvailable agrees with the kernel, and TLS 1.2 or
+// KernelOffload(false) never offloads. Runs on every host: without kTLS the
+// fallback is the only possible outcome, but the option must still work.
+func TestKTLSFallbacks(t *testing.T) {
+	// Probe first: the probe itself may load the tls module on demand.
+	avail := twtls.KTLSAvailable()
+	t.Logf("KTLSAvailable=%v", avail)
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/tcp_available_ulp"); err == nil {
+		if want := strings.Contains(string(b), "tls"); avail != want {
+			t.Errorf("KTLSAvailable=%v but tcp_available_ulp=%q", avail, b)
+		}
+	} else if runtime.GOOS != "linux" && avail {
+		t.Errorf("KTLSAvailable=true on %s", runtime.GOOS)
+	}
+	e := startEngine(t)
+	for _, tc := range []struct {
+		name string
+		opt  bool
+		max  uint16
+	}{
+		{"TLS12", true, tls.VersionTLS12},
+		{"OffloadOff", false, tls.VersionTLS13},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := make(chan kinfo, 1)
+			addr := listen(t, e, serverConfig(t), kFactory(info, nil), twtls.KernelOffload(tc.opt))
+			c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MaxVersion: tc.max})
+			defer c.Close()
+			settle()
+			if _, err := c.Write([]byte("hello")); err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, 5)
+			if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "hello" {
+				t.Fatalf("echo: %q %v", buf, err)
+			}
+			if ki := <-info; ki.offloaded || ki.rx {
+				t.Fatalf("unexpected offload: %+v", ki)
+			}
+		})
+	}
+}
+
+// TestKTLSEarlyDataIsNotLost: data queued right behind the
+// client's Finished must not be lost; RX stays in user space.
+func TestKTLSEarlyDataIsNotLost(t *testing.T) {
+	requireKTLS(t)
+	e := startEngine(t)
+	info := make(chan kinfo, 20)
+	addr := listen(t, e, serverConfig(t), kFactory(info, nil), twtls.KernelOffload(true))
+	for i := 0; i < 20; i++ {
+		c := dial(t, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+		// No settle: write immediately.
+		if _, err := c.Write([]byte("early")); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, 5)
+		if _, err := io.ReadFull(c, buf); err != nil || string(buf) != "early" {
+			t.Fatalf("echo: %q %v", buf, err)
+		}
+		ki := <-info
+		if !ki.offloaded {
+			t.Fatalf("TX offload expected: %+v", ki)
+		}
+		c.Close()
+	}
+}
+
+type kClient struct {
+	clientProto
+	info chan kinfo
+}
+
+func (p *kClient) ConnectionMade(t twine.Transport) {
+	tx, rx := t.(*twtls.Transport).KernelOffload()
+	p.info <- kinfo{offloaded: tx, rx: rx}
+	p.clientProto.ConnectionMade(t)
+}
+
+// A client offloads TX only: the server's post-handshake records stay in
+// user space.
+func TestKTLSClientTXOnly(t *testing.T) {
+	requireKTLS(t)
+	cert, pool := selfSigned(t)
+	addr := goEchoServer(t, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
+	e := startEngine(t)
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 40000) // 640 KB
+	p := &kClient{clientProto: clientProto{want: len(payload), done: make(chan []byte, 1), payload: payload},
+		info: make(chan kinfo, 1)}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{RootCAs: pool},
+		func(net.Addr) twine.Protocol { return p }, twtls.KernelOffload(true)).Await(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ki := <-p.info; !ki.offloaded || ki.rx {
+		t.Fatalf("want TX-only offload, got %+v", ki)
+	}
+	select {
+	case got := <-p.done:
+		if !bytes.Equal(got, payload) {
+			t.Fatal("echo mismatch")
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout")
+	}
+}
+
+// TestOffloadRefusedWriteAborts: under kTLS TX, a crypto/tls write refused
+// during Read (its reply to a peer KeyUpdate that requests one, an error
+// crypto/tls keeps to itself) aborts the connection with errOffloadWrite,
+// after delivering any plaintext the same Read returned. A KeyUpdate record
+// carries no data, so its Read returns errWouldBlock (NoData). The refusal
+// is forced, so this needs no kTLS; TestKTLSClientPeerKeyUpdate is the real
+// thing.
+func TestOffloadRefusedWriteAborts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{{"Data", "before"}, {"NoData", ""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRecordRig(t)
+			var rec []byte
+			if tc.payload != "" {
+				rec = r.mint(t, 1, []byte(tc.payload))[0]
+			}
+			var got int
+			onLoop(r.loop, func() {
+				r.server.ForceRefusedWrite()
+				r.server.FeedCiphertext(rec)
+				got = r.sink.n
+			})
+			if got != len(tc.payload) {
+				t.Fatalf("delivered %d plaintext bytes, want %d", got, len(tc.payload))
+			}
+			select {
+			case err := <-r.sink.lost:
+				if !errors.Is(err, twtls.ErrOffloadWrite) {
+					t.Fatalf("ConnectionLost(%v), want errOffloadWrite", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("no ConnectionLost")
+			}
+		})
+	}
+}
+
+// keyUpdateClient reports its offload mode and how the connection ended.
+type keyUpdateClient struct {
+	t    twine.Transport
+	mode chan [2]bool
+	got  chan []byte
+	lost chan error
+}
+
+func (p *keyUpdateClient) ConnectionMade(t twine.Transport) {
+	p.t = t
+	tx, rx := t.(*twtls.Transport).KernelOffload()
+	p.mode <- [2]bool{tx, rx}
+	t.Write([]byte("hello\n"))
+}
+func (p *keyUpdateClient) DataReceived(b []byte) {
+	select {
+	case p.got <- append([]byte(nil), b...):
+	default:
+	}
+}
+func (p *keyUpdateClient) ConnectionLost(err error) { p.lost <- err }
+
+// TestKTLSClientPeerKeyUpdate: an openssl s_server sends a KeyUpdate that
+// requests one back ("K" on its stdin) to a client with kTLS TX offload.
+// crypto/tls cannot reply (the bio refuses its write), so the connection
+// must be aborted with errOffloadWrite instead of carrying on without the
+// reply RFC 8446 requires.
+func TestKTLSClientPeerKeyUpdate(t *testing.T) {
+	requireKTLS(t)
+	bin, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Skip("openssl not on PATH")
+	}
+	cert, _ := selfSigned(t)
+	dir := t.TempDir()
+	certFile, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "s_server", "-accept", addr, "-cert", certFile, "-key", keyFile,
+		"-tls1_3", "-ciphersuites", "TLS_AES_128_GCM_SHA256")
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	lines := make(chan string, 100)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	waitLine := func(want string) {
+		t.Helper()
+		for {
+			select {
+			case l, ok := <-lines:
+				if !ok {
+					t.Fatalf("s_server exited before %q", want)
+				}
+				if strings.Contains(l, want) {
+					return
+				}
+			case <-ctx.Done():
+				t.Fatalf("timeout waiting for %q", want)
+			}
+		}
+	}
+	waitLine("ACCEPT")
+
+	e := startEngine(t)
+	p := &keyUpdateClient{mode: make(chan [2]bool, 1), got: make(chan []byte, 16), lost: make(chan error, 1)}
+	if _, err := twtls.Connect(e.NextLoop(), addr, &tls.Config{InsecureSkipVerify: true},
+		func(net.Addr) twine.Protocol { return p }, twtls.KernelOffload(true)).Await(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m := <-p.mode; !m[0] || m[1] {
+		t.Fatalf("want TX-only offload, got tx=%v rx=%v", m[0], m[1])
+	}
+	waitLine("hello") // s_server printed what the kernel encrypted
+	if _, err := stdin.Write([]byte("K\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-p.lost:
+		t.Logf("ConnectionLost(%v)", err)
+		if !errors.Is(err, twtls.ErrOffloadWrite) {
+			t.Fatalf("ConnectionLost(%v), want errOffloadWrite", err)
+		}
+	case <-time.After(5 * time.Second):
+		for len(lines) > 0 {
+			t.Log(<-lines)
+		}
+		t.Fatal("connection survived a peer KeyUpdate it could not answer")
+	}
+}

@@ -55,7 +55,7 @@ func main() {
 	defer stop()
 
 	eng := twine.New() // one loop per core
-	if _, err := eng.ListenTCP(":9000", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })); err != nil {
+	if _, err := eng.ListenTCP(":9000", func(net.Addr) twine.Protocol { return &echo{} }); err != nil {
 		log.Fatal(err)
 	}
 	if err := eng.Run(ctx); err != nil {
@@ -78,13 +78,13 @@ methods run on the connection's loop, entered through `CallFromThread`. Call
 type printer struct{ t twine.Transport }
 
 func (p *printer) ConnectionMade(t twine.Transport) { p.t = t }
-func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.LoseConnection() }
+func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.Close() }
 func (p *printer) ConnectionLost(error)             {}
 
 func dial(eng *twine.Engine, addr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	t, err := eng.Dial(addr, twine.FactoryFunc(func(net.Addr) twine.Protocol { return &printer{} })).Await(ctx)
+	t, err := eng.Dial(addr, func(net.Addr) twine.Protocol { return &printer{} }).Await(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -133,17 +133,16 @@ func (r *resolver) DataReceived(b []byte) {
 
 ## An HTTP server
 
-The `http` and `tls` packages share their names with `net/http` and
-`crypto/tls`. Import them as `twhttp` and `twtls`, so the standard packages
-keep their usual names:
+The HTTP and TLS packages are named `twhttp` and `twtls`, so they sit next
+to `net/http` and `crypto/tls` in an import block without aliases:
 
 ```go
 import (
 	"crypto/tls"
 	"net/http"
 
-	twhttp "github.com/exergy-dev/twine/http"
-	twtls "github.com/exergy-dev/twine/tls"
+	"github.com/exergy-dev/twine/twhttp"
+	"github.com/exergy-dev/twine/twtls"
 )
 ```
 
@@ -168,9 +167,10 @@ func main() {
 
 ## A TLS listener
 
-`twtls.Listen` wraps a plaintext `Factory`: the `echo` Protocol above runs
-unchanged, seeing decrypted bytes. The handshake runs off the loop; like
-`crypto/tls.Listen`, it rejects a config with no certificate.
+`twtls.Server` wraps a plaintext `Factory` for `ListenTCP`: the `echo`
+Protocol above runs unchanged, seeing decrypted bytes. The handshake runs off
+the loop. Like `crypto/tls.Listen`, it refuses a config with no certificate
+(`Server` panics).
 
 ```go
 func main() {
@@ -180,8 +180,8 @@ func main() {
 	}
 	eng := twine.New()
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
-	factory := twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
-	if _, err := twtls.Listen(eng, ":8443", cfg, factory); err != nil {
+	factory := func(net.Addr) twine.Protocol { return &echo{} }
+	if _, err := eng.ListenTCP(":8443", twtls.Server(cfg, factory)); err != nil {
 		log.Fatal(err)
 	}
 	log.Fatal(eng.Run(context.Background()))
@@ -202,9 +202,11 @@ func main() {
 
 `Engine.Stop` closes listeners, runs `OnShutdown` hooks once on the goroutine
 that called `Run` (while loops are still live, so hooks may `CallFromThread`),
-then asks every loop to `LoseConnection` its connections, flush for up to
-`ShutdownTimeout`, and exit. `LoseConnection` half-closes (SHUT_WR) after the
-flush and waits up to `CloseLinger` (default 10 s) for the peer to close.
+then asks every loop to `Close` its connections, flush for up to
+`ShutdownTimeout`, and exit. Unlike `net.Conn.Close`, `Transport.Close` is
+graceful: it flushes pending writes, half-closes (SHUT_WR) and waits up to
+`CloseLinger` (default 10 s) for the peer to close; `Abort` drops pending
+writes and closes at once.
 
 Set `TWINE_DEBUG=1` (or build with `-tags twine_debug`) to turn on
 loop-affinity assertions, read-buffer poisoning and Future creation stacks.
@@ -216,8 +218,8 @@ loop-affinity assertions, read-buffer poisoning and Future creation stacks.
 | `twine` | Engine, Loop, Protocol/Transport/Factory, Future, timers, CallFromThread, DeferToThread, UDP, per-loop metrics, watchdog, `Blocking` adapter |
 | `metrics` | Prometheus text-format handler over the engine's per-loop metrics (kept out of the root package so `net/http` is linked only when you use it) |
 | `proto` | `LineReceiver`, `NetstringReceiver`, `LengthPrefixed`, `AMP`, `ReconnectingClient`, `Broadcast` |
-| `http` | HTTP/1.1 server with no per-request allocation in the steady state (`Server`, `RequestCtx`), plus `Adapt(net/http.Handler)`, a migration bridge that allocates per request |
-| `tls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Listen`, `Connect`) and opt-in kTLS offload |
+| `twhttp` | HTTP/1.1 server with no per-request allocation in the steady state (`Server`, `RequestCtx`), plus `Adapt(net/http.Handler)`, a migration bridge that allocates per request |
+| `twtls` | Memory-BIO TLS over `crypto/tls` (`Server`, `Client`, `Dial`, `Connect`) and opt-in kTLS offload |
 | `internal/*` | poller (epoll/kqueue/io_uring), sockets, slab allocator, write ring, MPSC queue, timing wheel |
 | `bench` | separate module with the comparison harness (goroutine-per-conn, gnet, net/http); Linux only |
 | `examples` | `echo`, `chat`, `http_hello`, `udp_echo` and `client_reconnect` |
@@ -234,7 +236,7 @@ Two features are **Linux-only and experimental**:
   for TLS 1.3 connections using AES-GCM. The record keys are read from
   `crypto/tls` by reflection and checked at runtime on every access; any
   mismatch, TLS 1.2, any other cipher suite (including ChaCha20-Poly1305) or
-  a kernel refusal stays on the memory BIO. See `tls/doc.go` for the exact
+  a kernel refusal stays on the memory BIO. See `twtls/doc.go` for the exact
   scope. CI loads the kernel `tls` module on an Ubuntu runner and fails if
   the kTLS tests cannot offload.
 

@@ -36,7 +36,7 @@ func TestZeroOptions(t *testing.T) {
 
 func TestOptionDefaults(t *testing.T) {
 	e := New(ReadBufferSize(0), MaxReadsPerEvent(-3), WriteBufferLimit(0), WriteHighWater(0),
-		WriteLowWater(0), Watchdog(-1), ShutdownTimeout(-1), CloseLinger(-1))
+		WriteLowWater(0), Watchdog(0), ShutdownTimeout(0), CloseLinger(0))
 	defer e.Stop()
 	c := e.cfg
 	if c.readBufferSize != defaultReadBufferSize || len(e.loops[0].rdbuf) != defaultReadBufferSize {
@@ -48,9 +48,35 @@ func TestOptionDefaults(t *testing.T) {
 	if c.writeLimit != defaultWriteLimit || c.writeHighWater != defaultWriteHighWater || c.writeLowWater != defaultWriteLowWater {
 		t.Errorf("write marks = %d/%d/%d", c.writeLowWater, c.writeHighWater, c.writeLimit)
 	}
-	if c.watchdog != 0 || c.shutdownTimeout != 0 || c.closeLinger != 0 {
-		t.Errorf("negative durations not clamped: %v %v %v", c.watchdog, c.shutdownTimeout, c.closeLinger)
+	if c.watchdog != defaultWatchdog || c.shutdownTimeout != defaultShutdownTimeout || c.closeLinger != defaultCloseLinger {
+		t.Errorf("zero durations are not the defaults: %v %v %v", c.watchdog, c.shutdownTimeout, c.closeLinger)
 	}
+	if dc := dialConfigFor(); dc.timeout != defaultDialTimeout {
+		t.Errorf("DialTimeout default = %v, want %v", dc.timeout, defaultDialTimeout)
+	}
+	if dc := dialConfigFor(DialTimeout(0)); dc.timeout != defaultDialTimeout {
+		t.Errorf("DialTimeout(0) = %v, want the default %v", dc.timeout, defaultDialTimeout)
+	}
+
+	// A negative duration disables what it bounds.
+	off := New(Loops(1), Watchdog(-1), ShutdownTimeout(-1), CloseLinger(-1))
+	defer off.Stop()
+	if c := off.cfg; c.watchdog != 0 || c.shutdownTimeout != 0 || c.closeLinger != 0 {
+		t.Errorf("negative durations do not disable: %v %v %v", c.watchdog, c.shutdownTimeout, c.closeLinger)
+	}
+	if dc := dialConfigFor(DialTimeout(-1)); dc.timeout != 0 {
+		t.Errorf("DialTimeout(-1) = %v, want 0 (no timeout)", dc.timeout)
+	}
+}
+
+// dialConfigFor applies opts the way ConnectTCP does.
+func dialConfigFor(opts ...DialOption) dialConfig {
+	dc := defaultDialConfig()
+	for _, o := range opts {
+		o(&dc)
+	}
+	dc.finalize()
+	return dc
 }
 
 func TestEngineLogger(t *testing.T) {
@@ -121,15 +147,15 @@ func TestLocalAddr(t *testing.T) {
 	p := newClientProto()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	tr, err := e.Dial(lst.Addr().String(), FactoryFunc(func(net.Addr) Protocol { return p }),
+	tr, err := e.Dial(lst.Addr().String(), func(net.Addr) Protocol { return p },
 		LocalAddr(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))).Await(ctx)
 	if err != nil {
 		t.Fatalf("Dial with LocalAddr: %v", err)
 	}
 	var host net.Addr
-	onLoop(t, tr.Loop(), func() { host = tr.GetHost(); tr.Abort() })
+	onLoop(t, tr.Loop(), func() { host = tr.LocalAddr(); tr.Abort() })
 	ta, ok := host.(*net.TCPAddr)
 	if !ok || ta.Port != port || !ta.IP.Equal(net.IPv4(127, 0, 0, 1)) {
-		t.Fatalf("GetHost = %v, want 127.0.0.1:%d", host, port)
+		t.Fatalf("LocalAddr = %v, want 127.0.0.1:%d", host, port)
 	}
 }

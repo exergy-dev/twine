@@ -132,7 +132,7 @@ func TestDeferToThreadSpill(t *testing.T) {
 // When the lock-free task ring is full, CallFromThread spills into the
 // overflow slice and every task still runs once, in FIFO order per producer.
 func TestCallFromThreadOverflow(t *testing.T) {
-	e := New(Loops(1), Watchdog(0))
+	e := New(Loops(1), Watchdog(-1))
 	l := e.loops[0]
 	l.tasks = mpsc.New(8) // tiny ring; loops exist before Run, pollers do not
 	errCh := make(chan error, 1)

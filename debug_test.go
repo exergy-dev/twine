@@ -35,7 +35,7 @@ func TestDebugWriteOffLoopPanics(t *testing.T) {
 	for name, call := range map[string]func(){
 		"Write":          func() { tr.Write([]byte("x")) },
 		"Writev":         func() { tr.Writev([]byte("x")) },
-		"LoseConnection": tr.LoseConnection,
+		"Close":          tr.Close,
 		"PauseReading":   tr.PauseReading,
 		"SetIdleTimeout": func() { tr.SetIdleTimeout(time.Second) },
 	} {
@@ -226,7 +226,7 @@ func slowCallbackFor(t *testing.T, h *captureHandler, want string) capturedRecor
 func TestWatchdogSlowCallback(t *testing.T) {
 	h := &captureHandler{}
 	e := startEngine(t, Loops(1), Watchdog(time.Millisecond), Logger(slog.New(h)))
-	lst := listen(t, e, FactoryFunc(func(net.Addr) Protocol { return &sleepyProto{sleep: 5 * time.Millisecond} }))
+	lst := listen(t, e, func(net.Addr) Protocol { return &sleepyProto{sleep: 5 * time.Millisecond} })
 	c := dialTCP(t, lst.Addr().String())
 
 	// One slow callback produces a warning naming the protocol type.
@@ -269,7 +269,7 @@ func TestWatchdogSlowCallback(t *testing.T) {
 func TestWatchdogSlowCallbackAfterIdle(t *testing.T) {
 	h := &captureHandler{}
 	e := startEngine(t, Loops(1), Watchdog(time.Millisecond), Logger(slog.New(h)))
-	lst := listen(t, e, FactoryFunc(func(net.Addr) Protocol { return &sleepyProto{sleep: 5 * time.Millisecond} }))
+	lst := listen(t, e, func(net.Addr) Protocol { return &sleepyProto{sleep: 5 * time.Millisecond} })
 	time.Sleep(300 * time.Millisecond) // the watchdog is at its idle interval now
 	c := dialTCP(t, lst.Addr().String())
 	echoOnce(t, c, []byte("slow"))

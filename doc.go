@@ -60,6 +60,6 @@
 // Metrics are available per loop from Loop.Metrics and Engine.Metrics; the
 // metrics subpackage serves them in the Prometheus text format. The proto
 // package holds framing protocols (lines, netstrings, length prefixes, AMP)
-// and a reconnecting client, http a zero-allocation HTTP/1.1 server, and
-// tls a memory-BIO TLS layer over crypto/tls.
+// and a reconnecting client, twhttp a zero-allocation HTTP/1.1 server, and
+// twtls a memory-BIO TLS layer over crypto/tls.
 package twine

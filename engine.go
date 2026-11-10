@@ -169,7 +169,7 @@ func (e *Engine) Stop() {
 func (e *Engine) Done() <-chan struct{} { return e.doneCh }
 
 // shutdown closes listeners, runs the OnShutdown hooks, then asks every loop
-// to LoseConnection its connections, flush for up to ShutdownTimeout and exit.
+// to Close its connections, flush for up to ShutdownTimeout and exit.
 func (e *Engine) shutdown() {
 	e.mu.Lock()
 	ls := e.listeners

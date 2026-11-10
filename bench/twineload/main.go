@@ -260,7 +260,7 @@ func main() {
 		*pipeline = 1
 	}
 
-	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(0), twine.ShutdownTimeout(200 * time.Millisecond)}
+	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(-1), twine.ShutdownTimeout(200 * time.Millisecond)}
 	if *spin >= 0 {
 		opts = append(opts, twine.SpinIterations(*spin))
 	}
@@ -295,9 +295,9 @@ func main() {
 		var f twine.Factory
 		switch *proto {
 		case "echo":
-			f = twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echoConn{ls: states[li], msg: msg} })
+			f = func(net.Addr) twine.Protocol { return &echoConn{ls: states[li], msg: msg} }
 		case "http":
-			f = twine.FactoryFunc(func(net.Addr) twine.Protocol { return &httpConn{ls: states[li], req: req, depth: *pipeline} })
+			f = func(net.Addr) twine.Protocol { return &httpConn{ls: states[li], req: req, depth: *pipeline} }
 		default:
 			log.Fatalf("unknown -proto %q", *proto)
 		}

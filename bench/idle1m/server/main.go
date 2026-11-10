@@ -53,7 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(0), twine.ShutdownTimeout(5 * time.Second)}
+	opts := []twine.Option{twine.Loops(*loops), twine.Watchdog(-1), twine.ShutdownTimeout(5 * time.Second)}
 	if *pin != "" {
 		cpus, err := bench.ParseCPUs(*pin)
 		if err != nil {
@@ -62,7 +62,7 @@ func main() {
 		opts = append(opts, twine.PinLoops(cpus...))
 	}
 	eng := twine.New(opts...)
-	f := twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} })
+	f := func(net.Addr) twine.Protocol { return &echo{} }
 	for i := 0; i < *ports; i++ {
 		if _, err := eng.ListenTCP(fmt.Sprintf("%s:%d", *host, *base+i), f, twine.Backlog(*backlog)); err != nil {
 			log.Fatal(err)

@@ -1,0 +1,153 @@
+package twtls
+
+import (
+	"crypto/tls"
+	"errors"
+	"net"
+	"strings"
+
+	"github.com/exergy-dev/twine"
+)
+
+// ErrHandshakeTimeout is the handshake error when HandshakeTimeout expires
+// before the handshake completes.
+var ErrHandshakeTimeout = errors.New("tls: handshake timeout")
+
+// HandshakeError is the error passed to the OnHandshakeError hook, and the
+// rejection of a Connect Future, when a handshake fails: a certificate that
+// does not verify, no shared version or cipher suite, an alert from the
+// peer, a connection lost mid-handshake, or HandshakeTimeout expiring (Err
+// is then ErrHandshakeTimeout). errors.Is and errors.As see through it to
+// Err.
+type HandshakeError struct {
+	// Peer is the remote address of the connection.
+	Peer net.Addr
+	// Err is the cause: crypto/tls's handshake error, ErrHandshakeTimeout,
+	// io.EOF or the connection's error when it was lost mid-handshake.
+	Err error
+}
+
+// Error implements error.
+func (e *HandshakeError) Error() string {
+	// crypto/tls errors and ErrHandshakeTimeout carry their own "tls: ".
+	cause := strings.TrimPrefix(e.Err.Error(), "tls: ")
+	if e.Peer == nil {
+		return "tls: handshake failed: " + cause
+	}
+	return "tls: handshake with " + e.Peer.String() + " failed: " + cause
+}
+
+// Unwrap returns Err.
+func (e *HandshakeError) Unwrap() error { return e.Err }
+
+// errNoCertificate is crypto/tls.Listen's error for a Config that cannot
+// serve a handshake.
+var errNoCertificate = errors.New("tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config")
+
+// canServe reports whether cfg can complete a server handshake, by the same
+// test as crypto/tls.Listen.
+func canServe(cfg *tls.Config) bool {
+	return cfg != nil && (len(cfg.Certificates) > 0 || cfg.GetCertificate != nil || cfg.GetConfigForClient != nil)
+}
+
+// factory wraps an inner twine.Factory with TLS.
+type factory struct {
+	cfg    *tls.Config
+	inner  twine.Factory
+	client bool
+	opts   options
+	// res, when set, is resolved with the first connection's *Transport
+	// (Connect).
+	res twine.Resolver[twine.Transport]
+}
+
+// build is the twine.Factory that Server and Client return (as a method
+// value).
+func (f *factory) build(peer net.Addr) twine.Protocol {
+	inner := f.inner(peer)
+	if inner == nil {
+		// Refuse the connection, as the core does for a plain listener: the
+		// loop closes the socket without a handshake.
+		return nil
+	}
+	t := &Transport{f: f, inner: inner, peer: peer}
+	return (*wrapper)(t)
+}
+
+// newFactory builds a factory. With KernelOffload(true) it also runs the
+// kTLS capability probes, once per process, on the calling goroutine rather
+// than on a loop at the first handshake.
+func newFactory(cfg *tls.Config, inner twine.Factory, client bool, opts []Option) *factory {
+	f := &factory{cfg: cfg, inner: inner, client: client, opts: buildOptions(opts)}
+	if f.opts.kernelOffload {
+		warmKTLS()
+	}
+	return f
+}
+
+// Server wraps inner so that every connection it serves speaks TLS as the
+// server side, using cfg. cfg must be able to serve a handshake: it must set
+// Certificates, GetCertificate or GetConfigForClient, and Server panics
+// otherwise (the condition crypto/tls.Listen reports as an error).
+// inner.ConnectionMade is called with a *Transport once the handshake has
+// completed; DataReceived then carries plaintext. The returned Factory is
+// used with twine.Engine.ListenTCP, which takes the listener options:
+//
+//	eng.ListenTCP(":8443", twtls.Server(cfg, f, twtls.HandshakeTimeout(5*time.Second)), twine.Backlog(4096))
+func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory {
+	if !canServe(cfg) {
+		panic(errNoCertificate)
+	}
+	return newFactory(cfg, inner, false, opts).build
+}
+
+// Client wraps inner so that every connection it builds speaks TLS as the
+// client side, using cfg (nil means a zero Config, as with crypto/tls.Dial).
+// Unless cfg.InsecureSkipVerify is set, cfg must name the server in
+// ServerName; Client does not fill it in.
+//
+// Most callers want Connect instead: its Future resolves with the TLS
+// *Transport once the handshake has completed. Client is for dialers that
+// take a twine.Factory, such as twine.Loop.ConnectTCP, twine.Engine.Dial or
+// proto.ReconnectingClient. What those dialers hand back is the raw socket
+// transport, resolved as soon as TCP connects and before the handshake: do
+// not write to it (that would put plaintext on the wire mid-handshake). The
+// TLS Transport is the one passed to inner's ConnectionMade, after the
+// handshake; keep and use that one.
+func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory {
+	if cfg == nil {
+		cfg = &tls.Config{}
+	}
+	return newFactory(cfg, inner, true, opts).build
+}
+
+// Dial is Connect on a loop of e chosen with e.NextLoop: the usual way to
+// open an outbound TLS connection when no particular loop is wanted.
+func Dial(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport] {
+	return Connect(e.NextLoop(), addr, cfg, inner, opts...)
+}
+
+// Connect dials addr from loop l and runs a TLS client handshake. The Future
+// resolves with the *Transport (as a twine.Transport) after the handshake has
+// completed and inner.ConnectionMade has returned; it rejects with the dial
+// error or a *HandshakeError (whose Err is ErrHandshakeTimeout when
+// HandshakeTimeout expired). A nil cfg means a zero
+// Config. When cfg.ServerName is empty and verification is enabled, a clone
+// of cfg is used with ServerName set to the host part of addr. Core dial
+// options are passed with WithDialOptions. Safe to call from any goroutine.
+func Connect(l *twine.Loop, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport] {
+	if cfg == nil {
+		cfg = &tls.Config{}
+	}
+	if cfg.ServerName == "" && !cfg.InsecureSkipVerify {
+		if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
+			cfg = cfg.Clone()
+			cfg.ServerName = host
+		}
+	}
+	fut, res := twine.NewFuture[twine.Transport](l)
+	f := newFactory(cfg, inner, true, opts)
+	f.res = res
+	l.ConnectTCP(addr, f.build, f.opts.dialOpts...).Catch(res.Reject)
+	return fut
+}

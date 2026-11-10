@@ -10,7 +10,7 @@ The repository holds three Go modules:
 
 | Module | Path | Notes |
 | --- | --- | --- |
-| `github.com/exergy-dev/twine` | `/` | the library: root package, `proto`, `http`, `tls`, `internal/*`, and `examples/`. Standard library plus `golang.org/x/sys` only; minimum Go 1.24 |
+| `github.com/exergy-dev/twine` | `/` | the library: root package, `proto`, `twhttp`, `twtls`, `internal/*`, and `examples/`. Standard library plus `golang.org/x/sys` only; minimum Go 1.24 |
 | `github.com/exergy-dev/twine/bench` | `bench/` | comparison harness (gnet, goroutine-per-connection, net/http). Linux only |
 
 The nested modules use a `replace` directive to build against the checkout.

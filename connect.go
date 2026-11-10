@@ -38,6 +38,7 @@ func (l *Loop) ConnectTCP(addr string, f Factory, opts ...DialOption) *Future[Tr
 	for _, o := range opts {
 		o(&dc)
 	}
+	dc.finalize()
 	if l.stopped.Load() || l.eng.stopped() {
 		res.Reject(ErrEngineStopped)
 		return fut
@@ -172,7 +173,7 @@ func (l *Loop) completeConnect(c *conn) {
 	c.kind = kindTCP
 	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
-	p := d.factory.BuildProtocol(c.peer)
+	p := d.factory(c.peer)
 	if p == nil {
 		c.abortNoCallback()
 		d.res.Reject(ErrNilProtocol)

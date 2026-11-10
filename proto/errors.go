@@ -1,23 +1,17 @@
 package proto
 
-import (
-	"errors"
-
-	"github.com/exergy-dev/twine"
-)
+import "errors"
 
 // Framing errors. A framer that aborts records one of these and reports it
 // to ConnectionLost (see the package doc).
 var (
 	// ErrLineTooLong aborts a LineReceiver connection whose line exceeds
-	// MaxLineLength. It is twine.ErrLineTooLong; either name matches with
-	// errors.Is.
-	ErrLineTooLong = twine.ErrLineTooLong
+	// MaxLineLength.
+	ErrLineTooLong = errors.New("proto: line too long")
 
 	// ErrFrameTooLarge aborts a NetstringReceiver, LengthPrefixed or AMP
-	// connection whose frame or box exceeds the configured maximum. It is
-	// twine.ErrFrameTooLarge; either name matches with errors.Is.
-	ErrFrameTooLarge = twine.ErrFrameTooLarge
+	// connection whose frame or box exceeds the configured maximum.
+	ErrFrameTooLarge = errors.New("proto: frame too large")
 
 	// ErrMalformedNetstring aborts a NetstringReceiver connection whose
 	// input is not valid "len:data," framing (non-digit length, leading

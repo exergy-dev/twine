@@ -68,7 +68,7 @@ memory (about 3 KB per socket end on this host, see the soak).
 
 There are no TLS numbers yet. The memory-BIO path adds the AES-GCM work and
 the copies through the BIO buffers on top of the plaintext cost; kTLS offload
-(Linux, experimental, `tls.KernelOffload(true)`) is exercised by tests but
+(Linux, experimental, `twtls.KernelOffload(true)`) is exercised by tests but
 has not been benchmarked. Treat any claim that TLS runs at plaintext speed as
 unmeasured until benchmarks land.
 

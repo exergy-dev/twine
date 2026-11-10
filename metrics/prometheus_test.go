@@ -22,8 +22,8 @@ func (e *echo) DataReceived(b []byte)            { e.t.Write(b) }
 func (e *echo) ConnectionLost(error)             {}
 
 func TestPrometheusHandler(t *testing.T) {
-	eng := twine.New(twine.Loops(2), twine.ReusePort(false), twine.Watchdog(0))
-	lst, err := eng.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol { return &echo{} }))
+	eng := twine.New(twine.Loops(2), twine.ReusePort(false), twine.Watchdog(-1))
+	lst, err := eng.ListenTCP("127.0.0.1:0", func(net.Addr) twine.Protocol { return &echo{} })
 	if err != nil {
 		t.Fatal(err)
 	}

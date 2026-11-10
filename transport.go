@@ -54,9 +54,9 @@ func (t *transport) Writev(bs ...[]byte) {
 	t.c.writev(bs)
 }
 
-// LoseConnection flushes pending writes, sends SHUT_WR and closes once the
-// peer closes its side or CloseLinger elapses.
-func (t *transport) LoseConnection() {
+// Close flushes pending writes, sends SHUT_WR and closes once the peer
+// closes its side or CloseLinger elapses.
+func (t *transport) Close() {
 	t.c.loop.assertInLoop()
 	if !t.live() {
 		return
@@ -74,11 +74,11 @@ func (t *transport) Abort() {
 	t.c.abortNoCallback()
 }
 
-// GetPeer returns the remote address.
-func (t *transport) GetPeer() net.Addr { return t.c.peerFor(t.gen) }
+// RemoteAddr returns the remote address.
+func (t *transport) RemoteAddr() net.Addr { return t.c.peerFor(t.gen) }
 
-// GetHost returns the local address.
-func (t *transport) GetHost() net.Addr { return t.c.hostFor(t.gen) }
+// LocalAddr returns the local address.
+func (t *transport) LocalAddr() net.Addr { return t.c.hostFor(t.gen) }
 
 // Loop returns the owning loop. Safe from any goroutine.
 func (t *transport) Loop() *Loop { return t.c.loop }
@@ -98,21 +98,6 @@ func (t *transport) SetIdleTimeout(d time.Duration) {
 		return
 	}
 	c.loop.wheel.Add(&c.idle, c.loop.nowNs+int64(d))
-}
-
-// SetContext stores a per-connection user value.
-func (t *transport) SetContext(v any) {
-	if t.gen == t.c.gen {
-		t.c.ctx = v
-	}
-}
-
-// Context returns the per-connection user value.
-func (t *transport) Context() any {
-	if t.gen != t.c.gen {
-		return nil
-	}
-	return t.c.ctx
 }
 
 // PauseReading drops read interest.

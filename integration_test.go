@@ -78,7 +78,7 @@ func (p *hookProto) ConnectionLost(err error) {
 }
 
 func hookFactory(build func() *hookProto) Factory {
-	return FactoryFunc(func(net.Addr) Protocol { return build() })
+	return func(net.Addr) Protocol { return build() }
 }
 
 // listen binds a TCP listener on loopback or fails the test.
@@ -338,7 +338,7 @@ func (p *streamProducer) ResumeProducing() {
 		p.produce()
 		return
 	}
-	p.t.LoseConnection()
+	p.t.Close()
 }
 
 func (p *streamProducer) StopProducing() { p.stops.Add(1) }
@@ -469,7 +469,7 @@ func (p *pullProducer) ResumeProducing() {
 	if p.written.Load() == p.total {
 		p.done = true
 		p.t.UnregisterProducer()
-		p.t.LoseConnection()
+		p.t.Close()
 	}
 }
 func (p *pullProducer) PauseProducing() {}
@@ -537,7 +537,7 @@ func (p *tinyProducer) produce() {
 	if p.written == p.total && !p.finished {
 		p.finished = true
 		p.crcOut <- p.crc
-		p.t.LoseConnection()
+		p.t.Close()
 	}
 }
 func (p *tinyProducer) PauseProducing()  { p.paused = true }
@@ -620,10 +620,10 @@ func TestPartialWritesTinyBuffers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LoseConnection (half close) vs Abort, CloseLinger.
+// Transport.Close (half close) vs Abort, CloseLinger.
 // ---------------------------------------------------------------------------
 
-func TestLoseConnectionHalfClose(t *testing.T) {
+func TestCloseHalfClose(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	var mu sync.Mutex
 	var got []byte
@@ -632,7 +632,7 @@ func TestLoseConnectionHalfClose(t *testing.T) {
 		return &hookProto{
 			made: func(_ *hookProto, tr Transport) {
 				tr.Write([]byte("hello"))
-				tr.LoseConnection()
+				tr.Close()
 			},
 			data: func(_ *hookProto, b []byte) {
 				mu.Lock()
@@ -733,7 +733,7 @@ func TestCloseLingerForcesClose(t *testing.T) {
 		return &hookProto{
 			made: func(_ *hookProto, tr Transport) {
 				start = time.Now()
-				tr.LoseConnection()
+				tr.Close()
 			},
 			lost: func(_ *hookProto, err error) { lostCh <- res{err, time.Since(start)} },
 		}
@@ -1158,8 +1158,7 @@ func TestStaleTransportHandle(t *testing.T) {
 		stale.Writev([]byte("STA"), []byte("LE"))
 		stale.SetIdleTimeout(time.Millisecond)
 		stale.PauseReading()
-		stale.SetContext("stale")
-		stale.LoseConnection()
+		stale.Close()
 		stale.Abort()
 	})
 	after := sumMetrics(e).WriteAfterClose
@@ -1188,11 +1187,6 @@ func TestStaleTransportHandle(t *testing.T) {
 		t.Errorf("new connection lost (%v) after calls on a stale handle", err)
 	default:
 	}
-	var ctx any
-	onLoop(t, l, func() { ctx = fresh.Context() })
-	if ctx != nil {
-		t.Errorf("new connection's Context() = %v, set through a stale handle", ctx)
-	}
 }
 
 func isTimeout(err error) bool {
@@ -1219,24 +1213,18 @@ func TestWriteBufferLimit(t *testing.T) {
 // Transport accessors.
 // ---------------------------------------------------------------------------
 
-func TestTransportContextAndAddrs(t *testing.T) {
+func TestTransportAddrs(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	type info struct {
-		initial    any
-		roundTrip  bool
 		peer, host string
 	}
 	infoCh := make(chan info, 2)
 	lst := listen(t, e, hookFactory(func() *hookProto {
 		return &hookProto{made: func(_ *hookProto, tr Transport) {
-			in := info{initial: tr.Context()}
-			v := &struct{ n int }{42}
-			tr.SetContext(v)
-			got, _ := tr.Context().(*struct{ n int })
-			in.roundTrip = got == v
-			in.peer, in.host = tr.GetPeer().String(), tr.GetHost().String()
+			var in info
+			in.peer, in.host = tr.RemoteAddr().String(), tr.LocalAddr().String()
 			infoCh <- in
-			tr.LoseConnection()
+			tr.Close()
 		}}
 	}))
 	for i := 0; i < 2; i++ { // the second conn reuses the pooled conn
@@ -1247,17 +1235,11 @@ func TestTransportContextAndAddrs(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("not accepted")
 		}
-		if in.initial != nil {
-			t.Errorf("conn %d: initial Context() = %v, want nil", i, in.initial)
-		}
-		if !in.roundTrip {
-			t.Errorf("conn %d: Context() did not return the value given to SetContext", i)
-		}
 		if in.peer != c.LocalAddr().String() {
-			t.Errorf("conn %d: GetPeer = %s, want %s", i, in.peer, c.LocalAddr())
+			t.Errorf("conn %d: RemoteAddr = %s, want %s", i, in.peer, c.LocalAddr())
 		}
 		if in.host != c.RemoteAddr().String() {
-			t.Errorf("conn %d: GetHost = %s, want %s", i, in.host, c.RemoteAddr())
+			t.Errorf("conn %d: LocalAddr = %s, want %s", i, in.host, c.RemoteAddr())
 		}
 		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 		_, _ = io.ReadAll(c)
@@ -1304,7 +1286,7 @@ func TestWritevByteExact(t *testing.T) {
 			tr.Writev(b2...)
 			tr.Writev(b3...)
 			tr.Writev(b4...)
-			tr.LoseConnection()
+			tr.Close()
 		}}
 	}))
 	c := dialTCP(t, lst.Addr().String())
@@ -1333,7 +1315,7 @@ func TestLargeSingleWrite(t *testing.T) {
 			for i := range buf {
 				buf[i] = 0
 			}
-			tr.LoseConnection()
+			tr.Close()
 		}}
 	}))
 	c := dialTCP(t, lst.Addr().String())
@@ -1480,7 +1462,7 @@ func TestSoakIdleConnections(t *testing.T) {
 // re-armed read next iteration must keep reading to EOF instead of stopping at
 // the final short read, which would leave the conn open until shutdown.
 func TestHangupSurvivesReadCap(t *testing.T) {
-	e := startEngine(t, Loops(1), ReadBufferSize(4096), MaxReadsPerEvent(2), Watchdog(0))
+	e := startEngine(t, Loops(1), ReadBufferSize(4096), MaxReadsPerEvent(2), Watchdog(-1))
 	var rx atomic.Int64
 	var stalled atomic.Bool
 	lostCh := make(chan error, 1)

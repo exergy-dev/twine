@@ -5,8 +5,6 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"testing"
-
-	"github.com/exergy-dev/twine"
 )
 
 func newNS(ns *NetstringReceiver) (*fakeTransport, *collector) {
@@ -44,8 +42,8 @@ func TestNetstringMalformed(t *testing.T) {
 		{"3:abc;", ErrMalformedNetstring, 0},
 		{"1:a,2:abc,", ErrMalformedNetstring, 1},
 		{"-1:", ErrMalformedNetstring, 0},
-		{"11:", twine.ErrFrameTooLarge, 0},
-		{"99999999999999999999999999:", twine.ErrFrameTooLarge, 0},
+		{"11:", ErrFrameTooLarge, 0},
+		{"99999999999999999999999999:", ErrFrameTooLarge, 0},
 	}
 	for _, tc := range cases {
 		for _, sizes := range [][]int{{1000}, {1}} {

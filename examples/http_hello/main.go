@@ -13,7 +13,7 @@ import (
 	"syscall"
 
 	"github.com/exergy-dev/twine"
-	twhttp "github.com/exergy-dev/twine/http"
+	"github.com/exergy-dev/twine/twhttp"
 )
 
 func main() {

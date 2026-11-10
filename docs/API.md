@@ -8,7 +8,6 @@ The API may change before v1.0.0; CHANGELOG.md records what changed.
 ```
 var (
 	ErrClosed = errors.New("twine: transport closed")
-	ErrLoopStopped = errors.New("twine: loop stopped")
 	ErrWriteBufferFull = errors.New("twine: write buffer full")
 	ErrAwaitOnLoop = errors.New("twine: Future.Await called on its own loop")
 	ErrIdleTimeout = errors.New("twine: idle timeout")
@@ -17,8 +16,6 @@ var (
 	ErrNilProtocol = errors.New("twine: factory returned a nil Protocol")
 	ErrNoFutures = errors.New("twine: Any called with no Futures")
 	ErrRunTwice = errors.New("twine: Engine.Run called twice")
-	ErrLineTooLong = errors.New("twine: line too long")
-	ErrFrameTooLarge = errors.New("twine: frame too large")
 	ErrConnectionReset = errors.New("twine: connection reset by peer")
 	ErrNotInLoop = errors.New("twine: method called off its owning loop")
 	ErrShutdown = errors.New("twine: engine shutdown")
@@ -36,7 +33,7 @@ type DatagramProtocol interface {
 }
 type DatagramTransport interface {
 	WriteTo(b []byte, to net.Addr)
-	GetHost() net.Addr
+	LocalAddr() net.Addr
 	Loop() *Loop
 	Close()
 }
@@ -59,12 +56,8 @@ func (e *Engine) NextLoop() *Loop
 func (e *Engine) OnShutdown(fn func())
 func (e *Engine) Run(ctx context.Context) error
 func (e *Engine) Stop()
-type Factory interface {
-	BuildProtocol(peer net.Addr) Protocol
-}
+type Factory func(peer net.Addr) Protocol
 func Blocking(f Factory) Factory
-type FactoryFunc func(peer net.Addr) Protocol
-func (f FactoryFunc) BuildProtocol(peer net.Addr) Protocol
 type Future[T any] struct {
 	// Has unexported fields.
 }
@@ -180,14 +173,12 @@ func (t *Timer) Stop() bool
 type Transport interface {
 	Consumer
 	Writev(bs ...[]byte)
-	LoseConnection()
+	Close()
 	Abort()
-	GetPeer() net.Addr
-	GetHost() net.Addr
+	RemoteAddr() net.Addr
+	LocalAddr() net.Addr
 	Loop() *Loop
 	SetIdleTimeout(d time.Duration)
-	SetContext(v any)
-	Context() any
 	PauseReading()
 	ResumeReading()
 	PendingWrite() int
@@ -224,14 +215,14 @@ var (
 	ErrBadArgs = errors.New("proto: invalid AMP arguments")
 )
 var (
-	ErrLineTooLong = twine.ErrLineTooLong
-	ErrFrameTooLarge = twine.ErrFrameTooLarge
+	ErrLineTooLong = errors.New("proto: line too long")
+	ErrFrameTooLarge = errors.New("proto: frame too large")
 	ErrMalformedNetstring = errors.New("proto: malformed netstring")
 	ErrMalformedFrame = errors.New("proto: malformed length-prefixed frame")
 )
 var ErrGaveUp = errors.New("proto: reconnecting client gave up")
 type AMP struct {
-	Handle func(cmd string, args Args) *twine.Future[Args]
+	Handle func(cmd string, args Args, reply func(res Args, err error))
 	OnConnectionMade func(t twine.Transport)
 	OnConnectionLost func(err error)
 	MaxBoxSize int
@@ -249,7 +240,6 @@ type Args map[string]string
 type Broadcast struct {
 	// Has unexported fields.
 }
-func NewBroadcast() *Broadcast
 func (b *Broadcast) Add(t twine.Transport)
 func (b *Broadcast) Len() int
 func (b *Broadcast) Remove(t twine.Transport)
@@ -312,7 +302,7 @@ func OnStateChange(fn func(connected bool, err error)) ReconnectOption
 type ReconnectingClient struct {
 	// Has unexported fields.
 }
-func NewReconnectingClient(l *twine.Loop, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient
+func NewReconnectingClient(e *twine.Engine, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient
 func (rc *ReconnectingClient) Attempts() int
 func (rc *ReconnectingClient) Connected() bool
 func (rc *ReconnectingClient) GaveUp() bool
@@ -329,7 +319,7 @@ func (e *RemoteError) Error() string
 func (e *RemoteError) Is(target error) bool
 ```
 
-## github.com/exergy-dev/twine/http
+## github.com/exergy-dev/twine/twhttp
 
 ```
 const (
@@ -342,7 +332,7 @@ const (
 	DefaultIdleTimeout = 90 * time.Second
 	DefaultReadTimeout = 60 * time.Second
 )
-func Adapt(h nethttp.Handler) func(*RequestCtx)
+func Adapt(h http.Handler) func(*RequestCtx)
 type RequestCtx struct {
 	// Has unexported fields.
 }
@@ -395,16 +385,16 @@ func (s *Server) Factory() twine.Factory
 func (s *Server) Listen(e *twine.Engine, addr string, opts ...twine.ListenOption) (twine.Listener, error)
 ```
 
-## github.com/exergy-dev/twine/tls
+## github.com/exergy-dev/twine/twtls
 
 ```
 const DefaultHandshakeTimeout = 10 * time.Second
 var ErrHandshakeTimeout = errors.New("tls: handshake timeout")
-func Client(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory
-func Connect(l *twine.Loop, addr string, cfg *ctls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
+func Client(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
+func Connect(l *twine.Loop, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
+func Dial(e *twine.Engine, addr string, cfg *tls.Config, inner twine.Factory, opts ...Option) *twine.Future[twine.Transport]
 func KTLSAvailable() bool
-func Listen(e *twine.Engine, addr string, cfg *ctls.Config, inner twine.Factory, opts ...Option) (twine.Listener, error)
-func Server(cfg *ctls.Config, inner twine.Factory, opts ...Option) twine.Factory
+func Server(cfg *tls.Config, inner twine.Factory, opts ...Option) twine.Factory
 type HandshakeError struct {
 	Peer net.Addr
 	Err error
@@ -416,24 +406,20 @@ func HandshakeTimeout(d time.Duration) Option
 func KernelOffload(on bool) Option
 func OnHandshakeError(fn func(err error)) Option
 func WithDialOptions(do ...twine.DialOption) Option
-func WithListenOptions(lo ...twine.ListenOption) Option
 type Transport struct {
 	// Has unexported fields.
 }
 func (t *Transport) Abort()
-func (t *Transport) ConnectionState() ctls.ConnectionState
-func (t *Transport) Context() any
-func (t *Transport) GetHost() net.Addr
-func (t *Transport) GetPeer() net.Addr
+func (t *Transport) Close()
+func (t *Transport) ConnectionState() tls.ConnectionState
 func (t *Transport) KernelOffload() (tx, rx bool)
-func (t *Transport) KernelOffloaded() bool
+func (t *Transport) LocalAddr() net.Addr
 func (t *Transport) Loop() *twine.Loop
-func (t *Transport) LoseConnection()
 func (t *Transport) PauseReading()
 func (t *Transport) PendingWrite() int
 func (t *Transport) RegisterProducer(p twine.Producer, streaming bool)
+func (t *Transport) RemoteAddr() net.Addr
 func (t *Transport) ResumeReading()
-func (t *Transport) SetContext(v any)
 func (t *Transport) SetIdleTimeout(d time.Duration)
 func (t *Transport) Underlying() twine.Transport
 func (t *Transport) UnregisterProducer()

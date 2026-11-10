@@ -9,7 +9,7 @@ import (
 // TestReadmeSnippetsCompile checks that every Go code block in README.md is
 // a verbatim copy of text in one of the example files, so the README cannot
 // drift from code that compiles and (where it has an Output) runs. Import
-// blocks are skipped: they only show the package aliases.
+// blocks are skipped: they only show import paths.
 func TestReadmeSnippetsCompile(t *testing.T) {
 	readme, err := os.ReadFile("README.md")
 	if err != nil {
@@ -18,7 +18,7 @@ func TestReadmeSnippetsCompile(t *testing.T) {
 	var sources []string
 	for _, f := range []string{
 		"example_echo_test.go", "example_test.go",
-		"http/example_test.go", "tls/example_test.go",
+		"twhttp/example_test.go", "twtls/example_test.go",
 	} {
 		b, err := os.ReadFile(f)
 		if err != nil {

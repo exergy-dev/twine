@@ -21,9 +21,9 @@ func TestPullProducerThatWritesNothingDoesNotSpin(t *testing.T) {
 	l := e.loops[0]
 	var tr Transport
 	made := make(chan struct{}, 1)
-	f := FactoryFunc(func(net.Addr) Protocol {
+	f := func(net.Addr) Protocol {
 		return &hookProto{made: func(_ *hookProto, tp Transport) { tr = tp; made <- struct{}{} }}
-	})
+	}
 	lst, err := e.ListenTCP("127.0.0.1:0", f)
 	if err != nil {
 		t.Fatal(err)

@@ -24,7 +24,7 @@ const (
 // conn flags.
 const (
 	flagClosed         uint32 = 1 << iota // no more I/O; queued for recycle
-	flagClosing                           // LoseConnection requested; flush then shut down
+	flagClosing                           // Close requested; flush then shut down
 	flagShutWR                            // SHUT_WR already sent
 	flagEOF                               // peer closed its side
 	flagDirty                             // in the loop's dirty list
@@ -54,7 +54,6 @@ type conn struct {
 
 	idleTimeout time.Duration
 	peer, host  net.Addr
-	ctx         any
 	lostErr     error
 
 	producer  Producer
@@ -101,7 +100,6 @@ func (c *conn) reset() {
 	c.proto = nil
 	c.idleTimeout = 0
 	c.peer, c.host = nil, nil
-	c.ctx = nil
 	c.lostErr = nil
 	c.producer = nil
 	c.streaming = false
@@ -130,7 +128,7 @@ func (l *Loop) attachTCP(fd int, peer, host net.Addr, f Factory) *conn {
 	l.register(c)
 	l.metrics.connections.Add(1)
 	c.h = &transport{c: c, gen: c.gen}
-	p := f.BuildProtocol(peer)
+	p := f(peer)
 	if p == nil {
 		// The factory refused the connection: close it without callbacks.
 		c.abortNoCallback()
@@ -174,7 +172,7 @@ func (c *conn) eof() {
 	c.flags |= flagEOF | flagReadPaused
 	if c.ring.Len() == 0 {
 		// Nothing left to send: close now. ConnectionLost(nil) is a clean
-		// close; a pending LoseConnection also ends here.
+		// close; a pending Close also ends here.
 		c.abortNoCallback()
 		return
 	}

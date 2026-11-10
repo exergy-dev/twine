@@ -758,7 +758,7 @@ func (l *Loop) logPanic(msg string, pe *PanicError, attrs ...any) {
 // ReportPanic logs pe through the engine's Logger and counts it in
 // MetricsSnapshot.Panics, as the loop does for the panics it recovers
 // itself. Code that recovers panics from protocol callbacks outside the
-// loop's own recovery (a wrapper protocol such as the tls package's
+// loop's own recovery (a wrapper protocol such as the twtls package's
 // Transport, or a goroutine serving a connection) calls it so those panics
 // are not silent. Safe from any goroutine.
 func (l *Loop) ReportPanic(pe *PanicError) {

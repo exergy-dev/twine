@@ -24,7 +24,7 @@ type lineEcho struct {
 }
 
 func newLineEcho(lost chan<- error) twine.Factory {
-	return twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	return func(net.Addr) twine.Protocol {
 		p := &lineEcho{lost: lost}
 		p.MaxLineLength = 64
 		p.LineReceived = p.line
@@ -34,7 +34,7 @@ func newLineEcho(lost chan<- error) twine.Factory {
 			}
 		}
 		return p
-	})
+	}
 }
 
 var echoPrefix = []byte("echo: ")
@@ -120,7 +120,7 @@ func TestLineReceiverEchoIntegration(t *testing.T) {
 	}
 	select {
 	case err := <-lost:
-		if !errors.Is(err, twine.ErrLineTooLong) {
+		if !errors.Is(err, ErrLineTooLong) {
 			t.Fatalf("ConnectionLost(%v), want ErrLineTooLong", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -134,11 +134,11 @@ func TestLineReceiverEchoIntegration(t *testing.T) {
 
 func TestNetstringIntegration(t *testing.T) {
 	e := startEngine(t, 2)
-	lst, err := e.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	lst, err := e.ListenTCP("127.0.0.1:0", func(net.Addr) twine.Protocol {
 		p := &NetstringReceiver{}
 		p.StringReceived = func(s []byte) { p.SendString(bytes.ToUpper(s)) }
 		return p
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestNetstringIntegration(t *testing.T) {
 
 func TestLengthPrefixedIntegration(t *testing.T) {
 	e := startEngine(t, 2)
-	lst, err := e.ListenTCP("127.0.0.1:0", twine.FactoryFunc(func(net.Addr) twine.Protocol {
+	lst, err := e.ListenTCP("127.0.0.1:0", func(net.Addr) twine.Protocol {
 		p := &LengthPrefixed{}
 		p.FrameReceived = func(f []byte) {
 			if err := p.SendFrame(f); err != nil {
@@ -182,7 +182,7 @@ func TestLengthPrefixedIntegration(t *testing.T) {
 			}
 		}
 		return p
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

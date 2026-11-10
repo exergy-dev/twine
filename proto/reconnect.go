@@ -74,10 +74,10 @@ func DialOptions(opts ...twine.DialOption) ReconnectOption {
 // consecutive retry waits a uniformly random time in [0, min(MaxDelay,
 // InitialDelay*Factor^(n-1))].
 //
-// Pass eng.NextLoop() as the loop unless the connection must share a loop
-// with other state. The wrapped Factory builds the protocol for every
-// successful connect; wrap it with tls.Client (package
-// github.com/exergy-dev/twine/tls) to get a reconnecting TLS client. The
+// The client lives on one loop of its Engine, picked with NextLoop when it
+// is created. The wrapped Factory builds the protocol for every
+// successful connect; wrap it with twtls.Client (package
+// github.com/exergy-dev/twine/twtls) to get a reconnecting TLS client. The
 // client interposes a thin wrapper protocol to observe the connection's
 // life. A successful connect resets the backoff automatically (Twisted's
 // convention is for the protocol to call resetDelay once connected; Twine
@@ -117,11 +117,11 @@ type ReconnectingClient struct {
 	lastErr   atomic.Pointer[error]
 }
 
-// NewReconnectingClient returns a client that will connect to addr on l
-// using f. Call Start to begin.
-func NewReconnectingClient(l *twine.Loop, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient {
+// NewReconnectingClient returns a client that will connect to addr using f,
+// on a loop of e chosen once with e.NextLoop. Call Start to begin.
+func NewReconnectingClient(e *twine.Engine, addr string, f twine.Factory, opts ...ReconnectOption) *ReconnectingClient {
 	rc := &ReconnectingClient{
-		loop:    l,
+		loop:    e.NextLoop(),
 		addr:    addr,
 		factory: f,
 		initial: DefaultInitialDelay,
@@ -231,14 +231,14 @@ func (rc *ReconnectingClient) connect() {
 	rc.attempts.Add(1)
 	rc.inFlight = true
 	a := &attempt{rc: rc}
-	fut := rc.loop.ConnectTCP(rc.addr, twine.FactoryFunc(a.build), rc.dialOpts...)
+	fut := rc.loop.ConnectTCP(rc.addr, a.build, rc.dialOpts...)
 	fut.Catch(func(err error) {
 		if a.made {
 			return // ConnectionLost handles the retry
 		}
 		rc.inFlight = false
 		rc.setLastErr(err)
-		if rc.stopping || errors.Is(err, twine.ErrEngineStopped) || errors.Is(err, twine.ErrLoopStopped) {
+		if rc.stopping || errors.Is(err, twine.ErrEngineStopped) {
 			rc.giveUpWith(err)
 			return
 		}
@@ -247,7 +247,7 @@ func (rc *ReconnectingClient) connect() {
 }
 
 func (a *attempt) build(peer net.Addr) twine.Protocol {
-	p := a.rc.factory.BuildProtocol(peer)
+	p := a.rc.factory(peer)
 	if p == nil {
 		// Refuse the connection like the core does; the Catch above sees
 		// twine.ErrNilProtocol and retries with backoff.
