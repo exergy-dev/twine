@@ -23,7 +23,7 @@
 // *Transport (a twine.Transport); DataReceived carries plaintext and Write
 // takes plaintext. Negotiated parameters (version, cipher suite, ALPN, SNI,
 // peer certificates) come from t.(*twtls.Transport).ConnectionState().
-// LoseConnection sends close_notify before half-closing the socket, so a
+// Transport.Close sends close_notify before half-closing the socket, so a
 // peer sees a clean io.EOF. A failed handshake never reaches the inner
 // protocol: the socket is aborted, and the OnHandshakeError hook is called
 // with a *HandshakeError (without a hook, the failure is logged).
@@ -141,7 +141,7 @@
 // that reply cannot be sent, so the connection is aborted and the inner
 // protocol's ConnectionLost gets an error saying so.
 //
-// Close. LoseConnection sends close_notify with sendmsg and a
+// Close. Transport.Close sends close_notify with sendmsg and a
 // TLS_SET_RECORD_TYPE control message (alert record, {warning,
 // close_notify}), then half-closes. The core exposes no ordered "control
 // record" write, so if application bytes are still buffered in the core's
@@ -161,7 +161,7 @@
 //
 // Engine shutdown loses the underlying connections directly, so no
 // close_notify is sent for connections still open at Stop; call
-// LoseConnection on them first (for example from an Engine.OnShutdown hook
+// Transport.Close on them first (for example from an Engine.OnShutdown hook
 // that hops to each loop) when a clean TLS close matters. On the memory BIO,
 // Writev encrypts each slice into its own record(s).
 package twtls

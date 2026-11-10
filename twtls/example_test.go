@@ -80,7 +80,7 @@ func ExampleConnect() {
 	t.Loop().CallFromThread(func() { // Transports are loop-affine
 		st := t.(*twtls.Transport).ConnectionState()
 		log.Printf("connected with %s", tls.VersionName(st.Version))
-		t.LoseConnection()
+		t.Close()
 	})
 }
 
@@ -116,7 +116,7 @@ func (p *alpnProto) ConnectionMade(t twine.Transport) {
 		tls.VersionName(st.Version), tls.CipherSuiteName(st.CipherSuite),
 		st.NegotiatedProtocol, st.ServerName, tx, rx)
 	if st.NegotiatedProtocol != "twine/1" {
-		t.LoseConnection()
+		t.Close()
 	}
 }
 

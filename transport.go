@@ -54,9 +54,9 @@ func (t *transport) Writev(bs ...[]byte) {
 	t.c.writev(bs)
 }
 
-// LoseConnection flushes pending writes, sends SHUT_WR and closes once the
-// peer closes its side or CloseLinger elapses.
-func (t *transport) LoseConnection() {
+// Close flushes pending writes, sends SHUT_WR and closes once the peer
+// closes its side or CloseLinger elapses.
+func (t *transport) Close() {
 	t.c.loop.assertInLoop()
 	if !t.live() {
 		return

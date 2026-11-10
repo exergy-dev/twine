@@ -35,7 +35,7 @@ func (f *fakeTransport) Writev(bs ...[]byte) {
 	}
 	f.writes++
 }
-func (f *fakeTransport) LoseConnection()                       { f.closing = true }
+func (f *fakeTransport) Close()                                { f.closing = true }
 func (f *fakeTransport) Abort()                                { f.aborted = true }
 func (f *fakeTransport) RemoteAddr() net.Addr                  { return fakePeer }
 func (f *fakeTransport) LocalAddr() net.Addr                   { return fakeHost }

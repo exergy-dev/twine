@@ -15,7 +15,7 @@ type Protocol interface {
 	// b is valid ONLY for the duration of the call. Copy what you keep.
 	DataReceived(b []byte)
 	// ConnectionLost is called exactly once. err is nil on a clean close
-	// (including Abort and LoseConnection), otherwise it says why.
+	// (including Abort and Close), otherwise it says why.
 	ConnectionLost(err error)
 }
 
@@ -51,10 +51,12 @@ type Transport interface {
 	// Writev writes the slices in order, with a single writev(2) when
 	// nothing is buffered. Like Write, it never retains the slices.
 	Writev(bs ...[]byte)
-	// LoseConnection flushes pending writes, half-closes (SHUT_WR), and
-	// closes once the peer closes its side or CloseLinger elapses;
-	// ConnectionLost(nil) follows. Later writes are dropped.
-	LoseConnection()
+	// Close closes the connection gracefully: unlike net.Conn.Close it
+	// first flushes pending writes, then half-closes (SHUT_WR) and closes
+	// once the peer closes its side or CloseLinger elapses;
+	// ConnectionLost(nil) follows. Later writes are dropped. Abort closes
+	// at once instead.
+	Close()
 	// Abort closes immediately and discards pending writes;
 	// ConnectionLost(nil) follows at the end of the loop iteration.
 	Abort()

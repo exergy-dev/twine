@@ -19,7 +19,8 @@ terms, and [API.md](API.md) lists the whole exported surface.
 | `Protocol` | `twine.Protocol` interface | Same three methods: ConnectionMade, DataReceived, ConnectionLost. |
 | `Factory` / `ServerFactory` | `twine.Factory` | A function `func(peer net.Addr) Protocol`; nil refuses the connection. |
 | `ReconnectingClientFactory` | `proto.ReconnectingClient` | Exponential backoff with jitter. |
-| `ITransport` | `twine.Transport` interface | Write, Writev, LoseConnection, Abort, RemoteAddr, LocalAddr. |
+| `ITransport` | `twine.Transport` interface | Write, Writev, Close, Abort, RemoteAddr, LocalAddr. |
+| `transport.loseConnection()` | `transport.Close()` | Graceful: flushes, half-closes, waits for the peer up to `CloseLinger`. `Abort` is `abortConnection()`. |
 | `IPushProducer` / `IConsumer` | `twine.Producer` / `twine.Consumer` | Same pause/resume/stop contract. |
 | `Deferred` | `twine.Future[T]` | Typed, generic. Callbacks run on the owning loop. |
 | `Deferred.addCallback/addErrback` | `Future.Then / Future.Catch` | Chainable; returns the same Future. `Map` transforms. |

@@ -243,7 +243,7 @@ func (p *writevProto) ConnectionMade(t twine.Transport) {
 	tx, _ := t.(*twtls.Transport).KernelOffload()
 	p.tx <- tx
 	t.Writev(p.parts...)
-	t.LoseConnection()
+	t.Close()
 }
 func (p *writevProto) DataReceived([]byte)  {}
 func (p *writevProto) ConnectionLost(error) {}

@@ -24,7 +24,7 @@ const (
 // conn flags.
 const (
 	flagClosed         uint32 = 1 << iota // no more I/O; queued for recycle
-	flagClosing                           // LoseConnection requested; flush then shut down
+	flagClosing                           // Close requested; flush then shut down
 	flagShutWR                            // SHUT_WR already sent
 	flagEOF                               // peer closed its side
 	flagDirty                             // in the loop's dirty list
@@ -172,7 +172,7 @@ func (c *conn) eof() {
 	c.flags |= flagEOF | flagReadPaused
 	if c.ring.Len() == 0 {
 		// Nothing left to send: close now. ConnectionLost(nil) is a clean
-		// close; a pending LoseConnection also ends here.
+		// close; a pending Close also ends here.
 		c.abortNoCallback()
 		return
 	}

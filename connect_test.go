@@ -106,7 +106,7 @@ func TestConnectTCPToTwineServer(t *testing.T) {
 	if !waitUntil(5*time.Second, func() bool { return cp.received() == "ping" }) {
 		t.Errorf("client received %q, want echo \"ping\"", cp.received())
 	}
-	onLoop(t, l, tr.LoseConnection)
+	onLoop(t, l, tr.Close)
 	if err, ok := recvErr(t, cp.lost, 5*time.Second, "client ConnectionLost"); ok && err != nil {
 		t.Errorf("client ConnectionLost(%v), want nil", err)
 	}

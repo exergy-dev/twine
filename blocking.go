@@ -159,7 +159,7 @@ func (a *asyncTransport) Writev(bs ...[]byte) {
 	a.call(func() { a.t.Write(cp) })
 }
 
-func (a *asyncTransport) LoseConnection()      { a.call(a.t.LoseConnection) }
+func (a *asyncTransport) Close()               { a.call(a.t.Close) }
 func (a *asyncTransport) Abort()               { a.call(a.t.Abort) }
 func (a *asyncTransport) RemoteAddr() net.Addr { return a.peer }
 func (a *asyncTransport) LocalAddr() net.Addr  { return a.host }

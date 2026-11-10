@@ -249,8 +249,8 @@ func (p *byeProto) ConnectionMade(t twine.Transport) {
 	if p.big != nil {
 		t.Write(p.big)
 	}
-	t.LoseConnection()
-	t.Write([]byte("dropped")) // after LoseConnection: dropped
+	t.Close()
+	t.Write([]byte("dropped")) // after Close: dropped
 }
 func (p *byeProto) DataReceived([]byte)      {}
 func (p *byeProto) ConnectionLost(err error) { p.lost <- err }
@@ -646,7 +646,7 @@ func (p *clientProto) DataReceived(b []byte) {
 		case p.done <- bytes.Clone(p.got.Bytes()):
 		default:
 		}
-		p.t.LoseConnection()
+		p.t.Close()
 	}
 }
 func (p *clientProto) ConnectionLost(error) {}
@@ -958,7 +958,7 @@ func (p *producerProto) ConnectionMade(t twine.Transport) {
 	for i := 0; i < p.total/len(chunk); i++ {
 		t.Write(chunk)
 	}
-	t.LoseConnection()
+	t.Close()
 }
 func (p *producerProto) DataReceived([]byte)  {}
 func (p *producerProto) ConnectionLost(error) {}

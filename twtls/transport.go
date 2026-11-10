@@ -47,14 +47,14 @@ type Transport struct {
 	made      bool // inner.ConnectionMade has been called
 	paused    bool // inner asked to pause reading
 	draining  bool // re-entrancy guard for drain
-	closeSent bool // close_notify sent (LoseConnection)
+	closeSent bool // close_notify sent (Close)
 	peerEOF   bool // close_notify received
 	aborted   bool // Abort requested (by inner or an error); deliver nothing more
 	selfAbort bool // Abort called on this Transport: ConnectionLost(nil), not a truncation
 	hsDone    bool // handshake outcome reported (hook and Future) exactly once
-	inTLS     bool // inside a tls.Conn call; Write/LoseConnection defer
+	inTLS     bool // inside a tls.Conn call; Write/Close defer
 	// deferred holds plaintext written re-entrantly during a tls.Conn call;
-	// closeDeferred records a LoseConnection made the same way.
+	// closeDeferred records a Close made the same way.
 	deferred      []byte
 	closeDeferred bool
 	offloaded     bool // kTLS TX installed: Write goes straight to the socket
@@ -387,7 +387,7 @@ func (t *Transport) readError(err error) {
 		// outright (as crypto/tls Conn.Close does) instead of waiting for the
 		// peer's FIN; ConnectionLost(nil) follows either way.
 		t.peerEOF = true
-		t.LoseConnection()
+		t.Close()
 		if t.under.PendingWrite() == 0 {
 			t.under.Abort()
 		}
@@ -444,7 +444,7 @@ func (t *Transport) Underlying() twine.Transport { return t.under }
 
 // Write encrypts b into one or more TLS records and writes them to the
 // underlying transport, which copies only if the socket would block. Writes
-// after LoseConnection or close are dropped.
+// after Close, or once the connection is gone, are dropped.
 func (t *Transport) Write(b []byte) {
 	if t.state != stReady || t.closeSent || len(b) == 0 {
 		return
@@ -478,7 +478,7 @@ func (t *Transport) leaveTLS(err error) {
 		}
 		t.closeDeferred = false
 		_ = t.tc.CloseWrite()
-		t.under.LoseConnection()
+		t.under.Close()
 	}
 	t.inTLS = false
 	if err != nil {
@@ -508,13 +508,13 @@ func (t *Transport) writeError(err error) {
 	t.under.Abort()
 }
 
-// LoseConnection sends a close_notify alert and then loses the underlying
+// Close sends a close_notify alert and then closes the underlying
 // connection gracefully (flush, then half-close). inner.ConnectionLost
 // follows with a nil error once the peer has closed.
-func (t *Transport) LoseConnection() {
+func (t *Transport) Close() {
 	if t.state != stReady {
 		if t.under != nil {
-			t.under.LoseConnection()
+			t.under.Close()
 		}
 		return
 	}
@@ -538,7 +538,7 @@ func (t *Transport) LoseConnection() {
 		_ = t.tc.CloseWrite() // writes close_notify through the bio
 		t.leaveTLS(nil)
 	}
-	t.under.LoseConnection()
+	t.under.Close()
 }
 
 // closeOffloaded sends close_notify through the kernel and then loses the
@@ -563,7 +563,7 @@ func (t *Transport) closeOffloaded(delay time.Duration) {
 		}
 		err := sendCloseNotify(fd)
 		if err == nil {
-			t.under.LoseConnection()
+			t.under.Close()
 			return
 		}
 		if !isRetry(err) {

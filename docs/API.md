@@ -173,7 +173,7 @@ func (t *Timer) Stop() bool
 type Transport interface {
 	Consumer
 	Writev(bs ...[]byte)
-	LoseConnection()
+	Close()
 	Abort()
 	RemoteAddr() net.Addr
 	LocalAddr() net.Addr
@@ -411,11 +411,11 @@ type Transport struct {
 	// Has unexported fields.
 }
 func (t *Transport) Abort()
+func (t *Transport) Close()
 func (t *Transport) ConnectionState() tls.ConnectionState
 func (t *Transport) KernelOffload() (tx, rx bool)
 func (t *Transport) LocalAddr() net.Addr
 func (t *Transport) Loop() *twine.Loop
-func (t *Transport) LoseConnection()
 func (t *Transport) PauseReading()
 func (t *Transport) PendingWrite() int
 func (t *Transport) RegisterProducer(p twine.Producer, streaming bool)

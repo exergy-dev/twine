@@ -278,7 +278,7 @@ func (p *proxyUser) DataReceived(b []byte) {
 		panic("proxy boom")
 	case "quit":
 		p.t.Write([]byte("bye"))
-		p.t.LoseConnection()
+		p.t.Close()
 	case "abort":
 		p.t.Abort()
 	default:
@@ -324,7 +324,7 @@ func TestBlockingProxyMethods(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b, err := io.ReadAll(c); err != nil || string(b) != "bye" {
-		t.Errorf("after LoseConnection read %q, %v; want bye then EOF", b, err)
+		t.Errorf("after Close read %q, %v; want bye then EOF", b, err)
 	}
 	c.Close()
 	expectLost(func(err error) bool { return err == nil })

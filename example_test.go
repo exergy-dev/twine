@@ -34,7 +34,7 @@ type greeter struct {
 func (g *greeter) ConnectionMade(t twine.Transport) { g.t = t; t.Write([]byte("hello\n")) }
 func (g *greeter) DataReceived(b []byte) {
 	fmt.Print("reply: ", string(b)) // b is valid only during the call
-	g.t.LoseConnection()
+	g.t.Close()
 }
 func (g *greeter) ConnectionLost(error) { g.eng.Stop() }
 
@@ -121,7 +121,7 @@ func (s *shouter) ConnectionMade(t twine.Transport) { s.t = t }
 func (s *shouter) DataReceived(b []byte) {
 	time.Sleep(time.Millisecond) // would stall the loop without Blocking
 	s.t.Write([]byte(strings.ToUpper(string(b))))
-	s.t.LoseConnection()
+	s.t.Close()
 }
 func (s *shouter) ConnectionLost(error) {}
 
@@ -162,7 +162,7 @@ func ExampleBlocking() {
 type printer struct{ t twine.Transport }
 
 func (p *printer) ConnectionMade(t twine.Transport) { p.t = t }
-func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.LoseConnection() }
+func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.Close() }
 func (p *printer) ConnectionLost(error)             {}
 
 func dial(eng *twine.Engine, addr string) {

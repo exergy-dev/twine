@@ -659,7 +659,7 @@ func (c *conn) closeConn() {
 	}
 	c.closed = true
 	c.flushOut()
-	c.t.LoseConnection()
+	c.t.Close()
 	// Reading may be paused (pipelining yield or producer pause). The core
 	// completes a graceful close when it reads the peer's EOF, so reading
 	// must be on; DataReceived discards anything that arrives meanwhile.

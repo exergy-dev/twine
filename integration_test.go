@@ -338,7 +338,7 @@ func (p *streamProducer) ResumeProducing() {
 		p.produce()
 		return
 	}
-	p.t.LoseConnection()
+	p.t.Close()
 }
 
 func (p *streamProducer) StopProducing() { p.stops.Add(1) }
@@ -469,7 +469,7 @@ func (p *pullProducer) ResumeProducing() {
 	if p.written.Load() == p.total {
 		p.done = true
 		p.t.UnregisterProducer()
-		p.t.LoseConnection()
+		p.t.Close()
 	}
 }
 func (p *pullProducer) PauseProducing() {}
@@ -537,7 +537,7 @@ func (p *tinyProducer) produce() {
 	if p.written == p.total && !p.finished {
 		p.finished = true
 		p.crcOut <- p.crc
-		p.t.LoseConnection()
+		p.t.Close()
 	}
 }
 func (p *tinyProducer) PauseProducing()  { p.paused = true }
@@ -620,7 +620,7 @@ func TestPartialWritesTinyBuffers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// LoseConnection (half close) vs Abort, CloseLinger.
+// Transport.Close (half close) vs Abort, CloseLinger.
 // ---------------------------------------------------------------------------
 
 func TestLoseConnectionHalfClose(t *testing.T) {
@@ -632,7 +632,7 @@ func TestLoseConnectionHalfClose(t *testing.T) {
 		return &hookProto{
 			made: func(_ *hookProto, tr Transport) {
 				tr.Write([]byte("hello"))
-				tr.LoseConnection()
+				tr.Close()
 			},
 			data: func(_ *hookProto, b []byte) {
 				mu.Lock()
@@ -733,7 +733,7 @@ func TestCloseLingerForcesClose(t *testing.T) {
 		return &hookProto{
 			made: func(_ *hookProto, tr Transport) {
 				start = time.Now()
-				tr.LoseConnection()
+				tr.Close()
 			},
 			lost: func(_ *hookProto, err error) { lostCh <- res{err, time.Since(start)} },
 		}
@@ -1158,7 +1158,7 @@ func TestStaleTransportHandle(t *testing.T) {
 		stale.Writev([]byte("STA"), []byte("LE"))
 		stale.SetIdleTimeout(time.Millisecond)
 		stale.PauseReading()
-		stale.LoseConnection()
+		stale.Close()
 		stale.Abort()
 	})
 	after := sumMetrics(e).WriteAfterClose
@@ -1224,7 +1224,7 @@ func TestTransportAddrs(t *testing.T) {
 			var in info
 			in.peer, in.host = tr.RemoteAddr().String(), tr.LocalAddr().String()
 			infoCh <- in
-			tr.LoseConnection()
+			tr.Close()
 		}}
 	}))
 	for i := 0; i < 2; i++ { // the second conn reuses the pooled conn
@@ -1286,7 +1286,7 @@ func TestWritevByteExact(t *testing.T) {
 			tr.Writev(b2...)
 			tr.Writev(b3...)
 			tr.Writev(b4...)
-			tr.LoseConnection()
+			tr.Close()
 		}}
 	}))
 	c := dialTCP(t, lst.Addr().String())
@@ -1315,7 +1315,7 @@ func TestLargeSingleWrite(t *testing.T) {
 			for i := range buf {
 				buf[i] = 0
 			}
-			tr.LoseConnection()
+			tr.Close()
 		}}
 	}))
 	c := dialTCP(t, lst.Addr().String())

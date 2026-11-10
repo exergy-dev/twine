@@ -35,7 +35,7 @@ func TestDebugWriteOffLoopPanics(t *testing.T) {
 	for name, call := range map[string]func(){
 		"Write":          func() { tr.Write([]byte("x")) },
 		"Writev":         func() { tr.Writev([]byte("x")) },
-		"LoseConnection": tr.LoseConnection,
+		"Close":          tr.Close,
 		"PauseReading":   tr.PauseReading,
 		"SetIdleTimeout": func() { tr.SetIdleTimeout(time.Second) },
 	} {

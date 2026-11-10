@@ -29,7 +29,7 @@ const DefaultMaxLineLength = 16 << 10
 // without waiting for its delimiter.
 //
 // Lines already received continue to be delivered from the current chunk
-// after the callback calls LoseConnection; they stop after an Abort by the
+// after the callback calls Close; they stop after an Abort by the
 // receiver itself. Changing Delimiter while data is buffered is undefined.
 type LineReceiver struct {
 	// Delimiter separates lines. Default "\r\n".

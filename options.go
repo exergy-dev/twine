@@ -190,7 +190,7 @@ func PinLoops(cpus ...int) Option {
 	return func(c *config) { c.pinCPUs = append([]int(nil), cpus...) }
 }
 
-// CloseLinger bounds how long LoseConnection waits, after sending SHUT_WR,
+// CloseLinger bounds how long Close waits, after sending SHUT_WR,
 // for the peer to close its side before the connection is closed anyway.
 // Default 10s; 0 closes as soon as pending writes are flushed (Twisted's
 // behaviour).

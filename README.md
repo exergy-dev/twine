@@ -78,7 +78,7 @@ methods run on the connection's loop, entered through `CallFromThread`. Call
 type printer struct{ t twine.Transport }
 
 func (p *printer) ConnectionMade(t twine.Transport) { p.t = t }
-func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.LoseConnection() }
+func (p *printer) DataReceived(b []byte)            { fmt.Printf("reply: %s", b); p.t.Close() }
 func (p *printer) ConnectionLost(error)             {}
 
 func dial(eng *twine.Engine, addr string) {
@@ -201,9 +201,11 @@ func main() {
 
 `Engine.Stop` closes listeners, runs `OnShutdown` hooks once on the goroutine
 that called `Run` (while loops are still live, so hooks may `CallFromThread`),
-then asks every loop to `LoseConnection` its connections, flush for up to
-`ShutdownTimeout`, and exit. `LoseConnection` half-closes (SHUT_WR) after the
-flush and waits up to `CloseLinger` (default 10 s) for the peer to close.
+then asks every loop to `Close` its connections, flush for up to
+`ShutdownTimeout`, and exit. Unlike `net.Conn.Close`, `Transport.Close` is
+graceful: it flushes pending writes, half-closes (SHUT_WR) and waits up to
+`CloseLinger` (default 10 s) for the peer to close; `Abort` drops pending
+writes and closes at once.
 
 Set `TWINE_DEBUG=1` (or build with `-tags twine_debug`) to turn on
 loop-affinity assertions, read-buffer poisoning and Future creation stacks.

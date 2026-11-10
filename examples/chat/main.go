@@ -62,7 +62,7 @@ func (c *client) lineReceived(line []byte) {
 		c.nick = nick
 	case bytes.Equal(line, []byte("/quit")):
 		c.SendLine([]byte("* bye"))
-		c.Transport().LoseConnection()
+		c.Transport().Close()
 	case len(bytes.TrimSpace(line)) == 0:
 	default:
 		// Send copies the message once; every loop shares that copy.
