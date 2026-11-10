@@ -49,6 +49,27 @@ sections after it give the details and the non-breaking changes.
 - `http.RequestCtx.SetUserValue` / `UserValue` -> removed; keep state in your own Protocol struct
 - `http.Server{IdleTimeout: 0}` (off) -> `IdleTimeout: -1`; 0 now means the default 90 s
 
+#### Changes the compiler will not catch
+
+- `Watchdog(0)`, `CloseLinger(0)`, `ShutdownTimeout(0)` and `DialTimeout(0)`
+  still compile but now mean the default, not "off". Pass a negative value
+  to disable.
+- `proto.ErrLineTooLong` and `proto.ErrFrameTooLarge` are new values with
+  new text ("proto: ..." instead of "twine: ..."). Code that matches the
+  error string, or compares against the removed root sentinels, breaks.
+- Log messages and panic text are prefixed `twine/twhttp:` and
+  `twine/twtls:` (were `twine/http:` and `twine/tls:`). Update log filters
+  and alerts.
+- An AMP handler that returns without calling `reply` leaves the caller
+  pending until the connection is lost; returning nil used to send
+  UNHANDLED. Call `reply(nil, proto.ErrUnhandledCommand)` instead. Only the
+  first `reply` counts, so a panic after replying is logged but not sent.
+- `twtls.Listen` returned an error for a configuration with no certificate
+  source; `twtls.Server` panics. Check the configuration first if it comes
+  from user input.
+- `proto.NewReconnectingClient` takes an Engine and picks a loop itself; it
+  can no longer be pinned to a chosen loop, and a nil Engine panics.
+
 ### Changed (breaking)
 
 - Packages renamed: `http` is `twhttp` and `tls` is `twtls` (import paths
