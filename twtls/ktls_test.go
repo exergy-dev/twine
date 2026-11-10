@@ -205,7 +205,7 @@ func TestKTLSOpenSSLSuites(t *testing.T) {
 	}
 }
 
-func TestKTLSLoseConnectionCloseNotify(t *testing.T) {
+func TestKTLSCloseSendsCloseNotify(t *testing.T) {
 	requireKTLS(t)
 	e := startEngine(t)
 	lost := make(chan error, 1)

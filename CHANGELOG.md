@@ -7,8 +7,80 @@ v1.0.0, minor releases may break the API; every break is listed here.
 
 ## [Unreleased]
 
+v0.2 renames and removes API from v0.1 following an ergonomics review. The
+list below maps every v0.1 name to its replacement, one per line; the
+sections after it give the details and the non-breaking changes.
+
+### Migrating from v0.1
+
+- `import twhttp "github.com/exergy-dev/twine/http"` -> `import "github.com/exergy-dev/twine/twhttp"` (the package is named `twhttp`; the alias goes)
+- `import twtls "github.com/exergy-dev/twine/tls"` -> `import "github.com/exergy-dev/twine/twtls"` (package `twtls`)
+- `twine.Factory` interface (`BuildProtocol(peer) Protocol`) -> `type Factory func(peer net.Addr) Protocol`
+- `twine.FactoryFunc(f)` -> `f` (any `func(net.Addr) twine.Protocol` is a Factory)
+- `f.BuildProtocol(peer)` -> `f(peer)`
+- `Transport.GetPeer()` -> `Transport.RemoteAddr()`
+- `Transport.GetHost()` -> `Transport.LocalAddr()`
+- `DatagramTransport.GetHost()` -> `DatagramTransport.LocalAddr()`
+- `Transport.LoseConnection()` -> `Transport.Close()` (still graceful: flushes, half-closes, waits up to `CloseLinger`; `Abort` is unchanged)
+- `Transport.SetContext(v)` / `Transport.Context()` -> removed; keep per-connection state in your Protocol struct
+- `twine.ErrLoopStopped` -> removed; check `twine.ErrEngineStopped`
+- `twine.ErrLineTooLong` -> `proto.ErrLineTooLong`
+- `twine.ErrFrameTooLarge` -> `proto.ErrFrameTooLarge`
+- `twine.Watchdog(0)` (off) -> `twine.Watchdog(-1)`; `Watchdog(0)` now means the default 1 ms
+- `twine.ShutdownTimeout(0)` (no wait) -> `twine.ShutdownTimeout(-1)`; 0 now means the default 5 s
+- `twine.CloseLinger(0)` (no linger) -> `twine.CloseLinger(-1)`; 0 now means the default 10 s
+- `twine.DialTimeout(0)` (no timeout) -> `twine.DialTimeout(-1)`; 0 now means the default 30 s
+- `twine.LockOSThread`, `MaxAcceptsPerEvent`, `TaskQueueSize`, `UDPBatch` -> removed
+- `twine.BusyPoll(d)` as an engine `Option` -> `twine.BusyPoll(d)` as a `ListenOption`
+- `Engine.PrometheusHandler()` -> `metrics.PrometheusHandler(eng)`
+- `twine.LoopMetrics` -> `twine.MetricsSnapshot` (from `Engine.Metrics` / `Loop.Metrics`)
+- `proto.NewBroadcast()` -> `&proto.Broadcast{}` (the zero value is ready to use)
+- `proto.NewReconnectingClient(eng.NextLoop(), addr, f, opts...)` -> `proto.NewReconnectingClient(eng, addr, f, opts...)`
+- `proto.Option` -> `proto.ReconnectOption`; `OnStateChange(func(bool))` -> `OnStateChange(func(connected bool, err error))`
+- `proto.AMP.Handle func(cmd string, args Args) *twine.Future[Args]` -> `func(cmd string, args Args, reply func(Args, error))`
+- AMP handler `return twine.Resolved(nil, res)` -> `reply(res, nil)`; `return twine.Rejected(nil, err)` -> `reply(nil, err)`; `return nil` (unhandled) -> `reply(nil, proto.ErrUnhandledCommand)`
+- `lr.SendLine(t, b)`, `ns.SendString(t, b)`, `lp.SendFrame(t, b)` -> `lr.SendLine(b)`, `ns.SendString(b)`, `lp.SendFrame(b)` (the stored transport)
+- `tls.Listen(eng, addr, cfg, f, tls.WithListenOptions(lo...), opts...)` -> `eng.ListenTCP(addr, twtls.Server(cfg, f, opts...), lo...)`
+- `tls.WithListenOptions` -> removed (listener options go to `ListenTCP`)
+- `tls.Connect(eng.NextLoop(), addr, cfg, f, opts...)` -> `twtls.Dial(eng, addr, cfg, f, opts...)` (`Connect(loop, ...)` stays for a chosen loop)
+- `tls.Transport.KernelOffloaded()` -> `tx, rx := t.KernelOffload()`
+- `tls.KTLSSupported()` -> removed (`KTLSAvailable` probes the kernel)
+- `tls.HandshakeTimeout(0)` (off) -> no longer possible; `d <= 0` means the default 10 s
+- `http.RequestCtx.SetUserValue` / `UserValue` -> removed; keep state in your own Protocol struct
+- `http.Server{IdleTimeout: 0}` (off) -> `IdleTimeout: -1`; 0 now means the default 90 s
+
 ### Changed (breaking)
 
+- Packages renamed: `http` is `twhttp` and `tls` is `twtls` (import paths
+  `github.com/exergy-dev/twine/twhttp` and `.../twtls`). They no longer
+  shadow `net/http` and `crypto/tls`, so they are imported without an
+  alias.
+- `Factory` is a function type, `func(peer net.Addr) Protocol`;
+  `FactoryFunc` is removed. The peer argument and the rule that a nil
+  Protocol refuses the connection are unchanged.
+- `Transport.GetPeer` and `GetHost` are `RemoteAddr` and `LocalAddr`
+  (the `net.Conn` names); `DatagramTransport.GetHost` is `LocalAddr`.
+- `Transport.LoseConnection` is `Close`. Unlike `net.Conn.Close` it
+  flushes pending writes first, then half-closes and waits up to
+  `CloseLinger`; `Abort` remains the immediate close.
+- `Transport.SetContext` and `Context` are removed: per-connection state
+  belongs in the Protocol struct.
+- `ErrLoopStopped` is removed (the core never returned it; `ErrEngineStopped`
+  is the one to check). `ErrLineTooLong` and `ErrFrameTooLarge` are defined
+  by `proto`, which produces them; the root aliases are gone.
+- proto: `AMP.Handle` answers through a `reply func(Args, error)` argument
+  instead of returning a Future. `reply` may be called inside the handler
+  or later from any goroutine; a second call is ignored and a reply after
+  the connection is lost writes nothing. `reply(nil, ErrUnhandledCommand)`
+  sends UNHANDLED, a `*RemoteError` chooses the code, any other error is
+  UNKNOWN. Serving a request allocates 9 times instead of 13.
+- proto: `NewBroadcast` is removed; the zero `Broadcast` is an empty group.
+- proto: `NewReconnectingClient` takes the `*Engine` and picks its loop once
+  with `NextLoop`.
+- twtls: `Listen` and `WithListenOptions` are removed; serve TLS with
+  `eng.ListenTCP(addr, twtls.Server(cfg, f, tlsOpts...), listenOpts...)`.
+  The new `Dial(eng, ...)` is `Connect` on `eng.NextLoop()`. The deprecated
+  `Transport.KernelOffloaded` is removed; use `KernelOffload`.
 - Removed the engine options `LockOSThread`, `MaxAcceptsPerEvent`,
   `TaskQueueSize` and `UDPBatch`. Loops always lock their OS thread; the
   others had no effect worth tuning.
@@ -22,7 +94,7 @@ v1.0.0, minor releases may break the API; every break is listed here.
 - A `Factory` that returns a nil `Protocol` now refuses the connection, and
   the `Dial`/`ConnectTCP` Future is rejected with `ErrNilProtocol`. Before,
   the connection stayed open and ignored all data. The same applies under
-  `tls.Server` and `tls.Client`.
+  `twtls.Server` and `twtls.Client`.
 - proto: `LineReceiver.SendLine`, `NetstringReceiver.SendString` and
   `LengthPrefixed.SendFrame` drop the transport argument and always use the
   stored transport.
@@ -31,27 +103,26 @@ v1.0.0, minor releases may break the API; every break is listed here.
   when the client gives up, with an error wrapping the new `ErrGaveUp`.
 - proto: `LengthPrefixed.ConnectionMade` panics on a `PrefixLen` other
   than 0, 1, 2 or 4 instead of silently using 4.
-- tls: `KTLSSupported` is removed (it only reported `GOOS == "linux"`).
-  `Transport.KernelOffload()` reports whether TX and RX are offloaded
-  (`KernelOffloaded` reported TX only).
-- tls: `Server` panics when the config has no certificate source
-  (`Certificates`, `GetCertificate` or `GetConfigForClient`), and `Listen`
-  returns an error, instead of failing every handshake silently.
-- tls: `HandshakeTimeout(d)` with `d <= 0` now means the default (10 s);
+- twtls: `KTLSSupported` is removed (it only reported `GOOS == "linux"`).
+  `Transport.KernelOffload()` reports whether TX and RX are offloaded.
+- twtls: `Server` panics when the config has no certificate source
+  (`Certificates`, `GetCertificate` or `GetConfigForClient`) instead of
+  failing every handshake silently.
+- twtls: `HandshakeTimeout(d)` with `d <= 0` now means the default (10 s);
   it no longer disables the timeout. Handshake failures reach the
   `OnHandshakeError` hook and the `Connect` Future as a `*HandshakeError`
   carrying the peer address, and are logged at Warn when no hook is set.
-- http: `IdleTimeout` zero now means 90 s (was disabled); a negative value
+- twhttp: `IdleTimeout` zero now means 90 s (was disabled); a negative value
   disables it. The new `ReadTimeout` (default 60 s) bounds an incomplete
   request head or body. Responses larger than the new `MaxResponseBytes`
   (default 16 MiB) become a 500 instead of a truncated body.
-- http: a status below 200 is sent as 500; response headers with an
+- twhttp: a status below 200 is sent as 500; response headers with an
   invalid name are dropped; HEAD responses with an empty body carry no
   Content-Length; canned error responses carry Date and Server.
-- http: `RequestCtx.SetUserValue` and `UserValue` are removed; keep
+- twhttp: `RequestCtx.SetUserValue` and `UserValue` are removed; keep
   per-connection state in your own Protocol struct.
-- `Any` with no inputs rejects with `ErrNoFutures` (it rejected with
-  `ErrLoopStopped`). A second `Engine.Run`, including one after a completed
+- `Any` with no inputs rejects with `ErrNoFutures` (it rejected with the
+  now removed `ErrLoopStopped`). A second `Engine.Run`, including one after a completed
   run, returns `ErrRunTwice` (a run after a completed run returned nil).
 - One rule for duration options: 0 means the default and a negative value
   disables the bound. `Watchdog(0)` is now the default 1 ms threshold
@@ -62,45 +133,41 @@ v1.0.0, minor releases may break the API; every break is listed here.
   `SpinIterations` values mean the default, and `DatagramsSent` counts only
   datagrams the kernel accepted.
 
-### Deprecated
-
-- tls: `Transport.KernelOffloaded` (TX only); use `KernelOffload`.
-
 ### Added
 
 - `ErrNoFutures`, `ErrRunTwice` and `ErrNilProtocol` sentinels.
 - `Engine.Logger`, `Loop.ReportPanic`, and `poll` backend logging when a
   `twine_uring` build falls back to epoll.
 - `NewPanicError`, which wraps a recovered panic value with the current
-  stack the way the core does (the `tls` package uses it instead of
+  stack the way the core does (the `twtls` package uses it instead of
   hand-built `PanicError` values).
-- proto: `ErrLineTooLong` and `ErrFrameTooLarge` are also available under
-  `proto`; `FuzzAMP` and `FuzzLineReceiverRaw` fuzz targets; benchmarks.
-- tls: `HandshakeError`, `Transport.KernelOffload`, allocation gates and
-  record benchmarks, and a layout test that fails when a Go release
-  changes the `crypto/tls` fields kTLS reads.
-- http: `ReadTimeout`, `MaxResponseBytes`, `DefaultIdleTimeout`,
+- proto: `ErrLineTooLong` and `ErrFrameTooLarge` (moved from the root
+  package); `FuzzAMP` and `FuzzLineReceiverRaw` fuzz targets; benchmarks.
+- twtls: `Dial`, `HandshakeError`, `Transport.KernelOffload`, allocation
+  gates and record benchmarks, and a layout test that fails when a Go
+  release changes the `crypto/tls` fields kTLS reads.
+- twhttp: `ReadTimeout`, `MaxResponseBytes`, `DefaultIdleTimeout`,
   `DefaultReadTimeout`, `DefaultMaxResponseBytes`; a 408 response.
 - `twine_debug` assertions inside `internal/`: slab double-Put, re-entrant
   wheel Advance and ring invariants.
 - `metrics` package with the Prometheus text-format handler.
-- Runnable examples on pkg.go.dev for the root, `proto`, `http` and `tls`
-  packages; package documentation for the root package.
+- Runnable examples on pkg.go.dev for the root, `proto`, `twhttp` and
+  `twtls` packages; package documentation for the root package.
 - `CONTRIBUTING.md`, `SECURITY.md` and this changelog.
 
 ### Fixed
 
-- `twine.Blocking` under `tls.Server`/`tls.Listen` panicked on every
-  connection and the panic was swallowed; the client only saw EOF.
+- `twine.Blocking` under `twtls.Server` panicked on every connection and
+  the panic was swallowed; the client only saw EOF.
 - `proto.AMP.Call` and `CallNoAnswer` read the caller's `Args` map on the
   loop after returning (a data race); the arguments are now encoded on the
   caller's goroutine.
 - `Engine.Dial` and `Loop.ConnectTCP` with a host name resolved it on the
   loop thread, stalling every connection on that loop; names are now
   resolved on the worker pool.
-- `tls.Client` used with `Loop.ConnectTCP` resolved the Future with the
+- `twtls.Client` used with `Loop.ConnectTCP` resolved the Future with the
   raw socket before the handshake; the documentation now says so and
-  points at `tls.Connect`.
+  points at `twtls.Connect` and `Dial`.
 - Zero or negative size and count options (`ReadBufferSize(0)`,
   `MaxReadsPerEvent(0)`, ...) broke the engine instead of meaning the
   default.

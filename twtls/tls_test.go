@@ -255,7 +255,7 @@ func (p *byeProto) ConnectionMade(t twine.Transport) {
 func (p *byeProto) DataReceived([]byte)      {}
 func (p *byeProto) ConnectionLost(err error) { p.lost <- err }
 
-func TestLoseConnectionSendsCloseNotify(t *testing.T) {
+func TestCloseSendsCloseNotify(t *testing.T) {
 	e := startEngine(t)
 	lost := make(chan error, 1)
 	big := bytes.Repeat([]byte("x"), 300<<10) // forces ring buffering

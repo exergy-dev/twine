@@ -623,7 +623,7 @@ func TestPartialWritesTinyBuffers(t *testing.T) {
 // Transport.Close (half close) vs Abort, CloseLinger.
 // ---------------------------------------------------------------------------
 
-func TestLoseConnectionHalfClose(t *testing.T) {
+func TestCloseHalfClose(t *testing.T) {
 	e := startEngine(t, Loops(1))
 	var mu sync.Mutex
 	var got []byte
