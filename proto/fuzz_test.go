@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/exergy-dev/twine"
 )
 
 // splitSizes turns fuzzer-chosen bytes into chunk sizes for feed.
@@ -121,18 +119,19 @@ func FuzzLengthPrefixed(f *testing.F) {
 }
 
 // ampFuzzHandler picks the handler outcome from the command's first byte:
-// 0 unhandled (nil Future), 1 rejected with a *RemoteError, 2 rejected with
-// a plain error, 3 resolved with the request's own args.
-func ampFuzzHandler(cmd string, args Args) *twine.Future[Args] {
+// 0 unhandled, 1 failed with a *RemoteError, 2 failed with a plain error,
+// 3 answered with the request's own args.
+func ampFuzzHandler(cmd string, args Args, reply func(Args, error)) {
 	switch ampFuzzMode(cmd) {
 	case 1:
-		return twine.Rejected[Args](nil, &RemoteError{Code: "FUZZ", Description: cmd})
+		reply(nil, &RemoteError{Code: "FUZZ", Description: cmd})
 	case 2:
-		return twine.Rejected[Args](nil, errors.New(cmd))
+		reply(nil, errors.New(cmd))
 	case 3:
-		return twine.Resolved[Args](nil, args)
+		reply(args, nil)
+	default:
+		reply(nil, ErrUnhandledCommand)
 	}
-	return nil
 }
 
 func ampFuzzMode(cmd string) int {

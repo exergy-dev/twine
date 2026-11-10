@@ -45,8 +45,9 @@
 // # Threading
 //
 // Like every twine.Protocol, the framers are loop-affine: their methods and
-// callbacks run on the owning loop. The exceptions are AMP.Call and
-// AMP.CallNoAnswer, Broadcast, and ReconnectingClient (except its Transport
-// method): they are safe to use from any goroutine and route work onto
-// loops with CallFromThread.
+// callbacks run on the owning loop. The exceptions are AMP.Call,
+// AMP.CallNoAnswer and the reply function given to an AMP handler,
+// Broadcast, and ReconnectingClient (except its Transport method): they are
+// safe to use from any goroutine and route work onto loops with
+// CallFromThread.
 package proto

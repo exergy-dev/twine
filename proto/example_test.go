@@ -104,16 +104,18 @@ type peer struct {
 func ExampleAMP() {
 	eng := twine.New(twine.Loops(1))
 
-	// The server answers Sum synchronously with a resolved Future.
+	// The server answers Sum at once; reply may also be called later, from
+	// any goroutine.
 	server := func(net.Addr) twine.Protocol {
 		p := &peer{}
-		p.Handle = func(cmd string, args proto.Args) *twine.Future[proto.Args] {
+		p.Handle = func(cmd string, args proto.Args, reply func(proto.Args, error)) {
 			if cmd != "Sum" {
-				return nil // the caller gets an UNHANDLED error
+				reply(nil, proto.ErrUnhandledCommand) // the caller gets an UNHANDLED error
+				return
 			}
 			a, _ := strconv.Atoi(args["a"])
 			b, _ := strconv.Atoi(args["b"])
-			return twine.Resolved[proto.Args](nil, proto.Args{"total": strconv.Itoa(a + b)})
+			reply(proto.Args{"total": strconv.Itoa(a + b)}, nil)
 		}
 		return p
 	}

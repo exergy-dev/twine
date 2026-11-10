@@ -222,7 +222,7 @@ var (
 )
 var ErrGaveUp = errors.New("proto: reconnecting client gave up")
 type AMP struct {
-	Handle func(cmd string, args Args) *twine.Future[Args]
+	Handle func(cmd string, args Args, reply func(res Args, err error))
 	OnConnectionMade func(t twine.Transport)
 	OnConnectionLost func(err error)
 	MaxBoxSize int

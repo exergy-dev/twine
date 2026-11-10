@@ -2,8 +2,6 @@ package proto
 
 import (
 	"testing"
-
-	"github.com/exergy-dev/twine"
 )
 
 // Receive-path benchmarks. "Whole" delivers one frame per chunk (the fast
@@ -120,8 +118,8 @@ func BenchmarkAMPCall(b *testing.B) {
 // BenchmarkAMPServe is one incoming request answered by a synchronous
 // handler.
 func BenchmarkAMPServe(b *testing.B) {
-	a := &AMP{Handle: func(_ string, args Args) *twine.Future[Args] {
-		return twine.Resolved[Args](nil, Args{"total": args["a"]})
+	a := &AMP{Handle: func(_ string, args Args, reply func(Args, error)) {
+		reply(Args{"total": args["a"]}, nil)
 	}}
 	ft := newFake()
 	a.ConnectionMade(ft)

@@ -3,8 +3,6 @@ package proto
 import (
 	"bytes"
 	"testing"
-
-	"github.com/exergy-dev/twine"
 )
 
 // The steady state of each parser is a complete frame in one chunk: it must
@@ -92,16 +90,17 @@ func TestAMPAllocs(t *testing.T) {
 		t.Fatal("calls left pending")
 	}
 
-	s := &AMP{Handle: func(_ string, args Args) *twine.Future[Args] {
-		return twine.Resolved[Args](nil, Args{"total": args["a"]})
+	s := &AMP{Handle: func(_ string, args Args, reply func(Args, error)) {
+		reply(Args{"total": args["a"]}, nil)
 	}}
 	s.ConnectionMade(ft)
 	req := twistedBox("_ask", "1", "_command", "Sum", "a", "13", "b", "29")
 	serve := testing.AllocsPerRun(1000, func() { ft.reset(); s.DataReceived(req) })
 
-	// Measured with Go 1.25.3; if a Go release moves them, re-measure with
-	// BenchmarkAMPCall/BenchmarkAMPServe before changing the bounds.
-	const maxCall, maxServe = 7, 13
+	// Measured with Go 1.25.3 (7 and 9); if a Go release moves them,
+	// re-measure with BenchmarkAMPCall/BenchmarkAMPServe before changing the
+	// bounds.
+	const maxCall, maxServe = 7, 9
 	if call > maxCall || serve > maxServe {
 		t.Fatalf("AMP allocations: call+answer %v (max %d), serve %v (max %d)", call, maxCall, serve, maxServe)
 	}

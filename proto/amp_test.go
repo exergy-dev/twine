@@ -50,20 +50,21 @@ func decodeBoxes(t *testing.T, b []byte) []map[string]string {
 	return out
 }
 
-func sumHandler(cmd string, args Args) *twine.Future[Args] {
+func sumHandler(cmd string, args Args, reply func(Args, error)) {
 	switch cmd {
 	case "Sum":
 		a, _ := strconv.Atoi(args["a"])
 		b, _ := strconv.Atoi(args["b"])
-		return twine.Resolved[Args](nil, Args{"total": strconv.Itoa(a + b)})
+		reply(Args{"total": strconv.Itoa(a + b)}, nil)
 	case "Fail":
-		return twine.Rejected[Args](nil, errors.New("boom"))
+		reply(nil, errors.New("boom"))
 	case "Coded":
-		return twine.Rejected[Args](nil, &RemoteError{Code: "ZERO_DIVISION", Description: "divide by zero"})
+		reply(nil, &RemoteError{Code: "ZERO_DIVISION", Description: "divide by zero"})
 	case "Panic":
 		panic("handler exploded")
+	default:
+		reply(nil, ErrUnhandledCommand)
 	}
-	return nil
 }
 
 func TestAMPWireTwistedRequest(t *testing.T) {
@@ -227,16 +228,16 @@ func TestAMPCallNoAnswer(t *testing.T) {
 func TestAMPOnLoopAndEngineStop(t *testing.T) {
 	e := startEngine(t, 2)
 	notes := make(chan string, 4)
-	handle := func(cmd string, args Args) *twine.Future[Args] {
+	handle := func(cmd string, args Args, reply func(Args, error)) {
 		switch cmd {
 		case "Note":
 			notes <- args["v"]
-			return twine.Resolved[Args](nil, nil)
+			reply(nil, nil)
 		case "Hang":
-			f, _ := twine.NewFuture[Args](nil)
-			return f
+			// never replies
+		default:
+			sumHandler(cmd, args, reply)
 		}
-		return sumHandler(cmd, args)
 	}
 	lst, err := e.ListenTCP("127.0.0.1:0", ampFactory(handle, nil))
 	if err != nil {
@@ -286,15 +287,13 @@ func TestAMPOnLoopAndEngineStop(t *testing.T) {
 	}
 }
 
-// TestAMPLateAnswerAfterLoss: a handler that settles after the connection
-// is gone writes nothing, whether it resolves or rejects, and the partial
-// box buffer is released.
+// TestAMPLateAnswerAfterLoss: a handler that replies after the connection
+// is gone writes nothing, whether it answers or fails, and the partial box
+// buffer is released.
 func TestAMPLateAnswerAfterLoss(t *testing.T) {
-	var rs []twine.Resolver[Args]
-	a := &AMP{Handle: func(string, Args) *twine.Future[Args] {
-		f, r := twine.NewFuture[Args](nil)
-		rs = append(rs, r)
-		return f
+	var rs []func(Args, error)
+	a := &AMP{Handle: func(_ string, _ Args, reply func(Args, error)) {
+		rs = append(rs, reply)
 	}}
 	ft := newFake()
 	a.ConnectionMade(ft)
@@ -305,10 +304,38 @@ func TestAMPLateAnswerAfterLoss(t *testing.T) {
 	if a.lp.buf != nil {
 		t.Fatal("partial frame buffer kept after ConnectionLost")
 	}
-	rs[0].Resolve(Args{"late": "1"})
-	rs[1].Reject(errors.New("late"))
+	rs[0](Args{"late": "1"}, nil)
+	rs[1](nil, errors.New("late"))
 	if len(ft.out) != 0 {
 		t.Fatalf("wrote %q after the connection was lost", ft.out)
+	}
+}
+
+// TestAMPReplyOnce: a second reply to the same request is ignored, from the
+// loop and from another goroutine, and replying to a request without _ask
+// writes nothing.
+func TestAMPReplyOnce(t *testing.T) {
+	var replies []func(Args, error)
+	a := &AMP{Handle: func(_ string, _ Args, reply func(Args, error)) {
+		replies = append(replies, reply)
+	}}
+	ft := newFake()
+	a.ConnectionMade(ft)
+	feed(a, twistedBox("_ask", "1", "_command", "A"))
+	feed(a, twistedBox("_command", "B")) // no answer wanted
+	if len(replies) != 2 {
+		t.Fatalf("%d handler calls, want 2", len(replies))
+	}
+	replies[0](Args{"n": "1"}, nil)
+	replies[0](Args{"n": "2"}, nil)
+	replies[0](nil, errors.New("late"))
+	done := make(chan struct{})
+	go func() { replies[0](Args{"n": "3"}, nil); replies[1](Args{"n": "4"}, nil); close(done) }()
+	<-done
+	replies[1](nil, errors.New("unwanted"))
+	boxes := decodeBoxes(t, ft.out)
+	if len(boxes) != 1 || boxes[0]["_answer"] != "1" || boxes[0]["n"] != "1" {
+		t.Fatalf("replies %v, want one answer with n=1", boxes)
 	}
 }
 
@@ -317,7 +344,7 @@ type ampPeer struct {
 	AMP
 }
 
-func ampFactory(handle func(string, Args) *twine.Future[Args], made chan<- *ampPeer) twine.Factory {
+func ampFactory(handle func(string, Args, func(Args, error)), made chan<- *ampPeer) twine.Factory {
 	return func(net.Addr) twine.Protocol {
 		p := &ampPeer{}
 		p.Handle = handle
@@ -334,23 +361,24 @@ func TestAMPRoundTrip(t *testing.T) {
 	e := startEngine(t, 2)
 	server := e.Loops()[0]
 	var hangMu sync.Mutex
-	var hung []twine.Resolver[Args]
-	handle := func(cmd string, args Args) *twine.Future[Args] {
+	var hung []func(Args, error)
+	handle := func(cmd string, args Args, reply func(Args, error)) {
 		switch cmd {
 		case "Slow":
-			// Answer from the worker pool: the reply is routed back to the loop.
-			return twine.DeferToThread(server, func() (Args, error) {
+			// Answer from the worker pool: reply is safe from any goroutine.
+			v := args["v"]
+			twine.DeferToThread(server, func() (struct{}, error) {
 				time.Sleep(5 * time.Millisecond)
-				return Args{"echo": args["v"]}, nil
+				reply(Args{"echo": v}, nil)
+				return struct{}{}, nil
 			})
 		case "Hang":
-			f, r := twine.NewFuture[Args](server)
 			hangMu.Lock()
-			hung = append(hung, r)
+			hung = append(hung, reply)
 			hangMu.Unlock()
-			return f
+		default:
+			sumHandler(cmd, args, reply)
 		}
-		return sumHandler(cmd, args)
 	}
 	lst, err := e.ListenTCP("127.0.0.1:0", ampFactory(handle, nil))
 	if err != nil {
@@ -406,7 +434,7 @@ func TestAMPRoundTrip(t *testing.T) {
 		t.Fatalf("pending after abort: %v", err)
 	}
 	// Answering after the connection is gone is harmless.
-	hung[0].Resolve(Args{"late": "1"})
+	hung[0](Args{"late": "1"}, nil)
 	if _, err := client.Call("Sum", nil).Await(ctx); !errors.Is(err, ErrConnectionLost) {
 		t.Fatalf("call after loss: %v", err)
 	}
