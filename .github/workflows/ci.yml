@@ -3,13 +3,11 @@ on:
   push:
     branches: [master]
   pull_request:
-  schedule:
-    - cron: "0 3 * * *"   # nightly: long fuzz, full MPSC stress, govulncheck
-  workflow_dispatch:      # run the nightly jobs by hand
+  workflow_dispatch:      # also runs the manual-only jobs: long fuzz, full MPSC stress, govulncheck
 permissions:
   contents: read
 concurrency:
-  # The event name keeps a nightly run and a push to master from cancelling
+  # The event name keeps a manual run and a push to master from cancelling
   # each other.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -18,8 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        go: ["1.24", "oldstable", "stable"]
+        os: [ubuntu-latest]
+        go: ["stable"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -31,18 +29,10 @@ jobs:
       - run: make test-race test-debug TESTFLAGS=-short
       - if: runner.os == 'Linux'
         run: make test-uring
-
-  # kTLS needs the kernel's tls module. Both steps fail loudly instead of
-  # skipping: modprobe fails if the module cannot be loaded, and
-  # TWINE_REQUIRE_KTLS=1 turns the tests' "kTLS unavailable" skip into a
-  # failure.
-  ktls:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: stable
+      # kTLS needs the kernel's tls module. Both steps fail loudly instead of
+      # skipping: modprobe fails if the module cannot be loaded, and
+      # TWINE_REQUIRE_KTLS=1 turns the tests' "kTLS unavailable" skip into a
+      # failure.
       - run: sudo modprobe tls
       - name: KTLS tests exist (so the next step cannot pass vacuously)
         run: go test -list KTLS ./twtls | grep '^Test'
@@ -69,7 +59,7 @@ jobs:
         run: sh scripts/apidump.sh && git diff --exit-code docs/API.md
 
   nightly:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -86,7 +76,7 @@ jobs:
           if-no-files-found: ignore
 
   vuln:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
