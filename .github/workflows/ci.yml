@@ -16,8 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        go: ["stable"]
+        # Pushes and pull requests run the first entry only; a manual run
+        # (workflow_dispatch) runs the full matrix.
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        go: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["stable","oldstable","1.24"]' || '["stable"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -33,10 +35,13 @@ jobs:
       # skipping: modprobe fails if the module cannot be loaded, and
       # TWINE_REQUIRE_KTLS=1 turns the tests' "kTLS unavailable" skip into a
       # failure.
-      - run: sudo modprobe tls
+      - if: runner.os == 'Linux'
+        run: sudo modprobe tls
       - name: KTLS tests exist (so the next step cannot pass vacuously)
+        if: runner.os == 'Linux'
         run: go test -list KTLS ./twtls | grep '^Test'
-      - run: TWINE_REQUIRE_KTLS=1 go test -count=1 -v -run KTLS ./twtls
+      - if: runner.os == 'Linux'
+        run: TWINE_REQUIRE_KTLS=1 go test -count=1 -v -run KTLS ./twtls
 
   lint:
     runs-on: ubuntu-latest
